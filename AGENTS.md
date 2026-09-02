@@ -4,7 +4,7 @@
 
 ## 当前状态（2026-09-02）
 - 方案 v0.7（docs/纯视觉芍药行间除草机器人_手把手实施方案_v0.7.docx）为最新执行版本
-- 阶段：W1 —— ✅ protocol.py + pytest 完成（10/10 通过，commit 6654d43）；下一步：avi 离线回放框架（pc/replay.py）
+- 阶段：W1 基本完成——protocol.py（10 测试通过）+ pc/perception.py + pc/replay.py 离线回放均已交付；训练域测试图验证 status=dual 链路正确；avi 帧存在域差异（过分割 fg≈0.55），待秋季微调。待办：push（网络恢复后 git push）、STM32 串口测试向量、秋季采集清单
 - 每完成一个模块：跑测试、更新本文件的"当前状态"、git commit（本工作区自己 init 了仓库）
 
 ## 关键事实（不要重新推导）
