@@ -43,6 +43,32 @@ def pack_frame(frame_type: int, payload: bytes, seq: int) -> bytes:
     return HEADER + body + struct.pack('<H', crc16_ccitt_false(body))
 
 
+def extract_one(stream: bytes):
+    """Extract the first complete valid frame from a raw serial stream.
+
+    Returns (frame_bytes, remainder) or (None, stream) if no full valid
+    frame is present. Invalid prefixes are skipped.
+    """
+    pos = 0
+    while True:
+        idx = stream.find(HEADER, pos)
+        if idx < 0 or len(stream) - idx < HEADER_LEN + META_LEN:
+            return None, stream[pos:]
+        declared = int.from_bytes(stream[idx + 2:idx + 4], 'little')
+        if not META_LEN <= declared <= META_LEN + _MAX_PAYLOAD:
+            pos = idx + 1
+            continue
+        end = idx + HEADER_LEN + declared + 2
+        if end > len(stream):
+            return None, stream[idx:]
+        chunk = stream[idx:end]
+        try:
+            unpack_frame(chunk)
+            return chunk, stream[end:]
+        except ValueError:
+            pos = idx + 1
+
+
 def unpack_frame(data: bytes):
     """Return (type, seq, payload). Raises ValueError on any malformation."""
     if len(data) < HEADER_LEN + META_LEN + 2:

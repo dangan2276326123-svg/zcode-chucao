@@ -1,0 +1,14 @@
+# vehicle side config (Raspberry Pi) — fill in per deployment
+serial_dev: /dev/ttyAMA0   # UART to STM32 (via USB-TTL or GPIO UART + level shift)
+baud: 115200
+udp_port: 9000             # bridge listens here for PC control frames
+pc_ip: 192.168.1.2         # PC running perception/control
+pc_port: 9100              # bridge sends MCU status frames here
+stream:
+  pc_ip: 192.168.1.2
+  port: 5000
+  width: 1280
+  height: 720
+  fps: 25
+  bitrate_kbps: 2500
+watchdog_ms: 500           # must match firmware LINK_TIMEOUT_MS
