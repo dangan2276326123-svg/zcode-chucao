@@ -5,3 +5,4 @@ calib_imgs/
 __pycache__/
 *.pyc
 hardware_ref/大板/*.PcbDoc
+~$*
