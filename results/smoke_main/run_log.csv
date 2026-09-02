@@ -1,0 +1,4 @@
+t,frame_id,state,status,lat_m,lat_comp_m,vL,vR,tool_mm,conf,latency_ms
+0.026,0,MANUAL,none,,,0.000,0.000,0.0,0.000,847.9
+0.893,1,MANUAL,none,,,0.000,0.000,0.0,0.000,102.8
+1.012,2,MANUAL,none,,,0.000,0.000,0.0,0.000,93.8

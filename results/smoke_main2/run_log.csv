@@ -1,0 +1,2 @@
+t,frame_id,state,status,lat_m,lat_comp_m,vL,vR,tool_mm,conf,latency_ms
+0.006,0,ESTOP,dual,-0.1232,-0.1232,0.000,0.000,0.0,0.024,317.5
