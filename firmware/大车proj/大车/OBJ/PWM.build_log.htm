@@ -1,0 +1,221 @@
+<html>
+<body>
+<pre>
+<h1>礦ision Build Log</h1>
+<h2>Tool Versions:</h2>
+IDE-Version: μVision V5.24.2.0
+Copyright (C) 2017 ARM Ltd and ARM Germany GmbH. All rights reserved.
+License Information: 1 2276326123@qq.com, 1, LIC=D0D7S-LCDLF-63AMB-2UIRE-JCCL2-FVJLL
+ 
+Tool Versions:
+Toolchain:       MDK-ARM Plus  Version: 5.24.1
+Toolchain Path:  D:\ruanjian\keil\KEIL32\ARM\ARMCC\Bin
+C Compiler:      Armcc.exe V5.06 update 5 (build 528)
+Assembler:       Armasm.exe V5.06 update 5 (build 528)
+Linker/Locator:  ArmLink.exe V5.06 update 5 (build 528)
+Library Manager: ArmAr.exe V5.06 update 5 (build 528)
+Hex Converter:   FromElf.exe V5.06 update 5 (build 528)
+CPU DLL:         SARMCM3.DLL V5.24.1
+Dialog DLL:      DCM.DLL V1.16.0.0
+Target DLL:      STLink\ST-LINKIII-KEIL_SWO.dll V3.0.1.0
+Dialog DLL:      TCM.DLL V1.32.0.0
+ 
+<h2>Project:</h2>
+D:\ai work\zcode\firmware\大车proj\大车\USER\PWM.uvprojx
+Project File Date:  09/02/2026
+
+<h2>Output:</h2>
+*** Using Compiler 'V5.06 update 5 (build 528)', folder: 'D:\ruanjian\keil\KEIL32\ARM\ARMCC\Bin'
+Rebuild target 'PWM'
+compiling stm32f4xx_it.c...
+compiling adc.c...
+compiling beep.c...
+compiling exti.c...
+..\HARDWARE\EXTI\exti.c(45): warning:  #177-D: variable "flag_exti"  was declared but never referenced
+  {  static u8 flag_exti=0;
+..\HARDWARE\EXTI\exti.c(139): warning:  #1-D: last line of file ends without a newline
+  }
+..\HARDWARE\EXTI\exti.c: 2 warnings, 0 errors
+compiling key.c...
+compiling can.c...
+compiling system_stm32f4xx.c...
+compiling pwm.c...
+compiling led.c...
+..\HARDWARE\LED\led.c(401): warning:  #550-D: variable "switch_ch"  was set but never used
+  	u8 switch_ch; 
+..\HARDWARE\LED\led.c(477): warning:  #223-D: function "printf" declared implicitly
+  				printf("左前左转限位卡住:\r\n");
+..\HARDWARE\LED\led.c(484): warning:  #223-D: function "printf" declared implicitly
+  				printf("左前右转限位卡住:\r\n");
+..\HARDWARE\LED\led.c(489): warning:  #223-D: function "printf" declared implicitly
+  				printf("右前左转限位卡住:\r\n");
+..\HARDWARE\LED\led.c(494): warning:  #223-D: function "printf" declared implicitly
+  				printf("右前右转限位卡住:\r\n");
+..\HARDWARE\LED\led.c(499): warning:  #223-D: function "printf" declared implicitly
+  				printf("左后左转限位卡住:\r\n");
+..\HARDWARE\LED\led.c(504): warning:  #223-D: function "printf" declared implicitly
+  				printf("左后右转限位卡住:\r\n");
+..\HARDWARE\LED\led.c(509): warning:  #223-D: function "printf" declared implicitly
+  				printf("右后左转限位卡住:\r\n");
+..\HARDWARE\LED\led.c(514): warning:  #223-D: function "printf" declared implicitly
+  				printf("右后右转限位卡住:\r\n");
+..\HARDWARE\LED\led.c(527): warning:  #940-D: missing return statement at end of non-void function "Touch_detection" 
+  }
+..\HARDWARE\LED\led.c: 10 warnings, 0 errors
+compiling main.c...
+..\HARDWARE\uart2\uart2.h(9): warning:  #1295-D: Deprecated declaration set_adresss - give arg types
+  void set_adresss();
+..\HARDWARE\uart2\uart2.h(12): warning:  #1295-D: Deprecated declaration get_angle_encode - give arg types
+  void get_angle_encode();
+main.c(97): warning:  #177-D: variable "wheel_angle_limit"  was declared but never referenced
+    double wheel_angle_limit=0.420;     //2.5度  定义车轮转向的机械极限角度 0.0175    25         
+main.c(110): warning:  #177-D: variable "t"  was declared but never referenced
+  	int i=0,t,count,j,stop,stop_count,upload_count,only_start=0,stop_voltage_count=0;
+main.c(110): warning:  #177-D: variable "stop"  was declared but never referenced
+  	int i=0,t,count,j,stop,stop_count,upload_count,only_start=0,stop_voltage_count=0;
+main.c(110): warning:  #177-D: variable "upload_count"  was declared but never referenced
+  	int i=0,t,count,j,stop,stop_count,upload_count,only_start=0,stop_voltage_count=0;
+main.c(110): warning:  #550-D: variable "stop_voltage_count"  was set but never used
+  	int i=0,t,count,j,stop,stop_count,upload_count,only_start=0,stop_voltage_count=0;
+main.c(111): warning:  #177-D: variable "shacheccr"  was declared but never referenced
+  	int shacheccr = 490;
+main.c(116): warning:  #177-D: variable "wheel_Angle_correct_run"  was declared but never referenced
+  	double wheel_Angle_correct_run[4]={0,0,0,0};  // 0左前，1右前，2左后，3右后，运行中归正（回中间）
+main.c(119): warning:  #177-D: variable "real_time_erro"  was declared but never referenced
+  	double  real_time_erro=0.0175*2;               //为1度    运行中大于这个角度，才修正
+main.c: 10 warnings, 0 errors
+compiling lcd.c...
+compiling work_control.c...
+compiling uart5.c...
+..\HARDWARE\uart2\uart2.h(9): warning:  #1295-D: Deprecated declaration set_adresss - give arg types
+  void set_adresss();
+..\HARDWARE\uart2\uart2.h(12): warning:  #1295-D: Deprecated declaration get_angle_encode - give arg types
+  void get_angle_encode();
+..\HARDWARE\uart5\uart5.c(89): warning:  #177-D: variable "RecState"  was declared but never referenced
+  	static int RecState=0;    //静态整型变量用来解析帧头
+..\HARDWARE\uart5\uart5.c(90): warning:  #177-D: variable "JiaQianState"  was declared but never referenced
+  	static int JiaQianState=0;
+..\HARDWARE\uart5\uart5.c(91): warning:  #177-D: variable "JiannQianState"  was declared but never referenced
+  	static int JiannQianState=0; 
+..\HARDWARE\uart5\uart5.c: 5 warnings, 0 errors
+compiling sensor.c...
+compiling iwdg.c...
+compiling telecontrol.c...
+..\HARDWARE\telecontrol\telecontrol.c(126): warning:  #550-D: variable "UART1_Rec_Len"  was set but never used
+  	static uint8_t UART1_Rec_Len = 0;
+..\HARDWARE\telecontrol\telecontrol.c(127): warning:  #550-D: variable "t"  was set but never used
+  	int i,t;
+..\HARDWARE\telecontrol\telecontrol.c: 2 warnings, 0 errors
+compiling CRC2.c...
+compiling uart2.c...
+..\HARDWARE\uart2\uart2.h(9): warning:  #1295-D: Deprecated declaration set_adresss - give arg types
+  void set_adresss();
+..\HARDWARE\uart2\uart2.h(12): warning:  #1295-D: Deprecated declaration get_angle_encode - give arg types
+  void get_angle_encode();
+..\HARDWARE\uart2\uart2.c(21): warning:  #177-D: variable "CRC_7"  was declared but never referenced
+  	unsigned short int CRC_7;
+..\HARDWARE\uart2\uart2.c(65): warning:  #167-D: argument of type "char *" is incompatible with parameter of type "u8 *"
+  	  RS485_Send_Data(ByteSend2,8);//发送5个字节
+..\HARDWARE\uart2\uart2.c(70): warning:  #167-D: argument of type "u8 *" is incompatible with parameter of type "char *"
+  		    temp_send=Crc16withTable(&RS485_RX_BUF[0],5); //计算出校验码
+..\HARDWARE\uart2\uart2.c(42): warning:  #177-D: variable "i"  was declared but never referenced
+  		int i=0;
+..\HARDWARE\uart2\uart2.c(138): warning:  #167-D: argument of type "char *" is incompatible with parameter of type "u8 *"
+  	  RS485_Send_Data(ByteSend2,8);//发送8个字节
+..\HARDWARE\uart2\uart2.c(147): warning:  #167-D: argument of type "u8 *" is incompatible with parameter of type "char *"
+  			temp_send=Crc16withTable(&RS485_RX_BUF[0],5); //计算出校验码
+..\HARDWARE\uart2\uart2.c(110): warning:  #177-D: variable "i"  was declared but never referenced
+  		int i=0;
+..\HARDWARE\uart2\uart2.c(202): warning:  #167-D: argument of type "char *" is incompatible with parameter of type "u8 *"
+  	  RS485_Send_Data(ByteSend2,8);//发送8个字节
+..\HARDWARE\uart2\uart2.c(209): warning:  #167-D: argument of type "u8 *" is incompatible with parameter of type "char *"
+  		    temp_send=Crc16withTable(&RS485_RX_BUF[0],9); //计算出校验码
+..\HARDWARE\uart2\uart2.c(180): warning:  #177-D: variable "i"  was declared but never referenced
+  	int i=0;
+..\HARDWARE\uart2\uart2.c(260): warning:  #167-D: argument of type "char *" is incompatible with parameter of type "u8 *"
+  	  RS485_Send_Data(ByteSend2,8);//发送8个字节
+..\HARDWARE\uart2\uart2.c(265): warning:  #167-D: argument of type "u8 *" is incompatible with parameter of type "char *"
+  			temp_send=Crc16withTable(&RS485_RX_BUF[0],5); //计算出校验码
+..\HARDWARE\uart2\uart2.c(301): warning:  #167-D: argument of type "char *" is incompatible with parameter of type "u8 *"
+  	  RS485_Send_Data(ByteSend2,8);//发送8个字节
+..\HARDWARE\uart2\uart2.c(305): warning:  #167-D: argument of type "u8 *" is incompatible with parameter of type "char *"
+  		  temp_send=Crc16withTable(&RS485_RX_BUF[0],9); //计算出校验码
+..\HARDWARE\uart2\uart2.c(236): warning:  #177-D: variable "i"  was declared but never referenced
+  		int i=0;
+..\HARDWARE\uart2\uart2.c(357): warning:  #167-D: argument of type "char *" is incompatible with parameter of type "u8 *"
+  	  RS485_Send_Data(ByteSend2,8);//发送5个字节
+..\HARDWARE\uart2\uart2.c(334): warning:  #177-D: variable "i"  was declared but never referenced
+  		int i=0;
+..\HARDWARE\uart2\uart2.c(386): warning:  #167-D: argument of type "char *" is incompatible with parameter of type "u8 *"
+  	  RS485_Send_Data(ByteSend2,8);//发送5个字节
+..\HARDWARE\uart2\uart2.c(363): warning:  #177-D: variable "i"  was declared but never referenced
+  		int i=0;
+..\HARDWARE\uart2\uart2.c: 21 warnings, 0 errors
+compiling uart4.c...
+..\HARDWARE\uart2\uart2.h(9): warning:  #1295-D: Deprecated declaration set_adresss - give arg types
+  void set_adresss();
+..\HARDWARE\uart2\uart2.h(12): warning:  #1295-D: Deprecated declaration get_angle_encode - give arg types
+  void get_angle_encode();
+..\HARDWARE\uart4\uart4.c(406): warning:  #167-D: argument of type "u8 *" is incompatible with parameter of type "char *"
+  						crc=Crc16withTable(buf,len-2);       //计算CRC校验值，出去CRC校验值
+..\HARDWARE\uart4\uart4.c(857): warning:  #223-D: function "UartRxMonitor" declared implicitly
+  		UartRxMonitor(1); ////串口接收监控
+..\HARDWARE\uart4\uart4.c: 4 warnings, 0 errors
+compiling iic.c...
+compiling uart3.c...
+..\HARDWARE\UART3\uart3.c(130): warning:  #940-D: missing return statement at end of non-void function "rs485_UartWrite" 
+  }
+..\HARDWARE\UART3\uart3.c(151): warning:  #167-D: argument of type "u8 *" is incompatible with parameter of type "char *"
+  			crc=Crc16withTable(buf,len-2);       //计算CRC校验值，出去CRC校验值temp_send=	Crc16withTable( &ByteSend2[0],11);
+..\HARDWARE\UART3\uart3.c(243): warning:  #167-D: argument of type "u8 *" is incompatible with parameter of type "char *"
+  			    crc=Crc16withTable(buf,len);           //计算CRC校验值
+..\HARDWARE\UART3\uart3.c(139): warning:  #550-D: variable "num"  was set but never used
+  	static u8 len,num; //num位寄存器的数量
+..\HARDWARE\UART3\uart3.c: 4 warnings, 0 errors
+compiling path_plan.c...
+..\HARDWARE\path_plan\path_plan.c(143): warning:  #177-D: variable "j"  was declared but never referenced
+  	u8 j=0;
+..\HARDWARE\path_plan\path_plan.c(787): warning:  #177-D: variable "W"  was declared but never referenced
+  double R=0,W=0;
+..\HARDWARE\path_plan\path_plan.c(851): warning:  #177-D: variable "W"  was declared but never referenced
+  	double R=0,W=0;
+..\HARDWARE\path_plan\path_plan.c: 3 warnings, 0 errors
+assembling startup_stm32f40_41xxx.s...
+compiling delay.c...
+compiling sys.c...
+compiling misc.c...
+compiling stm32f4xx_gpio.c...
+compiling stm32f4xx_usart.c...
+compiling usart.c...
+compiling stm32f4xx_fsmc.c...
+compiling stm32f4xx_tim.c...
+compiling stm32f4xx_syscfg.c...
+compiling stm32f4xx_rcc.c...
+compiling stm32f4xx_can.c...
+compiling protocol.c...
+compiling stm32f4xx_exti.c...
+compiling stm32f4xx_dma.c...
+compiling stm32f4xx_iwdg.c...
+compiling stm32f4xx_adc.c...
+compiling retrofit.c...
+linking...
+Program Size: Code=44192 RO-data=1152 RW-data=1064 ZI-data=3064  
+FromELF: creating hex file...
+"..\OBJ\PWM.axf" - 0 Error(s), 61 Warning(s).
+
+<h2>Software Packages used:</h2>
+
+Package Vendor: Keil
+                http://www.keil.com/pack/Keil.STM32F4xx_DFP.1.0.8.pack
+                Keil.STM32F4xx_DFP.1.0.8
+                STMicroelectronics STM32F4 Series Device Support, Drivers and Examples
+
+<h2>Collection of Component include folders:</h2>
+  .\RTE\_PWM
+  D:\ruanjian\keil\KEIL32\ARM\PACK\Keil\STM32F4xx_DFP\1.0.8\Device\Include
+
+<h2>Collection of Component Files used:</h2>
+Build Time Elapsed:  00:00:06
+</pre>
+</body>
+</html>
