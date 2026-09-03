@@ -1,0 +1,26 @@
+{
+ "H_img2ground": [
+  [
+   0.006657689122033502,
+   0.0022657225731758475,
+   -4.694452548510225
+  ],
+  [
+   -0.0020230705628655455,
+   -0.009880852811185864,
+   7.481068373801426
+  ],
+  [
+   -0.0003339275974977772,
+   -0.0001519917091049819,
+   1.0
+  ]
+ ],
+ "scale_px_per_m": 100.0,
+ "reproj_mean_m": 0.0058832899667322636,
+ "lookahead": {
+  "far_m": 1.8,
+  "near_m": 0.45
+ },
+ "note": "replace IPM_SRC/IPM_DST/Scales in pc/perception.py with this H (warp image with Hinv to render BEV, or sample line via H)"
+}

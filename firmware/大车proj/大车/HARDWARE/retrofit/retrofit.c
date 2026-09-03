@@ -123,6 +123,56 @@ void retrofit_clear_estop(void)
     lift_bits = 0;
 }
 
+/* ---------------- F2: independent hardware watchdog (IWDG) ----------------
+   1.6 s timeout; fed by retrofit_poll_1ms every 200 ms. MCU lockup -> reset.
+   On reset mode defaults to MANUAL and outputs are safe. */
+static void iwdg_init(void)
+{
+    IWDG_WriteAccessCmd(IWDG_WriteAccess_Enable);
+    IWDG_SetPrescaler(IWDG_Prescaler_64);      /* LSI 32k / 64 = 500 Hz */
+    IWDG_SetReload(800);                        /* 1.6 s */
+    IWDG_ReloadCounter();
+    IWDG_Enable();
+}
+
+static uint32_t iwdg_last_feed = 0;
+
+static void iwdg_feed(void)
+{
+    if ((uint32_t)(tick_ms - iwdg_last_feed) >= 200) {
+        iwdg_last_feed = tick_ms;
+        IWDG_ReloadCounter();
+    }
+}
+
+/* ---------------- F1: command slew-rate limiter ----------------
+   AUTO/MANUAL and estop transitions are step changes; the limiter bounds
+   wheel-speed slew at SLEW_ACC so the chassis never jumps. */
+#define SLEW_ACC 0.2f   /* m/s per second */
+
+static float out_vl = 0.0f, out_vr = 0.0f;
+
+static void slew_step(void)
+{
+    float target_l = estop_latched ? 0.0f : cmd_vl;
+    float target_r = estop_latched ? 0.0f : cmd_vr;
+    float max_d = SLEW_ACC * 0.001f;   /* per 1 ms tick */
+    float dl = target_l - out_vl;
+    float dr = target_r - out_vr;
+    if (dl >  max_d) dl =  max_d;
+    if (dl < -max_d) dl = -max_d;
+    if (dr >  max_d) dr =  max_d;
+    if (dr < -max_d) dr = -max_d;
+    out_vl += dl;
+    out_vr += dr;
+}
+
+void retrofit_get_wheel_cmd(float *vl, float *vr)
+{
+    *vl = out_vl;
+    *vr = out_vr;
+}
+
 /* ---------------- wheel speed: TIM3 4-channel capture ---------------- */
 static void wheel_speed_update(void)
 {
@@ -248,6 +298,8 @@ void retrofit_poll_1ms(void)
     /* SBUS heartbeat: telecontrol sets sbus_last_ms on valid frame;
       遥控断链在 MANUAL 下也照常，不自动切 AUTO（安全默认为手动） */
 
+    iwdg_feed();
+    slew_step();
     wheel_speed_update();
     apply_outputs();
     stepper_update();
@@ -358,6 +410,7 @@ void retrofit_init(void)
     n.NVIC_IRQChannelSubPriority = 1;
     NVIC_Init(&n);
 
+    iwdg_init();
     tim6_1ms_init();
 }
 
@@ -401,12 +454,6 @@ void TIM3_IRQHandler(void)
 void retrofit_notify_sbus(void)   /* called by telecontrol.c on valid SBUS frame */
 {
     sbus_last_ms = tick_ms;
-}
-
-void retrofit_get_wheel_cmd(float *vl, float *vr)  /* consumed by car_control.c */
-{
-    *vl = cmd_vl;
-    *vr = cmd_vr;
 }
 
 /* TIM6: 1 ms tick source for retrofit_poll_1ms (TIM6 unused in project) */
