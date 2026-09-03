@@ -16,17 +16,19 @@ import sys
 import cv2
 import numpy as np
 
-# workspace root on sys.path so morph_process / network are importable
+# workspace root (and tools/) on sys.path so morph_process / network are importable
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _ROOT not in sys.path:
-    sys.path.insert(0, _ROOT)
+_TOOLS = os.path.join(_ROOT, 'tools')
+for _p in (_ROOT, _TOOLS):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from morph_process import peony_postprocess  # noqa: E402
 
 MODEL_W, MODEL_H = 960, 720
 NUM_CLASSES = 2
 WEIGHT_PATH = os.path.join(_ROOT, 'model_data', 'weights', 'best_model.pth')
-CALIB_PATH = os.path.join(_ROOT, 'calib_params.npz')
+CALIB_PATH = os.path.join(_ROOT, 'data', 'calib_params.npz')
 
 # IPM trapezoid (960x720 image space) — placeholder until low-mount recalibration
 IPM_SRC = np.float32([[80, 540], [880, 540], [320, 200], [640, 200]])

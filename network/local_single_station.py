@@ -22,8 +22,9 @@ import numpy as np
 
 # Add project root to path so imports work from any working directory
 _PROJ_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if _PROJ_ROOT not in sys.path:
-    sys.path.insert(0, _PROJ_ROOT)
+for _p in (_PROJ_ROOT, os.path.join(_PROJ_ROOT, 'tools')):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from network.modeling import deeplabv3plus_mobilenet
 from morph_process import peony_postprocess

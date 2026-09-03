@@ -6,3 +6,5 @@ __pycache__/
 *.pyc
 hardware_ref/大板/*.PcbDoc
 ~$*
+data/videos/
+calib_imgs/

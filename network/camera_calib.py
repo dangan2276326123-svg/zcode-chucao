@@ -10,7 +10,7 @@ import cv2
 # ---------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------
-CALIB_PATH = r"D:\JetBrains\prj_xiangjibiaodi\calib_params.npz"
+CALIB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "calib_params.npz")
 
 # Model working resolution
 MODEL_W, MODEL_H = 960, 720
