@@ -1,4 +1,4 @@
-﻿"""Peony-field post-processing pipeline: wall-building, weed filtering, dual-wall centerline extraction.
+"""Peony-field post-processing pipeline: wall-building, weed filtering, dual-wall centerline extraction.
 
 Philosophy: "Build walls, find the road." 
 We do NOT segment individual plants. Instead, we treat each peony row as a continuous
@@ -223,3 +223,86 @@ def peony_postprocess(raw_mask, lookahead_y=LOOKAHEAD_Y):
     nav = fit_centerline_lsq(left_wall, right_wall, lookahead_y)
 
     return nav, left_wall, right_wall
+
+
+def _fit_trimmed(y, x, iters=3, tol_px=12.0):
+    """Row-wise robust line fit x = a*y + b, occlusion-resistant.
+
+    Each row votes once (median x of its pixels; rows with pixel spread
+    > 2*tol_px are multi-structure and dropped).  Trimmed LSQ then rejects
+    outlier rows.  Pixel-count bias (dense blobs dominating sparse walls)
+    is thereby removed by construction.
+    """
+    y = np.asarray(y)
+    x = np.asarray(x)
+    rows = {}
+    for yi, xi in zip(y, x):
+        rows.setdefault(yi, []).append(xi)
+    ry, rx, keep = [], [], []
+    for yi, xs in rows.items():
+        xs = np.asarray(xs)
+        if xs.max() - xs.min() > 2 * tol_px:   # multi-structure row
+            continue
+        ry.append(yi)
+        rx.append(np.median(xs))
+    ry = np.asarray(ry, dtype=np.float64)
+    rx = np.asarray(rx, dtype=np.float64)
+    A = np.vstack([ry, np.ones_like(ry)]).T
+    a, b = np.linalg.lstsq(A, rx, rcond=None)[0]
+    inlier = np.ones(len(ry), dtype=bool)
+    for _ in range(iters):
+        resid = rx - (a * ry + b)
+        inlier = np.abs(resid) < tol_px
+        if inlier.sum() < 30:
+            break
+        a, b = np.linalg.lstsq(A[inlier], rx[inlier], rcond=None)[0]
+    resid = rx - (a * ry + b)
+    inlier = np.abs(resid) < tol_px
+    rmse = float(np.sqrt(np.mean(resid[inlier] ** 2))) if inlier.sum() else 99.0
+    return a, b, float(inlier.mean()), rmse
+
+
+def fit_centerline_lsq_weighted(left_wall, right_wall, lookahead_y=LOOKAHEAD_Y,
+                                tol_px=12.0):
+    """Adaptive dual-wall centerline with occlusion-robust fitting.
+
+    Each wall is fitted with trimmed LSQ (inliers only), then the centerline
+    is the inlier-ratio-weighted blend of the two wall predictions.
+    Falls back to midpoint behaviour when both walls fit equally well.
+    Returns the fit_centerline_lsq dict plus "w_left"/"w_right"/"inlier_l"/"inlier_r".
+    """
+    result = fit_centerline_lsq(left_wall, right_wall, lookahead_y)
+    if result["status"] != "dual":
+        return result
+
+    def fitw(wall_mask):
+        yx = np.argwhere(wall_mask > 0)
+        a, b, inlier_ratio, rmse = _fit_trimmed(
+            yx[:, 0].astype(np.float64), yx[:, 1].astype(np.float64),
+            tol_px=tol_px)
+        return a, b, inlier_ratio, rmse
+
+    a_l, b_l, i_l, rmse_l = fitw(left_wall)
+    a_r, b_r, i_r, rmse_r = fitw(right_wall)
+    result["left_x"] = float(a_l * lookahead_y + b_l)
+    result["right_x"] = float(a_r * lookahead_y + b_r)
+    result["left_slope"], result["right_slope"] = a_l, a_r
+
+    # Weighting activates ONLY when one wall is critically degraded
+    # (inlier ratio < 0.5).  Otherwise the trimmed fits are both accurate
+    # and the exact midpoint is optimal — zero added noise.
+    LOW = 0.5
+    if i_l >= LOW and i_r >= LOW:
+        w_l = 0.5
+    else:
+        q_l = i_l / (1.0 + rmse_l)
+        q_r = i_r / (1.0 + rmse_r)
+        w_raw = q_l / (q_l + q_r)
+        w_l = 0.5 + 0.25 * (2.0 * w_raw - 1.0)   # bounded ±0.25
+    center = w_l * result["left_x"] + (1 - w_l) * result["right_x"]
+    result["center_x"] = float(center)
+    result["lateral_error"] = result["center_x"] - MID_X
+    result["w_left"] = float(w_l)
+    result["w_right"] = float(1 - w_l)
+    result["inlier_l"], result["inlier_r"] = i_l, i_r
+    return result
