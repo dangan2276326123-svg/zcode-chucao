@@ -8,3 +8,7 @@ hardware_ref/大板/*.PcbDoc
 ~$*
 data/videos/
 calib_imgs/
+firmware/大车proj/大车/OBJ/
+.idea/
+*.uvoptx
+*.uvguix.*

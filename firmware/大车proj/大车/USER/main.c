@@ -93,7 +93,7 @@ int main(void)
 	
 
   //double wheel_Angle_Init[4]={0,0,0,0};
-  double wheel_Angle_Init[4]={3.1415926,3.1415926,3.1415926,3.1415926};	//左前3.99 右前2.50 左后 2.44 右后3.95;//四个轮子的初始值	，同步时两前轮相同两后轮相同  上位机要保存和修改的就是这个数
+  double wheel_Angle_Init[4]={3.1415926,3.1415926,3.1415926,3.1415926};		//左前3.99 右前2.50 左后 2.44 右后3.95;//四个轮子的初始值	，同步时两前轮相同两后轮相同  上位机要保存和修改的就是这个数
   double wheel_angle_limit=0.420;     //2.5度  定义车轮转向的机械极限角度 0.0175    25         
 	
   extern u8 mp3_flag,mp3_flag_last,mp3_time,mp3_other;// 音乐播放类型、播放时间控制
@@ -526,6 +526,17 @@ while(1)
 		
 	//控制伺服电机
     
+/* RETROFIT safety gate: AUTO uses slew-limited vision commands;
+   ESTOP or retrofit fault forces zero. MANUAL falls through to the
+   original SBUS path below, unchanged. */
+	if (retrofit_mode() == MODE_AUTO) {
+		float vl = 0.0f, vr = 0.0f;
+		retrofit_get_wheel_cmd(&vl, &vr);
+		veloc[0] = veloc[2] = vl;   /* left front/rear */
+		veloc[1] = veloc[3] = vr;   /* right front/rear */
+	} else if (retrofit_mode() == MODE_ESTOP) {
+		veloc[0] = veloc[1] = veloc[2] = veloc[3] = 0.0;
+	}
 //左前
 			pwm_veloc(0,veloc[0]);  //速度控制
 			

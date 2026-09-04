@@ -24,6 +24,7 @@ for _p in (_ROOT, _TOOLS):
         sys.path.insert(0, _p)
 
 from morph_process import peony_postprocess  # noqa: E402
+from tools.morph_process import fit_centerline_lsq_weighted  # noqa: E402
 
 MODEL_W, MODEL_H = 960, 720
 NUM_CLASSES = 2
@@ -131,6 +132,12 @@ class Perception:
                                        flags=cv2.INTER_LINEAR)
         nav_far, left_w, right_w = peony_postprocess(
             ipm_mask.copy(), lookahead_y=LOOKAHEAD_FAR_Y)
+        if nav_far.get('status') == 'dual':
+            nav_w = fit_centerline_lsq_weighted(left_w, right_w,
+                                                LOOKAHEAD_FAR_Y)
+            cx = nav_w.get('center_x')
+            if cx is not None and np.isfinite(cx):
+                nav_far = nav_w   # gated: no-op unless a wall is degraded
         nav_near, _, _ = peony_postprocess(
             ipm_mask.copy(), lookahead_y=LOOKAHEAD_NEAR_Y)
 

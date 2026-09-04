@@ -19,9 +19,9 @@ def build_pipeline(pc_ip=PC_IP, port=PORT, w=WIDTH, h=HEIGHT, fps=FPS,
     return (
         'gst-launch-1.0 -e v4l2src device=/dev/video0 io-mode=4 ! '
         f'video/x-h264,width={w},height={h},framerate={fps}/1 ! '
-        f'h264parse config-interval=1 ! rtph264pay pt=96 ! '
+        f'h264parse config-interval=1 ! mpegtsmux ! '
         f'udpsink host={pc_ip} port={port}'
-    )
+    )   # MPEG-TS over UDP: decodable by OpenCV/ffmpeg udp:// without SDP
 
 
 def build_pipeline_soft(pc_ip=PC_IP, port=PORT, w=WIDTH, h=HEIGHT, fps=FPS,
@@ -33,9 +33,9 @@ def build_pipeline_soft(pc_ip=PC_IP, port=PORT, w=WIDTH, h=HEIGHT, fps=FPS,
         f'video/x-raw,width={w},height={h},framerate={fps}/1 ! '
         'videoconvert ! '
         f'x264enc tune=zerolatency bitrate={bitrate} key-int-max={fps} ! '
-        f'h264parse config-interval=1 ! rtph264pay pt=96 ! '
+        f'h264parse config-interval=1 ! mpegtsmux ! '
         f'udpsink host={pc_ip} port={port}'
-    )
+    )   # MPEG-TS over UDP: decodable by OpenCV/ffmpeg udp:// without SDP
 
 
 def main():

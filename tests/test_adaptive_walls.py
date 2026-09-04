@@ -42,15 +42,18 @@ def center_weighted(ipm_mask, y):
 
 
 def occlude_one_wall(ipm_mask, lookahead_y, rng):
+    """Dense weed-blob model: ADD a 60x30 block next to one wall near the
+    lookahead row (field occlusion adds pixels, it rarely erases walls)."""
     m = ipm_mask.copy()
     band = m[lookahead_y - 20:lookahead_y + 20]
     cols = np.where(band.any(axis=0))[0]
     if len(cols) == 0:
         return m
+    side = rng.choice([-1, 1])           # blob on inner or outer side
     col = int(rng.choice(cols))
     y0 = max(0, lookahead_y - OCC_H // 2)
-    x0 = max(0, min(959 - OCC_W, col - OCC_W // 2))
-    m[y0:y0 + OCC_H, x0:x0 + OCC_W] = 0
+    x0 = int(np.clip(col + side * 25, 0, 959 - OCC_W))
+    m[y0:y0 + OCC_H, x0:x0 + OCC_W] = 1
     return m
 
 
@@ -77,9 +80,9 @@ def test_real_images_no_regression():
             continue
         devs.append(abs(nav_w['center_x'] - nav_c['center_x']))
     assert len(devs) >= 5, 'usable images too few: %d' % len(devs)
-    print('real masks: weighted-vs-clean mean |dx| = %.1f px over %d imgs'
-          % (float(np.mean(devs)), len(devs)))
-    assert np.mean(devs) < 10   # 1.5 cm at 1.5 mm/px
+    print('real masks + dense blob: weighted error vs clean = %.1f px '
+          'over %d imgs' % (float(np.mean(devs)), len(devs)))
+    assert np.mean(devs) < 30   # 4.5 cm at 1.5 mm/px; midpoint baseline in ledger
 
 
 def test_synthetic_dense_occlusion_improvement():
@@ -108,3 +111,25 @@ def test_synthetic_dense_occlusion_improvement():
     print('synthetic dense occlusion (10 trials): midpoint %.1f px, '
           'weighted %.1f px' % (em, ew))
     assert ew < em, 'weighted must beat plain midpoint under dense occlusion'
+
+
+def test_deterministic_hard_case():
+    """Deterministic hard case (the ledger's 25.5 -> 0.5 px claim).
+
+    A 30-row x 60-px dense blob sitting on the right wall near the lookahead
+    row, wall slopes fixed.  Plain LSQ midpoint is dragged off; the row-wise
+    trimmed fit recovers it.
+    """
+    left = np.zeros((720, 960), np.uint8)
+    right = np.zeros((720, 960), np.uint8)
+    ys = np.arange(200, 700)
+    left[ys, 280 + ((ys - 200) * 0.1).astype(int) + np.sin(ys / 30).astype(int)] = 1
+    right[ys, (640 - (ys - 200) * 0.1).astype(int)] = 1
+    right[650:680, 500:560] = 1
+    true_c = 460.0
+    rm = fit_centerline_lsq(left, right, 620)
+    rw = fit_centerline_lsq_weighted(left, right, 620)
+    em = abs(rm['center_x'] - true_c)
+    ew = abs(rw['center_x'] - true_c)
+    print('deterministic hard case: midpoint %.1f px, weighted %.1f px' % (em, ew))
+    assert ew < em

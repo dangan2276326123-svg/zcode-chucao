@@ -30,6 +30,7 @@ static uint16_t tx_seq = 0;
 static float cmd_vl, cmd_vr;        /* AUTO target wheel speeds m/s */
 static float tool_offset_mm;        /* middle slide target */
 static uint8_t lift_bits;           /* bit0..2 = beams 1..3 raised */
+static volatile uint32_t last_tool_ms = 0;
 
 /* wheel speed (TIM3 capture) */
 static volatile uint32_t cap_period[4] = {0,0,0,0};
@@ -101,6 +102,7 @@ void retrofit_on_nav_frame(const uint8_t *payload, uint16_t len, uint16_t seq)
 void retrofit_on_tool_frame(const uint8_t *payload, uint16_t len)
 {
     if (len < 5 || estop_latched) return;
+    last_tool_ms = tick_ms;
     memcpy(&tool_offset_mm, &payload[0], 4);
     lift_bits = payload[4];
     if (tool_offset_mm >  50.0f) tool_offset_mm =  50.0f;
@@ -123,27 +125,11 @@ void retrofit_clear_estop(void)
     lift_bits = 0;
 }
 
-/* ---------------- F2: independent hardware watchdog (IWDG) ----------------
-   1.6 s timeout; fed by retrofit_poll_1ms every 200 ms. MCU lockup -> reset.
-   On reset mode defaults to MANUAL and outputs are safe. */
-static void iwdg_init(void)
-{
-    IWDG_WriteAccessCmd(IWDG_WriteAccess_Enable);
-    IWDG_SetPrescaler(IWDG_Prescaler_64);      /* LSI 32k / 64 = 500 Hz */
-    IWDG_SetReload(800);                        /* 1.6 s */
-    IWDG_ReloadCounter();
-    IWDG_Enable();
-}
-
-static uint32_t iwdg_last_feed = 0;
-
-static void iwdg_feed(void)
-{
-    if ((uint32_t)(tick_ms - iwdg_last_feed) >= 200) {
-        iwdg_last_feed = tick_ms;
-        IWDG_ReloadCounter();
-    }
-}
+/* F2 note: the independent hardware watchdog is the board's existing
+   IWDG (main.c: IWDG_Init(4,500) ~= 1 s, fed in the main loop).  A second
+   IWDG instance is not possible on the same peripheral; retrofit coverage
+   comes from the fact that any retrofit/TIM6 lock-up also stops the main
+   loop's feeding and triggers that reset. */
 
 /* ---------------- F1: command slew-rate limiter ----------------
    AUTO/MANUAL and estop transitions are step changes; the limiter bounds
@@ -165,6 +151,11 @@ static void slew_step(void)
     if (dr < -max_d) dr = -max_d;
     out_vl += dl;
     out_vr += dr;
+}
+
+uint8_t retrofit_mode(void)
+{
+    return mode;
 }
 
 void retrofit_get_wheel_cmd(float *vl, float *vr)
@@ -240,11 +231,15 @@ static void apply_outputs(void)
     /* knife relays PD4/5/6: in AUTO commanded by lift_bits (1=up);
        in MANUAL all follow lift request but relays default released;
        ESTOP forces all up (open relay = beam raised) */
+    /* MANUAL default-safe: a manual tool command is only honoured within
+       500 ms of the last TOOL frame; otherwise knives stay UP. */
+    uint8_t tool_cmd_fresh =
+        (uint32_t)(tick_ms - last_tool_ms) < 500;
     for (i = 0; i < 3; i++) {
         uint8_t up;
         if (estop_latched) up = 1;
         else if (auto_active) up = (lift_bits >> i) & 1;
-        else up = (lift_bits >> i) & 1;
+        else up = tool_cmd_fresh ? (lift_bits >> i) & 1 : 1;
         gpio_out(GPIOD, (uint16_t)(GPIO_Pin_4 << i), up);
     }
 
@@ -261,6 +256,14 @@ static void stepper_update(void)
     float err_mm = tool_offset_mm - applied_mm;
     float hz;
     uint16_t arr;
+    uint8_t lim_origin, lim_left, lim_right;
+    lim_origin = GPIO_ReadInputDataBit(GPIOD, GPIO_Pin_15);
+    lim_left  = GPIO_ReadInputDataBit(GPIOD, GPIO_Pin_10);
+    lim_right = GPIO_ReadInputDataBit(GPIOD, GPIO_Pin_11);
+    /* active-low switches: 0 = hit.  Block motion that would drive INTO a hit */
+    if (lim_left == 0 && err_mm > 0) err_mm = 0.0f;
+    if (lim_right == 0 && err_mm < 0) err_mm = 0.0f;
+    if (lim_origin == 0) err_mm = 0.0f;   /* origin: hold position */
     if (!estop_latched && err_mm != 0.0f) {
         /* direction: positive offset -> DIR high */
         gpio_out(GPIOB, GPIO_Pin_5, err_mm > 0);
@@ -298,7 +301,6 @@ void retrofit_poll_1ms(void)
     /* SBUS heartbeat: telecontrol sets sbus_last_ms on valid frame;
       遥控断链在 MANUAL 下也照常，不自动切 AUTO（安全默认为手动） */
 
-    iwdg_feed();
     slew_step();
     wheel_speed_update();
     apply_outputs();
@@ -410,7 +412,6 @@ void retrofit_init(void)
     n.NVIC_IRQChannelSubPriority = 1;
     NVIC_Init(&n);
 
-    iwdg_init();
     tim6_1ms_init();
 }
 

@@ -10,7 +10,7 @@
 |---|---|
 | `README.md` | 本文件：目录/文件说明 + 快速上手 |
 | `AGENTS.md` | AI 协作（ZCode/Agent）工作约定 |
-| `.gitignore` | git 忽略规则（视频、抽帧、标定图、权重、Keil 大文件等） |
+| `.gitignore` | git 忽略规则（视频、抽帧、标定图、权重、抽帧、标定图、权重等（Keil OBJ 编译产物已另行清理出库）） |
 
 ### `common/` — PC/车端共用的 Python 模块
 

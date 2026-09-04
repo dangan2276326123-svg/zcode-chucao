@@ -27,21 +27,26 @@ PC_PORT = 9100
 UDP_PORT = 9000
 
 
-def decide_forward(raw, now_ms, last_pc_ms, auto_on):
+SEEN_WINDOW_MS = 60000   # PC considered 'running' if a frame seen within 60 s
+
+
+def decide_forward(raw, now_ms, last_pc_ms, auto_on, seen_any=False):
     """Return (forward_bytes_or_None, estop_inject_bool, new_last_pc_ms).
 
-    Called for every received UDP datagram AND periodically with raw=None
-    (heartbeat check).  Watchdog: no PC frame for LINK_TIMEOUT_MS while
-    auto is on -> inject estop.
+    Watchdog injects ESTOP only while the PC application is actually in use
+    (a frame was seen within SEEN_WINDOW_MS) AND the link went silent for
+    LINK_TIMEOUT_MS.  A PC that is simply switched off never triggers the
+    injection, so pure-RC operation stays possible.
     """
     inject = False
+    seen_any = bool(seen_any) or (last_pc_ms > 0 and
+                                  (now_ms - last_pc_ms) < SEEN_WINDOW_MS)
     if raw is not None:
         last_pc_ms = now_ms
         return raw, False, last_pc_ms
-    if auto_on and (now_ms - last_pc_ms) > LINK_TIMEOUT_MS:
+    if auto_on and seen_any and (now_ms - last_pc_ms) > LINK_TIMEOUT_MS:
         inject = True
-        # reset timer so we inject once per timeout window
-        last_pc_ms = now_ms
+        last_pc_ms = now_ms    # one injection per timeout window
     return None, inject, last_pc_ms
 
 

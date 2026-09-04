@@ -147,8 +147,14 @@ def main():
                 usable = False
 
             # ---- state machine events ----
+            prev_state = sm.state
             if abs(lat_m) > ESTOP_LAT_LIMIT:
                 sm.estop('lat_exceeded')
+            if sm.state != prev_state:
+                # degradation must be explicit on the wire: the MCU latches
+                # ESTOP on this frame; heartbeat alone must not imply 'safe'
+                if sm.state in ('ESTOP', 'LIFT'):
+                    send(P.TYPE_ESTOP, b'')
 
             # ---- control by state ----
             vl = vr = 0.0
@@ -162,7 +168,9 @@ def main():
                 send(P.TYPE_TOOL, P.pack_tool(tool_mm, 0))
             else:
                 pid.reset()
-                send(P.TYPE_HEARTBEAT, b'')
+                send(P.TYPE_HEARTBEAT, b'')   # link keep-alive in MANUAL/LIFT
+                # ESTOP frame is sent once on the transition (see above);
+                # MCU latches and only a physical reset clears it.
 
             t_rel = t0 - t0_first
             if not args.no_gui:

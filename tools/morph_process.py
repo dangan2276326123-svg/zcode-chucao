@@ -247,6 +247,8 @@ def _fit_trimmed(y, x, iters=3, tol_px=12.0):
         rx.append(np.median(xs))
     ry = np.asarray(ry, dtype=np.float64)
     rx = np.asarray(rx, dtype=np.float64)
+    if len(ry) < 30:
+        return 0.0, float(np.median(rx)) if len(rx) else 0.0, 0.0, 99.0
     A = np.vstack([ry, np.ones_like(ry)]).T
     a, b = np.linalg.lstsq(A, rx, rcond=None)[0]
     inlier = np.ones(len(ry), dtype=bool)
