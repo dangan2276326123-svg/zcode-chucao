@@ -4,7 +4,7 @@ from pc.control import (MiddleToolPID, LatencyCompensator, DifferentialDrive,
                         LatErrorRate)
 from pc.state_machine import StateMachine
 from common import protocol as P
-from vehicle.bridge import decide_forward, extract_one_stream
+from vehicle.bridge import decide_forward, extract_one_stream, poll_serial_frames
 
 
 # ---- control ---------------------------------------------------------
@@ -132,6 +132,40 @@ def test_extract_one_skips_corrupt():
     f2 = P.pack_frame(P.TYPE_HEARTBEAT, b'', 2)
     chunk, rest = P.extract_one(bytes(f1) + f2)
     assert chunk == f2 and rest == b''
+
+
+# ---- serial frame reassembly ---------------------------------------------
+
+def test_poll_serial_frames_split_boundary():
+    f1 = P.pack_frame(P.TYPE_NAV, P.pack_nav(0.1, 0.1), 1)
+    f2 = P.pack_frame(P.TYPE_HEARTBEAT, b'', 2)
+    frames, acc = poll_serial_frames(b'', f1[:10])
+    assert frames == [] and acc == f1[:10]
+    frames, acc = poll_serial_frames(acc, f1[10:] + f2)
+    assert frames == [f1, f2] and acc == b''
+
+
+def test_poll_serial_frames_header_straddles_boundary():
+    f1 = P.pack_frame(P.TYPE_NAV, P.pack_nav(0.1, 0.1), 1)
+    frames, acc = poll_serial_frames(b'', b'\x00\xa5')
+    assert frames == [] and acc == b'\xa5'
+    frames, acc = poll_serial_frames(acc, f1[1:])
+    assert frames == [f1] and acc == b''
+
+
+def test_poll_serial_frames_garbage_does_not_accumulate():
+    frames, acc = poll_serial_frames(b'', b'\x01\x02\x03\x04\x05')
+    assert frames == [] and acc == b'\x05'
+    frames, acc = poll_serial_frames(acc, b'\x06\x07')
+    assert frames == [] and acc == b'\x07'
+
+
+def test_poll_serial_frames_corrupt_frame_is_skipped():
+    f1 = bytearray(P.pack_frame(P.TYPE_NAV, P.pack_nav(0.1, 0.1), 1))
+    f1[8] ^= 0xFF
+    f2 = P.pack_frame(P.TYPE_HEARTBEAT, b'', 2)
+    frames, acc = poll_serial_frames(b'', bytes(f1) + f2)
+    assert frames == [f2] and acc == b''
 
 
 # ---- bridge watchdog ------------------------------------------------------

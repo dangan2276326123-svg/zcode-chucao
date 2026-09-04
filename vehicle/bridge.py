@@ -73,6 +73,29 @@ def extract_one_stream(frame_bytes):
     return frame_bytes
 
 
+def poll_serial_frames(acc, sdata):
+    """Feed new serial bytes into the accumulator, return
+    (complete_frames, new_acc).
+
+    Keeps the unparsed tail between calls so frames spanning serial
+    read boundaries are parsed instead of dropped.  If no header is
+    present only the last byte is kept (a 0xA5/0x5A may straddle the
+    boundary); an incomplete frame (tail starts with a header) is kept
+    whole — bounded by the max frame size of 521 bytes.
+    """
+    stream = acc + sdata
+    frames = []
+    while stream:
+        frame, rest = P.extract_one(stream)
+        if frame is None:
+            break
+        frames.append(frame)
+        stream = rest
+    if stream[:2] != P.HEADER:
+        stream = stream[-1:]
+    return frames, stream
+
+
 def _ms():
     return int(time.monotonic() * 1000)
 
@@ -120,6 +143,7 @@ def main():
     sock.settimeout(0.002)
     pc = (cfg.get('pc_ip', PC_IP), cfg.get('pc_port', PC_PORT))
     last_pc = _ms()
+    ser_buf = b''
     print('bridge up: udp:%d -> %s' % (cfg.get('udp_port', UDP_PORT), ser.port))
     while True:
         try:
@@ -136,10 +160,9 @@ def main():
             sdata = ser.read(256)
         except OSError:
             sdata = b''
-        # naive stream split: forward whole frames only
         if sdata:
-            frame = P.extract_one(sdata) if hasattr(P, 'extract_one') else None
-            if frame:
+            frames, ser_buf = poll_serial_frames(ser_buf, sdata)
+            for frame in frames:
                 try:
                     sock.sendto(frame, pc)
                 except OSError:
