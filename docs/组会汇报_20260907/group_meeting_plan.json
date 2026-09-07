@@ -55,34 +55,100 @@
    "slide_no": 4,
    "section": "总体方案",
    "layout_type": "summary",
-   "title": "四个关键决策均已论证并固化为设计基线",
-   "bullets": [
-    "刀头：鸭掌铲主选+弹齿对比——除草率与伤苗率的权衡",
-    "算力：PC 集中计算——一期固定变量验证方法本身",
-    "线控：固件内 SBUS/UDP 双指令源——遥控保留为备份通道",
-    "运动学：四轮差速滑移转向——与实车四轮独立驱动一致"
-   ],
+   "title": "任务边界与刀头：每个选择都来自机理排除",
    "summary_rows": [
     {
-     "label": "刀头",
-     "value": "鸭掌铲主选 + 弹齿对比：除草率与伤苗率的权衡"
+     "label": "只做行间",
+     "value": "株间单株识别是行业未解难题，行墙边界把问题难度降一量级"
     },
     {
-     "label": "算力",
-     "value": "PC 集中计算：一期固定算力变量，验证方法本身"
+     "label": "机械中耕",
+     "value": "零农残是硬约束，化学排除；激光/机械臂撑不起 3 亩/日效率"
     },
     {
-     "label": "线控",
-     "value": "固件 SBUS/UDP 双指令源：遥控保留为备份通道"
+     "label": "鸭掌铲主选",
+     "value": "切根+阻力小+有文献支撑；圆盘/旋转锄等 6 种按机理排除"
     },
     {
-     "label": "运动学",
-     "value": "四轮差速滑移转向：与实车四轮独立驱动一致"
+     "label": "弹齿对比",
+     "value": "伤苗低与鸭掌铲构成除草率-伤苗率权衡，为论文提供数据张力"
     }
    ]
   },
   {
    "slide_no": 5,
+   "section": "总体方案",
+   "layout_type": "summary",
+   "title": "算力与线控：分层解耦，遥控物理独立作备份",
+   "summary_rows": [
+    {
+     "label": "PC 集中",
+     "value": "一期固定算力变量验证方法；真实链路即研究内容的一部分"
+    },
+    {
+     "label": "RDK 网关",
+     "value": "同价位多 10TOPS，二期感知下沉零二次采购"
+    },
+    {
+     "label": "双指令源",
+     "value": "SBUS 与协议链路物理独立，异常时拨回手动即恢复"
+    },
+    {
+     "label": "三级看门狗",
+     "value": "硬件复位/链路急停/桥接注入，三种故障模式三层兜底"
+    }
+   ]
+  },
+  {
+   "slide_no": 6,
+   "section": "总体方案",
+   "layout_type": "summary",
+   "title": "运动学与场景：模型必须与执行机构一致",
+   "summary_rows": [
+    {
+     "label": "差速模型",
+     "value": "实车四轮独立驱动无转向执行器，滑移转向可解析推导"
+    },
+    {
+     "label": "开题调整",
+     "value": "4WS→差速：代码保留可切换；林下→大田：光影鲁棒性保留"
+    },
+    {
+     "label": "双预视点",
+     "value": "远场供导航容忍噪声，近场供刀具要求精确"
+    },
+    {
+     "label": "IPM 单应",
+     "value": "4 点标定把安装误差吸收进 H，田间可随时重做"
+    }
+   ]
+  },
+  {
+   "slide_no": 7,
+   "section": "总体方案",
+   "layout_type": "summary",
+   "title": "算法设计由消融数据驱动，非直觉拍板",
+   "summary_rows": [
+    {
+     "label": "行投票裁剪",
+     "value": "像素密度偏置实测 25.5px→0.5px：每行一票消除遮挡偏置"
+    },
+    {
+     "label": "门控权重",
+     "value": "仅单墙内点率<0.5 激活，平时严格中点（多加权反引 2.2px 噪声）"
+    },
+    {
+     "label": "时延前馈",
+     "value": "开环补偿不依赖对象模型，无稳定性风险（弃 Smith 预估器）"
+    },
+    {
+     "label": "安全默认态",
+     "value": "刀控指令 500ms 过期自动提刀，失效方向恒为安全"
+    }
+   ]
+  },
+  {
+   "slide_no": 8,
    "section": "总体方案",
    "layout_type": "summary",
    "title": "研究内容与开题完全对应，两处按实车调整",
@@ -110,7 +176,7 @@
    ]
   },
   {
-   "slide_no": 6,
+   "slide_no": 9,
    "section": "理论方法",
    "layout_type": "text",
    "title": "理论一：单目视觉双墙约束的对行方法",
@@ -123,7 +189,7 @@
    ]
   },
   {
-   "slide_no": 7,
+   "slide_no": 10,
    "section": "理论方法",
    "layout_type": "text",
    "title": "理论二：差速底盘横向误差模型与 PD 控制",
@@ -136,7 +202,7 @@
    ]
   },
   {
-   "slide_no": 8,
+   "slide_no": 11,
    "section": "理论方法",
    "layout_type": "text",
    "title": "理论三：无线链路时延的前馈补偿",
@@ -149,7 +215,7 @@
    ]
   },
   {
-   "slide_no": 9,
+   "slide_no": 12,
    "section": "理论方法",
    "layout_type": "summary",
    "title": "IPM 投影误差已分解，对策覆盖主要误差源",
@@ -179,7 +245,7 @@
    ]
   },
   {
-   "slide_no": 10,
+   "slide_no": 13,
    "section": "理论方法",
    "layout_type": "summary",
    "title": "创新点定稿：方法为核心，装置为载体",
@@ -209,7 +275,7 @@
    ]
   },
   {
-   "slide_no": 11,
+   "slide_no": 14,
    "section": "试验设计",
    "layout_type": "comparison",
    "title": "三组对比试验覆盖方法、机构与工程三层",
@@ -234,7 +300,7 @@
    ]
   },
   {
-   "slide_no": 12,
+   "slide_no": 15,
    "section": "进度与计划",
    "layout_type": "summary",
    "title": "代码与固件侧交付已全部完成",
@@ -265,7 +331,7 @@
    ]
   },
   {
-   "slide_no": 13,
+   "slide_no": 16,
    "section": "进度与计划",
    "layout_type": "text",
    "title": "当前瓶颈在实物侧，不在算法侧",
@@ -278,7 +344,7 @@
    ]
   },
   {
-   "slide_no": 14,
+   "slide_no": 17,
    "section": "进度与计划",
    "layout_type": "process",
    "title": "后续四周：从台架到下田",
@@ -294,7 +360,7 @@
    ]
   },
   {
-   "slide_no": 15,
+   "slide_no": 18,
    "section": "进度与计划",
    "layout_type": "closing",
    "title": "请各位老师同学批评指正",
