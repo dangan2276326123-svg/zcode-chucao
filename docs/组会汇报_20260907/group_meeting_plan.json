@@ -83,6 +83,34 @@
   },
   {
    "slide_no": 5,
+   "section": "总体方案",
+   "layout_type": "summary",
+   "title": "研究内容与开题完全对应，两处按实车调整",
+   "summary_rows": [
+    {
+     "label": "内容一",
+     "value": "平台与除草装置设计 → 三刀装置+刀头选型+限深仿形（对应中）"
+    },
+    {
+     "label": "内容二",
+     "value": "导航线提取 → 分割 + 行投票裁剪拟合，含霍夫/最小二乘对比（对应）"
+    },
+    {
+     "label": "内容三",
+     "value": "上下位机解耦控制 → PC+STM32+协议帧+三级看门狗（对应）"
+    },
+    {
+     "label": "调整一",
+     "value": "种植场景由林下调整为大田，光影鲁棒性保留为采集维度"
+    },
+    {
+     "label": "调整二",
+     "value": "底盘由四轮转向改为四轮独立驱动差速，运动学模型同步修正"
+    }
+   ]
+  },
+  {
+   "slide_no": 6,
    "section": "理论方法",
    "layout_type": "text",
    "title": "理论一：单目视觉双墙约束的对行方法",
@@ -95,7 +123,7 @@
    ]
   },
   {
-   "slide_no": 6,
+   "slide_no": 7,
    "section": "理论方法",
    "layout_type": "text",
    "title": "理论二：差速底盘横向误差模型与 PD 控制",
@@ -108,7 +136,7 @@
    ]
   },
   {
-   "slide_no": 7,
+   "slide_no": 8,
    "section": "理论方法",
    "layout_type": "text",
    "title": "理论三：无线链路时延的前馈补偿",
@@ -121,7 +149,7 @@
    ]
   },
   {
-   "slide_no": 8,
+   "slide_no": 9,
    "section": "理论方法",
    "layout_type": "summary",
    "title": "IPM 投影误差已分解，对策覆盖主要误差源",
@@ -151,7 +179,7 @@
    ]
   },
   {
-   "slide_no": 9,
+   "slide_no": 10,
    "section": "理论方法",
    "layout_type": "summary",
    "title": "创新点定稿：方法为核心，装置为载体",
@@ -181,7 +209,7 @@
    ]
   },
   {
-   "slide_no": 10,
+   "slide_no": 11,
    "section": "试验设计",
    "layout_type": "comparison",
    "title": "三组对比试验覆盖方法、机构与工程三层",
@@ -206,7 +234,7 @@
    ]
   },
   {
-   "slide_no": 11,
+   "slide_no": 12,
    "section": "进度与计划",
    "layout_type": "summary",
    "title": "代码与固件侧交付已全部完成",
@@ -237,7 +265,7 @@
    ]
   },
   {
-   "slide_no": 12,
+   "slide_no": 13,
    "section": "进度与计划",
    "layout_type": "text",
    "title": "当前瓶颈在实物侧，不在算法侧",
@@ -250,7 +278,7 @@
    ]
   },
   {
-   "slide_no": 13,
+   "slide_no": 14,
    "section": "进度与计划",
    "layout_type": "process",
    "title": "后续四周：从台架到下田",
@@ -266,7 +294,7 @@
    ]
   },
   {
-   "slide_no": 14,
+   "slide_no": 15,
    "section": "进度与计划",
    "layout_type": "closing",
    "title": "请各位老师同学批评指正",
