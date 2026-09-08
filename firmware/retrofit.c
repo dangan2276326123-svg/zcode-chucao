@@ -67,8 +67,10 @@ void USART6_IRQHandler(void)
                 retrofit_on_estop();
                 break;
             case TYPE_HEARTBEAT:
-            default:
-                break;  /* heartbeat just refreshes watchdog via last_pc_ms */
+                /* PC alive but not commanding -> release AUTO so the RC
+                   operator regains control; AUTO entry is NAV-driven (P0-2) */
+                if (mode == MODE_AUTO) mode = MODE_MANUAL;
+                break;  /* heartbeat also refreshes watchdog via last_pc_ms */
             }
         }
     }
@@ -87,7 +89,7 @@ static void uart6_send(const uint8_t *data, uint16_t len)
 void retrofit_on_nav_frame(const uint8_t *payload, uint16_t len, uint16_t seq)
 {
     (void)seq;
-    if (len < 9 || estop_latched || mode == MODE_MANUAL) return;
+    if (len < 9 || estop_latched) return;  /* NAV implies AUTO (P0-2 fix) */
     /* payload: vL f32le, vR f32le, flags u8 */
     memcpy(&cmd_vl, &payload[0], 4);
     memcpy(&cmd_vr, &payload[4], 4);
