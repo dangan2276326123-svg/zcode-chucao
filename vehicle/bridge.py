@@ -147,7 +147,9 @@ def main():
     sock.bind(('0.0.0.0', cfg.get('udp_port', UDP_PORT)))
     sock.settimeout(0.002)
     pc = (cfg.get('pc_ip', PC_IP), cfg.get('pc_port', PC_PORT))
-    last_pc = _ms()
+    # 0 = "no PC ever seen": pure-RC boot must NOT arm the watchdog (P0-5).
+    # seen_any becomes true only after the first real PC frame arrives.
+    last_pc = 0
     ser_buf = b''
     print('bridge up: udp:%d -> %s' % (cfg.get('udp_port', UDP_PORT), ser.port))
     while True:

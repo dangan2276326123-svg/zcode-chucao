@@ -193,3 +193,23 @@ def test_watchdog_resets_on_pc_frame():
 def test_extract_one_stream_helper():
     f1 = P.pack_frame(P.TYPE_HEARTBEAT, b'', 1)
     assert extract_one_stream(f1) == f1
+
+
+# ---- P0-5 regression: bridge cold start must not arm the watchdog ----
+
+def test_bridge_cold_start_pure_rc_no_inject():
+    # last_pc=0 means "no PC ever seen": even with auto_on, never inject
+    fwd, inject, last = decide_forward(None, 5000, last_pc_ms=0, auto_on=True)
+    assert fwd is None and not inject and last == 0
+
+
+def test_bridge_inject_only_after_pc_seen_then_lost():
+    # PC seen 10 s ago, silent 10 s (>500 ms) -> inject exactly once
+    fwd, inject, last = decide_forward(None, 20000, last_pc_ms=10000, auto_on=True)
+    assert fwd is None and inject and last == 20000
+
+
+def test_bridge_seen_window_expiry_stops_injection():
+    # PC seen 70 s ago (window 60 s expired) -> no injection
+    fwd, inject, last = decide_forward(None, 100000, last_pc_ms=30000, auto_on=True)
+    assert fwd is None and not inject

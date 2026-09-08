@@ -45,6 +45,16 @@ MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
 
+def preprocess_rgb(rgb):
+    """RGB uint8 (H,W,3), values 0..255 -> normalized float32 CHW model input.
+
+    Training normalizes 0..1-scale images with ImageNet MEAN/STD (see
+    train_m.py), so the /255 here is mandatory — skipping it feeds the
+    network values ~255x out of distribution (P0-3, 2026-09-05 review).
+    """
+    return ((rgb.astype(np.float32) / 255.0 - MEAN) / STD).transpose(2, 0, 1)
+
+
 class Calib:
     """Lazy calibration holder; builds undistort maps on first use."""
 
@@ -110,7 +120,7 @@ class Perception:
     def _infer_mask(self, undistorted_bgr):
         """BGR (960x720) -> binary mask (0 bg / 1 peony), same size."""
         rgb = cv2.cvtColor(undistorted_bgr, cv2.COLOR_BGR2RGB)
-        x = ((rgb.astype(np.float32) - MEAN) / STD).transpose(2, 0, 1)
+        x = preprocess_rgb(rgb)
         tensor = self.torch.from_numpy(x).unsqueeze(0).to(self.device)
         with self.torch.no_grad():
             logits = self.model(tensor)

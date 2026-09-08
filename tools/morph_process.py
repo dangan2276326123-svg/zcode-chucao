@@ -299,6 +299,11 @@ def fit_centerline_lsq_weighted(left_wall, right_wall, lookahead_y=LOOKAHEAD_Y,
     else:
         q_l = i_l / (1.0 + rmse_l)
         q_r = i_r / (1.0 + rmse_r)
+        if q_l + q_r <= 0.0:
+            # both walls unfit (e.g. empty/near-empty masks under correct
+            # normalization): fall back to the plain trimmed midpoint
+            # instead of dividing by zero (regression found via P0-3 fix)
+            return result
         w_raw = q_l / (q_l + q_r)
         w_l = 0.5 + 0.25 * (2.0 * w_raw - 1.0)   # bounded ±0.25
     center = w_l * result["left_x"] + (1 - w_l) * result["right_x"]

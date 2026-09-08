@@ -113,18 +113,20 @@ WORST_SAMPLE_NUM = 3
 
 
 # 学术级 6:2:2 数据集物理路径配置中心
+# 相对工作区解析,禁止写死原仓库绝对路径(原仓库只读,见 AGENTS.md, P1-7)
+_WS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-TRAIN_IMG_DIR = r"D:/JetBrains/chucao_prj/model_data/train/images"
+TRAIN_IMG_DIR = os.path.join(_WS, "model_data", "train", "images")
 
-TRAIN_MASK_DIR = r"D:/JetBrains/chucao_prj/model_data/train/masks"
+TRAIN_MASK_DIR = os.path.join(_WS, "model_data", "train", "masks")
 
-VAL_IMG_DIR = r"D:/JetBrains/chucao_prj/model_data/val/images"
+VAL_IMG_DIR = os.path.join(_WS, "model_data", "val", "images")
 
-VAL_MASK_DIR = r"D:/JetBrains/chucao_prj/model_data/val/masks"
+VAL_MASK_DIR = os.path.join(_WS, "model_data", "val", "masks")
 
-TEST_IMG_DIR = r"D:/JetBrains/chucao_prj/model_data/test/images"
+TEST_IMG_DIR = os.path.join(_WS, "model_data", "test", "images")
 
-TEST_MASK_DIR = r"D:/JetBrains/chucao_prj/model_data/test/masks"
+TEST_MASK_DIR = os.path.join(_WS, "model_data", "test", "masks")
 
 
 

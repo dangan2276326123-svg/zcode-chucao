@@ -102,12 +102,15 @@ def main():
     comp = LatencyCompensator()
     rate = LatErrorRate()
 
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    # live only: replay must never be able to drive the vehicle (P0-8)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) if args.live else None
     pi = (args.pi_ip, PI_PORT)
     seq = 0
 
     def send(ftype, payload):
         nonlocal seq
+        if sock is None:      # replay mode: no radio, no commands leave the PC
+            return
         from common import protocol as P
         sock.sendto(P.pack_frame(ftype, payload, seq & 0xFFFF), pi)
         seq += 1
@@ -128,6 +131,7 @@ def main():
             t0 = time.time()
             dt = max(t0 - t_prev, 1e-3)
             t_prev = t0
+            prev_state = sm.state   # captured BEFORE any state event (P0-4)
 
             res = per.process(frame)
             latency = (time.time() - t0) * 1000.0
@@ -147,7 +151,6 @@ def main():
                 usable = False
 
             # ---- state machine events ----
-            prev_state = sm.state
             if abs(lat_m) > ESTOP_LAT_LIMIT:
                 sm.estop('lat_exceeded')
             if sm.state != prev_state:
@@ -160,10 +163,12 @@ def main():
             vl = vr = 0.0
             tool_mm = 0.0
             if sm.state == 'AUTO' and usable:
+                tool_px = res.get('tool_offset_px')
+                if tool_px is None:      # far field ok, near field lost (P1-3)
+                    tool_px = 0.0
                 lat_c = comp.compensate(lat_m, rate.update(lat_m, dt))
                 vl, vr = drive.wheel_speeds(lat_c)
-                tool_mm = pid.update(res['tool_offset_px'] *
-                                     px_to_meters(1.0) * 1000.0, dt)
+                tool_mm = pid.update(tool_px * px_to_meters(1.0) * 1000.0, dt)
                 send(P.TYPE_NAV, P.pack_nav(vl, vr))
                 send(P.TYPE_TOOL, P.pack_tool(tool_mm, 0))
             else:
@@ -187,7 +192,10 @@ def main():
                 elif k == ord('m'):
                     sm.go_manual()
                 elif k == ord('e'):
+                    prev = sm.state
                     sm.estop('key')
+                    if sm.state != prev and sm.state in ('ESTOP', 'LIFT'):
+                        send(P.TYPE_ESTOP, b'')   # keyboard path must wire too (P0-4)
                 elif k == ord('r'):
                     sm.clear_estop()   # TEST ONLY; real reset is physical
 
