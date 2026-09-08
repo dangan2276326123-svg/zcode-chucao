@@ -2,6 +2,9 @@
 
 本工作区是唯一开发区。`D:\JetBrains\chucao_prj` 等原仓库**只读，禁止修改**。
 
-## 当前状态（2026-09-02）
-- 方案 v0.7（docs/纯视觉芍药行间除草机器人_手把手实施方案_v0.7.docx）为最新执行版本
-- 阶段：W1-W2 算法/固件代码全部完成——protocol、perception、replay、control、state_machine、bridge、stream、firmware/（protocol.c+retrofit.c，未编译）、uart_vectors、缺口清单（docs/缺口清单.md）。pytest 31/31。等：Keil 编译、树莓派、IPM 重标定、秋季样本。下一步我侧：pc/main.py 装配 + gui.py + 秋季采集清单
+## 当前状态（2026-09-05，第三次外部评审后）
+- **硬约束：禁止实车 AUTO、禁止按现有接线文档直接带动力接线、禁止运行 network/train_m.py（写死原仓库路径）**——8 条 P0 全部实证成立，详见 docs/缺口清单.md §F*
+- 核心矛盾：retrofit.c MANUAL 收 NAV 提前 return → MCU 永远进不了 AUTO；perception 归一化漏 /255（在线推理输出无效）；ESTOP/视觉丢失不发帧；bridge 冷启动锁死遥控；printf 污染 USART6
+- 硬件事实（已确认）：实车板 V3.3（U5/U6/U17 已贴，V3.2 备板不作依据）；4×行走电机=固件同款；转向伺服在车（UART4 Modbus）；滑台伺服+丝杆在车未接线；3×电推杆+外接继电器板在车（接入方式待照片）；相机=USB3.0 UVC
+- 采购已定：RDK X5 已购；TB6600/继电器模块取消；剩 CPE 网桥一对视 B8
+- 下一步：①P0 速修批次（P0-2/4/5/6/8+P0-3+P1-3/7，半天）；②等继电器板照片定刀控；③论文/PPT 按新事实重写运动学与完成度表述
