@@ -175,9 +175,10 @@ def main():
             raw, addr = sock.recvfrom(2048)
         except socket.timeout:
             raw, addr = None, None
-        # optional source allowlist (config.yaml 'allowed_sources' = [ip,...]):
-        # without it any LAN host could inject control frames (review r5 #4)
-        allowed = cfg.get('allowed_sources')
+        # source allowlist: defaults to the configured PC IP (review r5 #4 —
+        # any LAN host must not be able to inject control frames). Override
+        # with config.yaml 'allowed_sources: [ip, ...]' if the PC uses DHCP.
+        allowed = cfg.get('allowed_sources') or [cfg.get('pc_ip', PC_IP)]
         if addr is not None and allowed and addr[0] not in allowed:
             raw = None
         now = _ms()

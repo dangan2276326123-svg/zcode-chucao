@@ -293,6 +293,11 @@ static void stepper_update(void)
 }
 
 /* ---------------- 1 ms tick ---------------- */
+uint8_t retrofit_estop_latched(void)
+{
+    return estop_latched;
+}
+
 void retrofit_poll_1ms(void)
 {
     tick_ms++;

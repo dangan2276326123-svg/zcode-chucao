@@ -12,3 +12,5 @@ stream:
   fps: 25
   bitrate_kbps: 2500
 watchdog_ms: 500           # must match firmware LINK_TIMEOUT_MS
+# allowed_sources: [192.168.1.2, 192.168.1.10]   # optional: UDP source IPs
+#                           default = pc_ip above; other LAN hosts are dropped
