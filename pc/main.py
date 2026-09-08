@@ -154,9 +154,11 @@ def main():
             if abs(lat_m) > ESTOP_LAT_LIMIT:
                 sm.estop('lat_exceeded')
             if sm.state != prev_state:
-                # degradation must be explicit on the wire: the MCU latches
-                # ESTOP on this frame; heartbeat alone must not imply 'safe'
-                if sm.state in ('ESTOP', 'LIFT'):
+                # wire semantics (review round 3, item 6): entering ESTOP
+                # latches the MCU (physical reset to clear); entering LIFT is
+                # recoverable and is driven by the NAV-zero + TOOL-up frames
+                # in the state branch below - never an ESTOP frame.
+                if sm.state == 'ESTOP':
                     send(P.TYPE_ESTOP, b'')
 
             # ---- control by state ----
@@ -171,9 +173,16 @@ def main():
                 tool_mm = pid.update(tool_px * px_to_meters(1.0) * 1000.0, dt)
                 send(P.TYPE_NAV, P.pack_nav(vl, vr))
                 send(P.TYPE_TOOL, P.pack_tool(tool_mm, 0))
+            elif sm.state == 'LIFT':
+                # degraded vision: stay in AUTO on the wire with zero wheel
+                # speeds and all knives raised - recoverable when vision
+                # returns; if the PC dies entirely the MCU watchdog latches.
+                send(P.TYPE_NAV, P.pack_nav(0.0, 0.0))
+                send(P.TYPE_TOOL, P.pack_tool(0.0, 0x07))
             else:
                 pid.reset()
-                send(P.TYPE_HEARTBEAT, b'')   # link keep-alive in MANUAL/LIFT
+                send(P.TYPE_HEARTBEAT, b'')   # MANUAL/ESTOP keep-alive; MCU
+                # releases AUTO to MANUAL on HEARTBEAT (P0-2 fix, 09-05).
                 # ESTOP frame is sent once on the transition (see above);
                 # MCU latches and only a physical reset clears it.
 

@@ -213,3 +213,18 @@ def test_bridge_seen_window_expiry_stops_injection():
     # PC seen 70 s ago (window 60 s expired) -> no injection
     fwd, inject, last = decide_forward(None, 100000, last_pc_ms=30000, auto_on=True)
     assert fwd is None and not inject
+
+
+# ---- P0-8 regression: bridge drops non-frame garbage ----
+
+def test_bridge_valid_frame_accepts_crc_ok():
+    from vehicle.bridge import valid_frame
+    f = P.pack_frame(P.TYPE_NAV, P.pack_nav(0.1, 0.1), 7)
+    assert valid_frame(f) == f
+
+
+def test_bridge_valid_frame_drops_garbage():
+    from vehicle.bridge import valid_frame
+    assert valid_frame(None) is None
+    assert valid_frame(b'\xa5\x5a' + b'\x00' * 40) is None   # bad crc
+    assert valid_frame(b'hello from a random LAN host' * 2) is None

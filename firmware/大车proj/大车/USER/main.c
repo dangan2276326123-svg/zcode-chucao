@@ -534,6 +534,9 @@ while(1)
 		retrofit_get_wheel_cmd(&vl, &vr);
 		veloc[0] = veloc[2] = vl;   /* left front/rear */
 		veloc[1] = veloc[3] = vr;   /* right front/rear */
+		/* steering takeover: AUTO must not follow the RC steering stick
+		   (Fw-11); angle 0 + per-wheel correct = calibrated straight */
+		angle[0] = angle[1] = angle[2] = angle[3] = 0.0;
 	} else if (retrofit_mode() == MODE_ESTOP) {
 		veloc[0] = veloc[1] = veloc[2] = veloc[3] = 0.0;
 	}

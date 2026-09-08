@@ -4,6 +4,7 @@
 #include "stm32f4xx_tim.h"
 #include "stm32f4xx_usart.h"
 #include "stm32f4xx_iwdg.h"
+#include "led.h"      /* SW_Stop (PA5) brake/power relay */
 #include <string.h>
 
 /* ---------------- pin map (v0.7 s13.2) ----------------
@@ -235,8 +236,10 @@ static void apply_outputs(void)
        ESTOP forces all up (open relay = beam raised) */
     /* MANUAL default-safe: a manual tool command is only honoured within
        500 ms of the last TOOL frame; otherwise knives stay UP. */
+    /* last_tool_ms==0 means "no TOOL frame ever" - never treat as fresh,
+       otherwise the first 500 ms after boot ran knives DOWN (P0-7) */
     uint8_t tool_cmd_fresh =
-        (uint32_t)(tick_ms - last_tool_ms) < 500;
+        last_tool_ms != 0 && (uint32_t)(tick_ms - last_tool_ms) < 500;
     for (i = 0; i < 3; i++) {
         uint8_t up;
         if (estop_latched) up = 1;
@@ -307,6 +310,11 @@ void retrofit_poll_1ms(void)
     wheel_speed_update();
     apply_outputs();
     stepper_update();
+
+    /* ESTOP physical de-energize: PA5 low = SL1 opens = MOTOR_1 24V cut =
+       brake.  Re-asserted every tick because the original main loop keeps
+       writing SW_Stop from its own SBUS logic (P0-7 review item). */
+    if (estop_latched) SW_Stop = 0;
 
     if ((tick_ms % 50) == 0) status_report();   /* 20 Hz */
 }

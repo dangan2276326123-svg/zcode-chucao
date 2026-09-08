@@ -131,6 +131,22 @@ class BridgeBuffers:
         self.serial_written.append(data)
 
 
+def valid_frame(raw):
+    """Return raw if it is a CRC-valid protocol frame, else None (P0-8).
+
+    Anything arriving over the LAN that is not a complete valid frame is
+    dropped: it must never be forwarded to serial, and must never refresh
+    the link watchdog (garbage could otherwise mask a lost PC).
+    """
+    if raw is None:
+        return None
+    try:
+        P.unpack_frame(raw)
+    except ValueError:
+        return None
+    return raw
+
+
 def main():
     """Production loop (Raspberry Pi)."""
     import serial  # pyserial
@@ -158,6 +174,7 @@ def main():
         except socket.timeout:
             raw = None
         now = _ms()
+        raw = valid_frame(raw)   # LAN hygiene: garbage never feeds the link
         fwd, inject, last_pc = decide_forward(raw, now, last_pc, auto_on=True)
         if fwd:
             ser.write(fwd)
