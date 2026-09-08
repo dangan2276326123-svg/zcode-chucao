@@ -603,7 +603,22 @@ etrofit</IncludePath>
             </File>
           </Files>
         </Group>
-      <Group><GroupName>RETROFIT</GroupName><Files><File><FileName>protocol.c</FileName><FileType>1</FileType><FilePath>..\HARDWARE\retrofit\protocol.c</FilePath></File><File><FileName>retrofit.c</FileName><FileType>1</FileType><FilePath>..\HARDWARE\retrofit\retrofit.c</FilePath></File></Files></Group></Groups>
+        <Group>
+          <GroupName>RETROFIT</GroupName>
+          <Files>
+            <File>
+              <FileName>protocol.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\HARDWARE\retrofit\protocol.c</FilePath>
+            </File>
+            <File>
+              <FileName>retrofit.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\HARDWARE\retrofit\retrofit.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+      </Groups>
     </Target>
   </Targets>
 
