@@ -228,3 +228,12 @@ def test_bridge_valid_frame_drops_garbage():
     assert valid_frame(None) is None
     assert valid_frame(b'\xa5\x5a' + b'\x00' * 40) is None   # bad crc
     assert valid_frame(b'hello from a random LAN host' * 2) is None
+
+
+# ---- review r5: exact-length + trailing-byte smuggling ----
+
+def test_bridge_valid_frame_rejects_trailing_bytes():
+    from vehicle.bridge import valid_frame
+    f = P.pack_frame(P.TYPE_NAV, P.pack_nav(0.1, 0.1), 7)
+    assert valid_frame(f + b'\x00') is None          # smuggled tail
+    assert valid_frame(f) == f                        # exact frame ok

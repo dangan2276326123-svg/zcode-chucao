@@ -132,18 +132,20 @@ class BridgeBuffers:
 
 
 def valid_frame(raw):
-    """Return raw if it is a CRC-valid protocol frame, else None (P0-8).
+    """Return raw if it is an exact, CRC-valid protocol frame, else None (P0-8).
 
-    Anything arriving over the LAN that is not a complete valid frame is
-    dropped: it must never be forwarded to serial, and must never refresh
-    the link watchdog (garbage could otherwise mask a lost PC).
+    A datagram is accepted only if it parses AND carries no trailing bytes:
+    'valid frame + junk' is a classic smuggling trick. Anything rejected is
+    neither forwarded to serial nor allowed to refresh the link watchdog.
     """
     if raw is None:
         return None
     try:
-        P.unpack_frame(raw)
+        _, _, payload = P.unpack_frame(raw)
     except ValueError:
         return None
+    if len(raw) != P.HEADER_LEN + P.META_LEN + len(payload) + 2:
+        return None                      # trailing bytes -> reject whole dgram
     return raw
 
 
@@ -170,8 +172,13 @@ def main():
     print('bridge up: udp:%d -> %s' % (cfg.get('udp_port', UDP_PORT), ser.port))
     while True:
         try:
-            raw, _ = sock.recvfrom(2048)
+            raw, addr = sock.recvfrom(2048)
         except socket.timeout:
+            raw, addr = None, None
+        # optional source allowlist (config.yaml 'allowed_sources' = [ip,...]):
+        # without it any LAN host could inject control frames (review r5 #4)
+        allowed = cfg.get('allowed_sources')
+        if addr is not None and allowed and addr[0] not in allowed:
             raw = None
         now = _ms()
         raw = valid_frame(raw)   # LAN hygiene: garbage never feeds the link

@@ -367,7 +367,7 @@ while(1)
 							}
 							else
 							{
-							SW_Stop=1;
+							if (!retrofit_estop_latched()) SW_Stop=1;
 							}
 	
 	}
@@ -437,14 +437,14 @@ while(1)
 			if (Adjusting_wheelbase==1) //调整轴距
 			{
 			
-			   SW_Stop=1;
+			   if (!retrofit_estop_latched()) SW_Stop=1;
 				 printf(" 轴距调整中！\r\n");	
 			}
 			if (Adjusting_wheelbase==0) //非调整轴距
 			{				
 					 if(stop_count++==20) //延时刹车  80ms一个控制周期，延时1s，需要16
 								{
-									SW_Stop=0;
+									if (!retrofit_estop_latched()) SW_Stop=0;
 									 printf(" 刹车！\r\n");	
 										stop_count=0;  //允许再次延时刹车	
 								}
@@ -512,6 +512,12 @@ while(1)
 		wheel_angle_limit_set(flag_steer_limit);  // 转角限幅后进行大小限制，如果没有限制，该代码没有作用
 	
 // 4左前，1右前，2左后，3右后
+	  /* steering takeover (Fw-11): in AUTO the four angles are forced to
+	     the calibrated straight position BEFORE send_angle runs - the
+	     gate further below is too late, path_plan() rewrote angle[]. */
+	  if (retrofit_mode() == MODE_AUTO) {
+	      angle[0] = angle[1] = angle[2] = angle[3] = 0.0;
+	  }
 	  send_angle(4,-(angle[0]-wheel_Angle_correct[0]-Last_wheel_Angle_correct_run[1]-Switch_direction));   //角度控制  adress, angle    四个轮子 但是一个伺服电机控制两个  所以只控制两个就可以
 	  delay_ms(12);
  
@@ -534,9 +540,6 @@ while(1)
 		retrofit_get_wheel_cmd(&vl, &vr);
 		veloc[0] = veloc[2] = vl;   /* left front/rear */
 		veloc[1] = veloc[3] = vr;   /* right front/rear */
-		/* steering takeover: AUTO must not follow the RC steering stick
-		   (Fw-11); angle 0 + per-wheel correct = calibrated straight */
-		angle[0] = angle[1] = angle[2] = angle[3] = 0.0;
 	} else if (retrofit_mode() == MODE_ESTOP) {
 		veloc[0] = veloc[1] = veloc[2] = veloc[3] = 0.0;
 	}

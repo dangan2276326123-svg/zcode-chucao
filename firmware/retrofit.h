@@ -21,6 +21,7 @@ void retrofit_clear_estop(void);   /* manual reset only (key/button path) */
 
 /* mode getter for main loop / telemetry */
 uint8_t retrofit_mode(void);
+uint8_t retrofit_estop_latched(void);   /* 1 while ESTOP latched */
 
 
 /* integration hooks */

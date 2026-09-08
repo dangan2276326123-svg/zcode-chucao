@@ -343,6 +343,7 @@ void retrofit_init(void)
     g.GPIO_Pin = GPIO_Pin_5 | GPIO_Pin_7;
     GPIO_Init(GPIOB, &g);
     gpio_out(GPIOB, GPIO_Pin_7, 1);  /* stepper enabled */
+    gpio_out(GPIOD, GPIO_Pin_4 | GPIO_Pin_5 | GPIO_Pin_6, 1);  /* knives UP now, not at first 1ms poll (P0-7) */
 
     /* inputs: PD15/PD10/PD11 limits, pull-up */
     g.GPIO_Mode = GPIO_Mode_IN;
