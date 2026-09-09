@@ -44,7 +44,7 @@
 |---|---|
 | `main.py` | **完整控制循环入口**：`--source` replay 模式 / `--live` 实车模式，GUI 叠加显示，ESTOP 急停联锁 |
 | `replay.py` | 对视频/图片目录逐帧回放推理并保存结果（离线验证） |
-| `perception.py` | 感知封装：加载权重与标定 → 去畸变 → 分割 → 形态学后处理 → IPM |
+| `perception.py` | 感知封装：加载权重与标定 → 去畸变 → 分割 → IPM 鸟瞰 → **导航线拟合**（远场 `peony_postprocess` + `fit_centerline_lsq_weighted` 给底盘导航；近场 `peony_postprocess` 给中间刀 PID） |
 | `control.py` | 控制量计算与下发（转向/速度） |
 | `state_machine.py` | 作业状态机（待机/作业/掉头/急停等状态切换） |
 
@@ -62,7 +62,7 @@
 |---|---|
 | `check_dataset.py` | 数据集完整性检查（图/mask 对齐、类别统计） |
 | `json2mask.py` | 标注 JSON → 训练用灰度 mask |
-| `morph_process.py` | 分割结果形态学后处理（开闭运算、小连通域剔除），被 `pc/perception.py` 和 `network/local_single_station.py` 导入 |
+| `morph_process.py` | 分割结果后处理 + **导航线拟合**（被 `pc/perception.py` 和 `network/local_single_station.py` 导入）：`extract_dual_walls` 从 IPM 鸟瞰掩膜提取左右垄墙 → `fit_centerline_lsq` 对双墙各拟合 x=a·y+b 取中点 → `fit_centerline_lsq_weighted` 裁剪最小二乘 + 按内点率加权融合（遮挡鲁棒，单墙退化时门控回退）→ 输出 lookahead 行的横向偏差 `center_x` |
 | `split_dataset.py` | 训练/验证集划分 |
 
 ### `firmware/` — 下位机固件（STM32F407，Keil）
@@ -138,4 +138,4 @@ python -m pytest tests/ -q
 
 ## 数据流
 
-田间视频（`data/videos/`）→ 抽帧（`avi_frames/`）→ 标注（JSON）→ `tools/json2mask.py` 转 mask → `tools/split_dataset.py` 划分 → `network/train_m.py` 训练 → 权重（`model_data/weights/`）→ `pc/main.py` 感知（分割 `network/` + 标定/IPM + `tools/morph_process.py` 后处理）→ `pc/state_machine.py`/`pc/control.py` → 串口协议（`common/protocol.py` ↔ `firmware/protocol.c`）→ 树莓派桥接（`vehicle/`）→ STM32 固件（`firmware/`）驱动执行机构。
+田间视频（`data/videos/`）→ 抽帧（`avi_frames/`）→ 标注（JSON）→ `tools/json2mask.py` 转 mask → `tools/split_dataset.py` 划分 → `network/train_m.py` 训练 → 权重（`model_data/weights/`）→ `pc/main.py` 感知（去畸变/标定 → 分割 `network/` → IPM 鸟瞰 → **`tools/morph_process.py` 双墙提取 + 最小二乘导航线拟合**：远场线给底盘、近场线给中间刀）→ `pc/state_machine.py`/`pc/control.py` → 串口协议（`common/protocol.py` ↔ `firmware/protocol.c`）→ 树莓派桥接（`vehicle/`）→ STM32 固件（`firmware/`）驱动执行机构。
