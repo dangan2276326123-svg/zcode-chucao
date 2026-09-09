@@ -45,7 +45,7 @@
 | `main.py` | **完整控制循环入口**：`--source` replay 模式 / `--live` 实车模式，GUI 叠加显示，ESTOP 急停联锁 |
 | `replay.py` | 对视频/图片目录逐帧回放推理并保存结果（离线验证） |
 | `perception.py` | 感知封装：加载权重与标定 → 去畸变 → 分割 → IPM 鸟瞰 → **导航线拟合**（远场 `peony_postprocess` + `fit_centerline_lsq_weighted` 给底盘导航；近场 `peony_postprocess` 给中间刀 PID） |
-| `control.py` | 控制量计算与下发（转向/速度） |
+| `control.py` | 控制层 4 个纯 Python 类（无 torch/cv2 依赖，各带单元测试）：`MiddleToolPID` 近场横向误差 → 中间刀滑台偏移（条件积分抗饱和，输出限幅 ±50mm）；`LatencyCompensator` 链路时延估计（滚动 p50/p95）+ 误差前移补偿 err+rate·delay；`LatErrorRate` 横向误差变化率估计（有限差分 + 平滑，供上者）；`DifferentialDrive` 底盘差速：远场横向误差+航向阻尼 → 左右轮速 v∓dv（标称 0.14 m/s，限幅 ±0.2） |
 | `state_machine.py` | 作业状态机（待机/作业/掉头/急停等状态切换） |
 
 ### `vehicle/` — 车端（树莓派）
