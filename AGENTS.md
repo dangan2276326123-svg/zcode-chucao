@@ -10,6 +10,6 @@
 - **P0-7 刀控仍开放**：3 GPIO 不能完成 6 路换向、上电首 500ms 刀全落已实测确认——与 Hw-9/9a 继电器板接入方案一并重做（等用户端子照片）。
 - **工作区已整理**（README.md 为资产位置权威，逐文件说明）：脚本在 `tools/`、标定 npz 在 `data/`、田间视频在 `data/videos/`（gitignore）；v0.7 docx 内旧路径以缺口清单 §G 勘误为准。
 - **bridge 串口重组已修**（abde261 `poll_serial_frames`）：跨读边界不再丢帧，34→43 例测试全过。
-- **D7 待做**：pc/main.py 实车模式加 STATUS 接收时，unpack_status 必须包 try/except ValueError + 坏帧计数报警（见缺口清单 D7）。
+- **D7 代码已完成**（09-09）：`pc/status_rx.py` STATUS 接收（live 模式 UDP 9100，坏帧 try/except 计数 + 1 秒 ≥5 帧报警，6 测试），main.py HUD/CSV 已带 MCU 状态；剩实车联调验证（随 B7/B8）。
 - 硬件事实（已确认）：实车板 V3.3；4×行走电机=固件同款；转向伺服在车（UART4 Modbus）；滑台伺服+丝杆在车未接线；3×电推杆+外接继电器板在车（接入方式待照片）；相机=USB3.0 UVC；RDK X5 已购。
 - 下一步：①用户硬件链 B6 实物确认 → E2 下单 → B1 烧录 → B2 串口对拍；②**C1 秋季图像采集最紧（10 月中前）**，现在就能拍；③等继电器板照片定刀控（P0-7）；④D7 随实车联调。

@@ -25,6 +25,7 @@ from pc.control import (MiddleToolPID, LatencyCompensator, DifferentialDrive,
 from pc.state_machine import StateMachine
 from pc.perception import px_to_meters
 from pc.replay import draw_overlay
+from pc.status_rx import StatusReceiver, STATUS_UDP_PORT
 
 PI_IP = '192.168.1.1'
 PI_PORT = 9000
@@ -107,6 +108,29 @@ def main():
     pi = (args.pi_ip, PI_PORT)
     seq = 0
 
+    # live only: receive MCU STATUS relayed by the bridge (D7).  Bad frames
+    # are caught+counted inside StatusReceiver — never a bare unpack.
+    rx = None
+    status_sock = None
+    if args.live:
+        rx = StatusReceiver()
+        status_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        status_sock.bind(('0.0.0.0', STATUS_UDP_PORT))
+        status_sock.setblocking(False)
+
+    def drain_status(now):
+        if rx is None:
+            return
+        while True:
+            try:
+                raw, _ = status_sock.recvfrom(2048)
+            except BlockingIOError:
+                break
+            rx.handle(raw, now=now)
+        if rx.alarm(now):
+            print('WARNING: %d bad status frames in the last 1 s — '
+                  'check firmware/Python STATUS payload sync' % rx.bad)
+
     def send(ftype, payload):
         nonlocal seq
         if sock is None:      # replay mode: no radio, no commands leave the PC
@@ -126,12 +150,15 @@ def main():
     with open(csv_path, 'w', newline='', encoding='utf-8') as fcsv:
         wr = csv.writer(fcsv)
         wr.writerow(['t', 'frame_id', 'state', 'status', 'lat_m', 'lat_comp_m',
-                     'vL', 'vR', 'tool_mm', 'conf', 'latency_ms'])
+                     'vL', 'vR', 'tool_mm', 'conf', 'latency_ms',
+                     'mcu_mode', 'batt_v', 'rx_good', 'rx_bad'])
         for fid, frame in enumerate(FrameSource(args.source, args.live, args.step).frames()):
             t0 = time.time()
             dt = max(t0 - t_prev, 1e-3)
             t_prev = t0
             prev_state = sm.state   # captured BEFORE any state event (P0-4)
+
+            drain_status(t0)
 
             res = per.process(frame)
             latency = (time.time() - t0) * 1000.0
@@ -190,7 +217,15 @@ def main():
             if not args.no_gui:
                 import cv2
                 vis = draw_overlay(res)
-                cv2.putText(vis, 'STATE:%s  [A]uto [M]anual [E]stop [R]eset [Q]uit' % sm.state,
+                hud2 = 'STATE:%s  [A]uto [M]anual [E]stop [R]eset [Q]uit' % sm.state
+                if rx is not None:
+                    st = rx.last
+                    if st is not None:
+                        hud2 += '  MCU:m%d %.1fV %.1fA' % (st['mode'], st['battery_v'],
+                                                           st['current_a'])
+                    if rx.bad:
+                        hud2 += '  bad:%d' % rx.bad
+                cv2.putText(vis, hud2,
                             (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
                 cv2.imshow('weeder', vis)
                 k = cv2.waitKey(1) & 0xFF
@@ -214,7 +249,10 @@ def main():
                          '%.4f' % (comp.compensate(lat_m, rate.rate)) if usable else '',
                          '%.3f' % vl, '%.3f' % vr,
                          '%.1f' % tool_mm, '%.3f' % res['confidence'],
-                         '%.1f' % latency])
+                         '%.1f' % latency,
+                         rx.last['mode'] if rx and rx.last else '',
+                         '%.2f' % rx.last['battery_v'] if rx and rx.last else '',
+                         rx.good if rx else '', rx.bad if rx else ''])
             n += 1
             if n % 20 == 0:
                 print('[%d] %s lat=%.3fm vL=%.2f vR=%.2f tool=%.1fmm %.0fms' % (

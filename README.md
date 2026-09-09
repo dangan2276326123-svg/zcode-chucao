@@ -47,6 +47,7 @@
 | `perception.py` | 感知封装：加载权重与标定 → 去畸变 → 分割 → IPM 鸟瞰 → **导航线拟合**（远场 `peony_postprocess` + `fit_centerline_lsq_weighted` 给底盘导航；近场 `peony_postprocess` 给中间刀 PID） |
 | `control.py` | 控制层 4 个纯 Python 类（无 torch/cv2 依赖，各带单元测试）：`MiddleToolPID` 近场横向误差 → 中间刀滑台偏移（条件积分抗饱和，输出限幅 ±50mm）；`LatencyCompensator` 链路时延估计（滚动 p50/p95）+ 误差前移补偿 err+rate·delay；`LatErrorRate` 横向误差变化率估计（有限差分 + 平滑，供上者）；`DifferentialDrive` 底盘差速：远场横向误差+航向阻尼 → 左右轮速 v∓dv（标称 0.14 m/s，限幅 ±0.2）。⚠️ 过渡态：实车有四轮转向伺服但固件在 AUTO 锁直，按纯差速走；四轮转向+差速混合重写未做（缺口清单 P0-1），电流前馈也未实现（F4） |
 | `state_machine.py` | 作业状态机（待机/作业/掉头/急停等状态切换） |
+| `status_rx.py` | MCU STATUS 接收（live 模式，UDP 9100）：坏帧捕获计数绝不裸抛（D7 约束），滚动 1 秒 ≥5 坏帧报警（多半是固件/Python 协议字段失同步）；纯逻辑类，socket 留在 main |
 
 ### `vehicle/` — 车端（树莓派）
 
