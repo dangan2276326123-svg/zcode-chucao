@@ -42,8 +42,11 @@ def latest_jpeg(buf):
 
 
 def main():
-    host = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_HOST
-    port = int(sys.argv[2]) if len(sys.argv) > 2 else DEFAULT_PORT
+    args = sys.argv[1:]
+    host = args[0] if args else DEFAULT_HOST
+    port = int(args[1]) if len(args) > 1 else DEFAULT_PORT
+    W = int(args[2]) if len(args) > 2 else 1280   # frame size SENT by the
+    H = int(args[3]) if len(args) > 3 else 720    # camera (must match)
     sock = socket.create_connection((host, port), timeout=10)
     sock.settimeout(None)
     print('connected to %s:%d' % (host, port))
