@@ -168,6 +168,26 @@ def test_poll_serial_frames_corrupt_frame_is_skipped():
     assert frames == [f2] and acc == b''
 
 
+def test_poll_serial_frames_garbage_prefix_keeps_half_frame():
+    """Review 2026-09-09 #6: garbage + half frame must NOT collapse to the
+    last byte — the partial frame has to survive into the next read."""
+    f1 = P.pack_frame(P.TYPE_NAV, P.pack_nav(0.1, 0.1), 1)
+    frames, acc = poll_serial_frames(b'', b'\x11\x22\x33' + f1[:8])
+    assert frames == [] and acc == f1[:8]
+    frames, acc = poll_serial_frames(acc, f1[8:])
+    assert frames == [f1] and acc == b''
+
+
+def test_poll_serial_frames_garbage_prefix_partial_header():
+    """Garbage + only the 2-byte header: a5 5a must be kept and the frame
+    completed on the next read (protocol.extract_one remainder fix)."""
+    f1 = P.pack_frame(P.TYPE_NAV, P.pack_nav(0.1, 0.1), 1)
+    frames, acc = poll_serial_frames(b'', b'\x11\x22\xa5\x5a')
+    assert frames == [] and acc == b'\xa5\x5a'
+    frames, acc = poll_serial_frames(acc, f1[2:])
+    assert frames == [f1] and acc == b''
+
+
 # ---- bridge watchdog ------------------------------------------------------
 
 def test_watchdog_injects_estop_after_timeout():

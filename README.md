@@ -98,7 +98,7 @@
 | `calib_imgs/` | 标定棋盘格照片 `IMG_XXXX.jpg`（已 gitignore） |
 | `model_data/weights/` | 训练权重 `best_model.pth`（已 gitignore） |
 | `results/smoke*` | 冒烟测试输出：标定/去畸变/推理样例图与 `run_log.csv` |
-| `tests/test_protocol.py` | 串口协议单元测试（Python↔C 一致性） |
+| `tests/test_protocol.py` | 串口协议 **Python 侧单元测试**（帧编解码/CRC 向量）；**不含** C 实现对拍——C 侧对拍需台架 B2 串口实测（见缺口清单 B2） |
 | `tests/test_control.py` | 控制量计算单元测试 |
 | `docs/秋季图像采集清单.md` | 秋季田间采集执行文档（矩阵、命名、标注规范、IPM 标定顺带采集） |
 | `docs/缺口清单.md` | 项目"欠账台账"：每项含做法/验收标准/耗时/依赖，完成打 ✅ |

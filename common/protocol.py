@@ -52,8 +52,13 @@ def extract_one(stream: bytes):
     pos = 0
     while True:
         idx = stream.find(HEADER, pos)
-        if idx < 0 or len(stream) - idx < HEADER_LEN + META_LEN:
+        if idx < 0:
             return None, stream[pos:]
+        if len(stream) - idx < HEADER_LEN + META_LEN:
+            # a header was found but the frame is still incomplete: keep the
+            # remainder FROM THE HEADER so a partial frame survives the next
+            # read (review 2026-09-09 #6 — stream[pos:] would drop it).
+            return None, stream[idx:]
         declared = int.from_bytes(stream[idx + 2:idx + 4], 'little')
         if not META_LEN <= declared <= META_LEN + _MAX_PAYLOAD:
             pos = idx + 1

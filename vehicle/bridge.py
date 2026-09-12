@@ -93,6 +93,10 @@ def poll_serial_frames(acc, sdata):
     while stream:
         frame, rest = P.extract_one(stream)
         if frame is None:
+            # keep extract_one's remainder (the partial frame it saw), not
+            # the whole acc+sdata buffer (review 2026-09-09 #6): otherwise a
+            # garbage prefix + half frame collapses to the last byte only.
+            stream = rest
             break
         frames.append(frame)
         stream = rest
