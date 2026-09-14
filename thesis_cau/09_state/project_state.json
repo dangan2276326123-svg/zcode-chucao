@@ -1,0 +1,660 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-09-09T16:25:43.733101",
+  "step": "xml_written",
+  "thesis": {
+    "title": "基于纯视觉导航的中草药行间除草机系统设计",
+    "chapters": [
+      {
+        "id": "ch_1",
+        "title": "绪论",
+        "level": 1,
+        "content": "",
+        "subsections": [
+          {
+            "id": "ch_1_sec_1",
+            "title": "研究背景与意义",
+            "level": 2,
+            "content": "中草药是我国中医药事业与大健康产业的物质基础，随着国家中医药发展战略的推进，中药材人工种植面积持续扩大。黄芩、柴胡、金银花、芍药等大宗中草药以露地栽培为主，部分产区采用林药套作模式（药材种植于林冠行间），地块面积小而分散[[REF:1]]。在这一复合种植模式下，杂草与药材争水争肥、传播病虫害，是影响药材产量与品质的主要生物胁迫之一；同时中药材质量标准对农药残留有严格限定，多数药用植物为双子叶植物，对广谱性除草剂高度敏感，化学除草极易造成药害与土壤污染，应用受到严格限制[[REF:2]]。\n\n除草因此成为中草药种植中用工量最大、成本占比最高的田间管理环节。调研数据显示：人工除草效率仅约 0.3~0.5 亩/(人·天)，日薪 120~180 元，除草环节投入占种植管理总成本的 40% 以上，是占比最高的单项管理成本[[REF:1]]。农村劳动力老龄化加剧，除草作业人员以中老年为主，用工旺季普遍存在\"招工难\"问题，劳动力短缺将进一步推高除草成本。小型割灌机等通用机械虽可提高效率至 2~3 亩/(台·天)，但其作业原理以切割茎叶为主，不切断杂草根系导致再生迅速，且作业精度低，对药材幼苗的机械损伤率可达 8%~15%，不适用于幼苗期精细作业。\n\n机械化除草难以推广的另一重障碍在于导航与结构适配。中草药多为窄行密植，行距普遍为 30~60 cm，行间作业空间狭小；地块面积小而分散，部分产区地表起伏、田块不规则。传统农机依赖的 GNSS-RTK 高精度定位设备成本高、需要基站支持，且在树冠遮挡与设施环境条件下信号可靠性下降，与中草药种植的小规模、分散化经营特点不匹配[[REF:1]]。相比之下，基于机器视觉的导航方式以作物行本身为参照，不需外部定位设施，设备成本低，且能同时提供苗草识别信息，是中草药行间除草装备最适宜的感知路线[[REF:3]]。\n\n综上所述，研制一种以纯视觉导航为核心、面向中草药窄行行间作业的小型除草机，实现对行行走、深度控制与除草装置的协同作业，对降低除草成本、减少药材损伤、推动中草药生产机械化具有重要的现实意义，也为非结构化农田环境下农业机器人的视觉导航提供方法参考。",
+            "subsections": []
+          },
+          {
+            "id": "ch_1_sec_2",
+            "title": "国内外研究现状",
+            "level": 2,
+            "content": "",
+            "subsections": [
+              {
+                "id": "ch_1_sub_2_1",
+                "title": "除草机器人整机研究现状",
+                "level": 3,
+                "content": "国外对除草机器人的研究起步较早。Åstrand 等[[REF:3]]研制的园艺除草机器人采用视觉感知与机械锄铲结合的方案，实现了甘蓝行间的自主除草，验证了\"视觉导航+行间机械除草\"技术路线的可行性。Slaughter 等[[REF:2]]系统综述了自主除草控制系统的感知、决策与执行技术，指出作物行几何信息的可靠获取是行间除草装备的前提。德国 Osnabrück 应用科学大学研制的 BoniRob 平台[[REF:4]]为株间与行间作业提供了通用移动平台，其四轮独立驱动、独立转向的底盘构型被后续多种除草样机借鉴。丹麦 Robovator 系列行间除草机采用相机识别作物行并液压控制锄铲横向跟踪，已在多国商品化应用；丹麦 Agro Intelligence 公司的 Robovator 与法国的 EcoWeeder 等产品代表了行间除草装备的商品化水平<待核实：Robovator 与 EcoWeeder 等商品化机型的公开文献，建议检索厂商技术资料及期刊报道>。\n\n在视觉导航研究方面，Hague 等[[REF:5]]较早综述了地面移动农业机器人基于视觉的导航感知体系；Bakker 等[[REF:6]]开发了甜菜田基于视觉的行检测系统，采用过绿指数分割与 Hough 变换拟合行线；Kise 等[[REF:7]]提出基于立体视觉与 Hough 变换的作物行检测方法用于拖拉机自动导航。国内方面，高校与科研院所在视觉导航除草装备领域开展了大量研究，已有\"谷物联合收割机视觉导航路径识别系统\"等授权专利[[REF:8]]。<待补充：国内除草机器人整机与视觉导航研究综述 3~5 篇（建议检索《农业机械学报》《农业工程学报》《智慧农业》\"除草机器人\"\"视觉导航\"关键词），以及 Hortibot、EcoRobotix 等机型的公开文献>。\n\n总体来看，除草机器人整机的成熟应用集中于大田粮食作物与标准化果园，面向中草药这类窄行、高值、小地块作物的专用装备仍属空白，其核心难点在于窄行空间下的高精度对行与低伤苗率除草。",
+                "subsections": []
+              },
+              {
+                "id": "ch_1_sub_2_2",
+                "title": "作物行视觉感知研究现状",
+                "level": 3,
+                "content": "作物行感知的经典方法以颜色特征与几何拟合为主：利用过绿指数（ExG）等颜色指数分割植被与土壤背景，再以 Hough 变换、灰度重心法或最小二乘拟合提取行线[[REF:6]]。此类方法在光照变化、杂草密度高、作物苗期覆盖率低时鲁棒性不足。\n\n随着深度学习的发展，语义分割成为作物/杂草识别的主流方法。Long 等[[REF:9]]提出的全卷积网络（FCN）确立了端到端像素级分割范式；Ronneberger 等[[REF:10]]提出的 U-Net 以编解码跳连结构在小样本农业图像中表现优异；He 等[[REF:11]]的残差学习解决了深层网络退化问题，为分割骨干网络奠定基础。在多尺度上下文建模方面，Yu 等[[REF:12]]提出空洞卷积扩大感受野，Zhao 等[[REF:13]]提出金字塔场景解析网络（PSPNet），Badrinarayanan 等[[REF:14]]提出 SegNet 编解码结构。Chen 等[[REF:15]]在空洞卷积基础上提出 DeepLabv3，并进一步提出融合编码-解码与空洞空间金字塔池化（ASPP）的 DeepLabv3+[[REF:16]]，在边界细节与多尺度目标分割上具有优势，适合作物行这类细长条带状目标的提取。\n\n面向田间部署的实时性需求，轻量化网络成为研究热点。Howard 等[[REF:17]]与 Sandler 等[[REF:18]]提出的 MobileNet 系列以深度可分离卷积大幅降低计算量，Chollet[[REF:19]]的 Xception 将深度可分离卷积推到极致。以 MobileNetV2 为骨干的 DeepLabv3+ 在精度与速度之间取得较好平衡，是农业视觉嵌入式部署的常用选择。此外，注意力机制[[REF:20]]与目标检测框架[[REF:21]]也被用于苗草识别与株间定位。<待补充：语义分割在作物与杂草识别中的应用文献 3~5 篇（建议检索农业工程领域英文期刊数据库）>",
+                "subsections": []
+              },
+              {
+                "id": "ch_1_sub_2_3",
+                "title": "行间除草工作部件研究现状",
+                "level": 3,
+                "content": "行间除草工作部件决定除草机理与伤苗风险。Åstrand 等[[REF:3]]采用锄铲式部件；Robovator 采用液压驱动锄铲横向跟踪行间；弹齿式、圆盘式、旋转锄等部件在大田中耕领域应用成熟[[REF:2]]。铲类部件与土壤相互作用的研究以土壤-刀具力学模型为基础，McKyes[[REF:22]]系统建立了铲刃切削土壤的阻力模型，为铲式部件的参数设计与牵引阻力估算提供了理论工具。已有研究多针对单一部件的阻力与除草效果，缺少面向中草药农艺约束（浅根、幼苗脆嫩、行间窄）按作用机理逐项比选的系统性论证，本文在第 2 章完成这一工作。",
+                "subsections": []
+              },
+              {
+                "id": "ch_1_sub_2_4",
+                "title": "研究现状总结",
+                "level": 3,
+                "content": "综合国内外研究现状可得：（1）\"视觉导航+行间机械除草\"路线已在多种作物上验证可行，但面向中草药窄行高值场景的专用装备缺乏；（2）以 DeepLabv3+ 为代表的语义分割方法能够为行间除草提供鲁棒的作物行感知，其轻量化组合具备田间部署能力，但需要针对具体作物与物候期进行训练与域适应；（3）除草部件选型缺少面向中草药农艺的机理化论证，除草深度控制与刀具横向对行的协同控制研究不足。上述缺口构成本文的研究切入点。",
+                "subsections": []
+              }
+            ]
+          },
+          {
+            "id": "ch_1_sec_3",
+            "title": "主要研究内容与技术路线",
+            "level": 2,
+            "content": "本文以\"纯视觉导航+行间机械除草\"为技术主线，围绕中草药行间除草机的系统设计开展研究，主要研究内容如下：\n\n（1）中草药行间除草机总体方案与机械系统设计。完成移动平台选型与改造、入土深度（限深仿形）装置设计、除草装置选型论证与结构设计（含铲类部件受力分析），以及车载电控与固件的双指令源线控改造。\n\n（2）基于语义分割的导航线提取方法。构建\"相机标定—去畸变—DeepLabV3+ 分割—逆透视变换—双墙提取\"的感知链，从单目图像中解算作物行双墙边界与行间导航线，并在夏季田间数据集上训练评估分割模型。\n\n（3）运动控制系统设计。建立四轮独立转向（4WS）阿克曼底盘运动学模型与横向偏差卡尔曼滤波估计方法，设计轨迹跟踪 PD 控制、除草深度控制（入土控制）与中间除草刀横向对行 PID 控制，并研究无线链路时延估计与前馈补偿方法。\n\n（4）田间对比试验方案设计与验证。设计不同除草装置（鸭掌铲与弹齿）对比试验、刀具控制与不控制（主动对行与固定刀）对比试验，验证整机作业性能。\n\n技术路线如图所示：需求分析→总体方案→机械系统设计→感知算法开发与训练→控制系统设计→台架验证→田间试验→统计分析。\n\n[[FIG:技术路线图]]",
+            "subsections": []
+          },
+          {
+            "id": "ch_1_sec_4",
+            "title": "论文组织结构",
+            "level": 2,
+            "content": "本文共分 6 章：第 1 章绪论；第 2 章中草药行间除草机总体与机械系统设计，包括移动平台、入土深度装置、除草装置设计与车载固件；第 3 章导航线提取，包括相机标定、语义分割模型与双墙中心线解算；第 4 章运动控制，包括轨迹跟踪控制、入土控制与除草装置控制；第 5 章田间试验；第 6 章结论与展望。",
+            "subsections": []
+          }
+        ]
+      },
+      {
+        "id": "ch_2",
+        "title": "中草药行间除草机总体与机械系统设计",
+        "level": 1,
+        "content": "",
+        "subsections": [
+          {
+            "id": "ch_2_sec_1",
+            "title": "总体方案与设计需求",
+            "level": 2,
+            "content": "",
+            "subsections": [
+              {
+                "id": "ch_2_sub_1_1",
+                "title": "设计需求分析",
+                "level": 3,
+                "content": "依据中草药种植农艺与调研数据[[REF:1]]，确定样机设计需求如表 2-1 所示。\n\n表 2-1 样机设计需求与指标\n\n| 类别 | 指标 | 依据 |\n| --- | --- | --- |\n| 通过性 | 整机宽度不大于 60 cm；最小离地间隙不小于 15 cm；爬坡能力不低于 15° | 行距 30~60 cm、坡地 5°~15° |\n| 作业效率 | 作业速度 0.5~1.5 km/h；单日有效作业面积不低于 3 亩 | 人工效率 0.3~0.5 亩/(人·天) 的 3 倍以上 |\n| 作业精度 | 药材幼苗识别准确率不低于 92%；避苗损伤率不高于 3% | 幼苗期精细化作业要求 |\n| 导航精度 | 底盘横向偏差不超过 ±5 cm；中间刀对行偏差不超过 ±2 cm | 窄行行间除草农艺要求 |\n| 除草深度 | 目标深度 30 mm，误差不超过 ±5 mm | 浅层切断杂草根系、保护药材浅根 |\n| 续航与防护 | 单次充电续航不低于 4 h；整机防护等级不低于 IP65 | 单日作业与田间环境适应性 |",
+                "subsections": []
+              },
+              {
+                "id": "ch_2_sub_1_2",
+                "title": "系统总体架构",
+                "level": 3,
+                "content": "整机由四轮独立驱动-独立转向（4WD-4WS）底盘、三刀并行除草装置（左、中、右三段，中间刀可横向滑移）、入土深度（限深仿形）装置、低机位前视单目相机、车载嵌入式控制器（STM32F407ZG）与车载图像终端（树莓派）组成，地面站 PC 承担感知计算与控制决策。系统数据流为：\n\n单目相机 → 树莓派（采集编码推流）→ 无线链路 → 地面站 PC（去畸变、语义分割、逆透视变换、导航线解算）→ 无线链路（UDP 控制帧）→ 树莓派（协议桥接）→ STM32 车载控制器（指令解析与安全联锁）→ 底层 PID 速度环 → 四轮 PWM 驱动；除草刀升降与中间刀滑轨由 STM32 直接驱动。\n\n[[FIG:系统总体架构图]]\n\n架构设计遵循\"感知上移、执行下沉\"原则：深度学习推理在地面站 PC 完成，规避车载算力不足；底盘速度环、安全联锁与刀具控制在车载端完成，保证无线链路异常时车端具备独立的安全兜底能力。",
+                "subsections": []
+              }
+            ]
+          },
+          {
+            "id": "ch_2_sec_2",
+            "title": "移动平台介绍",
+            "level": 2,
+            "content": "",
+            "subsections": [
+              {
+                "id": "ch_2_sub_2_1",
+                "title": "底盘机械结构",
+                "level": 3,
+                "content": "样机移动平台为四轮独立驱动-四轮独立转向（4WD-4WS）底盘。四轮由四台直流有刷电机经减速器独立驱动，电机端配置霍尔传感器用于轮速测量；四个车轮各由一路转向舵机独立偏转（舵机经 UART4 总线、19200 bps 控制指令驱动，带零位标定与转角限幅），本文主作业模式采用全 4WS 方式，四轮转角按阿克曼（Ackermann）几何关系分配。底盘主要参数如表 2-2 所示。\n\n表 2-2 移动平台主要参数\n\n| 参数 | 数值 |\n| --- | --- |\n| 整机宽度 | ≤60 cm |\n| 轮距/履带外缘宽度 | <待补充：实测值> |\n| 轴距 | <待补充：实测值> |\n| 驱动/转向方式 | 四轮独立驱动（4WD）+ 四轮独立转向（4WS，舵机×4，UART4 19200 bps） |\n| 电机 | 直流有刷电机×4，霍尔测速 |\n| 最小离地间隙 | ≥15 cm |\n| 最大爬坡能力 | ≥15° |\n| 供电 | <待补充：电池容量与电压> |\n\n4WD-4WS 构型横向尺寸紧凑、转向半径小，四轮转角独立可控，窄行行间掉头与短地块作业适应性强；其需关注的问题是松软地面的滑移及转向舵机的响应品质，相关运动学建模与控制策略在第 4 章处理。需要说明的是，本项目前期方案曾将底盘误判为无转向机构的滑移转向构型并据此规划差速纠偏输出，后经实车固件源码核对确认四路转向舵机链路在位，本文统一修正为 4WS 模型，该调整与开题报告中“四转向轮期望偏角”的设定一致。",
+                "subsections": []
+              },
+              {
+                "id": "ch_2_sub_2_2",
+                "title": "底盘遥控链路与半线控架构",
+                "level": 3,
+                "content": "原平台为遥控底盘：遥控器经 SBUS 协议（USART1+DMA，16 通道）发送至车载 STM32，固件解码出四通道速度指令后，经增量式 PID 速度环闭环输出四路 PWM（TIM1 四通道），驱动四轮电机。该架构已具备\"指令源+闭环执行器\"的半线控基础，为线控改造提供了条件。",
+                "subsections": []
+              }
+            ]
+          },
+          {
+            "id": "ch_2_sec_3",
+            "title": "入土深度（限深仿形）装置设计",
+            "level": 2,
+            "content": "",
+            "subsections": [
+              {
+                "id": "ch_2_sub_3_1",
+                "title": "设计要求",
+                "level": 3,
+                "content": "行间除草要求除草铲浅层入土切断杂草根系而不伤及药材浅根，目标入土深度 30 mm，深度误差不超过 ±5 mm。中草药田地表起伏与局部坡度变化使深度控制成为保证除草质量与防伤苗的关键环节。",
+                "subsections": []
+              },
+              {
+                "id": "ch_2_sub_3_2",
+                "title": "被动限深仿形机构设计",
+                "level": 3,
+                "content": "本文采用被动限深仿形方案：除草刀梁通过平行铰接机构与机架浮动连接，刀梁前部设置接地限深板（限深轮），限深板随地表起伏上下浮动，直接约束刀头入土深度。机构设计要点如下：\n\n（1）浮动铰点布置于刀梁质心附近，减小刀梁自重引起的深度漂移；\n\n（2）限深板接地压力通过可调拉伸弹簧预紧力调节，兼顾仿形跟随性与地面适应性；\n\n（3）牵引方向预留浮动自由度，适应纵向起伏；\n\n（4）深度标定机构提供机械式深度限位，便于快速设定目标深度。\n\n该方案将地表起伏的高频扰动由机械环节直接吸收，控制回路只需处理低频深度趋势偏差，结构简单可靠、不增加控制复杂度。台架验收指标为：平地与 10° 坡面各 10 点实测深度误差不超过 ±5 mm<待补充：台架实测数据>。\n\n[[FIG:限深仿形机构简图]]",
+                "subsections": []
+              },
+              {
+                "id": "ch_2_sub_3_3",
+                "title": "电动提刀机构",
+                "level": 3,
+                "content": "三段刀梁各配 12 V 电动推杆（行程 100 mm，提升行程 60~80 mm）构成提刀机构，实现越障、地头转弯、安全联锁时的整机提刀与落刀。提刀动作由车载固件直接控制，作为安全联锁的最后执行环节（见 2.5 节）。",
+                "subsections": []
+              }
+            ]
+          },
+          {
+            "id": "ch_2_sec_4",
+            "title": "除草装置设计",
+            "level": 2,
+            "content": "",
+            "subsections": [
+              {
+                "id": "ch_2_sub_4_1",
+                "title": "选型论证",
+                "level": 3,
+                "content": "为避免\"仅对比两种刀头\"的选型局限，本文按\"作用机理→中草药行间作业适配性\"框架对常见行间除草部件逐项论证，结果如表 2-3 所示。\n\n表 2-3 行间除草工作部件选型论证\n\n| 工作部件 | 作用机理 | 结论与理由 |\n| --- | --- | --- |\n| 鸭掌铲（锄铲式） | 铲柄入土切根、抬土翻草，浅层切断杂草根系 | 主选。与行间中耕农艺一致、牵引阻力小、入土深度可控 |\n| 弹齿 | 弹性齿贴地滑过，扰动表层土壤带出幼苗杂草 | 对比保留。仿形好、伤苗低，与鸭掌铲构成除草率与伤苗率的权衡 |\n| 圆盘割刀 | 滚动圆盘切茎叶 | 不选。只作用地上部、不切根，杂草再生快 |\n| 旋转锄 | 高速旋转齿击打表土碎草 | 不选。对幼苗茎叶击打损伤大；低速工况效果差 |\n| 立式除草轮/梳齿轮 | 齿间隙梳除株间草 | 不选。属株间除草部件，与行间作业范围不符 |\n| 往复切割器 | 剪切茎叶 | 不选。不除根，对贴地匍匐杂草漏割率高 |\n| 激光/火焰除草 | 物理杀灭 | 不选。成本与能耗超出科研样机预算，效率不满足单日 3 亩目标 |\n| 机械臂拔草 | 逐株识别拔除 | 不选。需株间单株识别，节拍远低于行间作业需求 |\n\n论证表明：以\"浅层切断杂草根系\"为目标的中草药行间除草，锄铲式部件在机理上最适配；弹齿作为仿形好、伤苗低的对照部件保留。据此确定\"鸭掌铲为主刀头、弹齿一组田间对比\"的配置。",
+                "subsections": []
+              },
+              {
+                "id": "ch_2_sub_4_2",
+                "title": "鸭掌铲结构与参数",
+                "level": 3,
+                "content": "主选鸭掌铲为双翼铲结构，铲刃张角与碎土角按中耕铲通用设计准则选取<待补充：铲翼张角、入土角、铲幅宽具体数值与依据文献>。三段刀梁的中间刀通过快换座（4×M8 螺栓+2 定位销）安装于横向滑轨，拆装重复定位精度不超过 1 mm；左右刀梁固定安装。弹齿刀组宽 250 mm 五齿，与鸭掌铲共用快换接口，保证对比试验条件一致。",
+                "subsections": []
+              },
+              {
+                "id": "ch_2_sub_4_3",
+                "title": "铲类部件受力分析",
+                "level": 3,
+                "content": "铲式除草部件作业阻力的来源包括土壤切削阻力、土壤与铲面摩擦力及土垛抬升翻抛阻力。参考土壤-刀具切削力学模型[[REF:22]]，将铲柄简化为二维倾斜切削刃，建立切削受力模型。\n\n设铲刃与水平面夹角（入土角）为 [[SYM:\\delta]]，耕深为 [[SYM:d]]，铲幅宽为 [[SYM:w]]，土壤容重 [[SYM:\\gamma]]、内聚力 [[SYM:c]]、土壤与钢的摩擦角 [[SYM:\\phi']]。按 passive earth pressure 模型，切削合力沿铲面法向与切向分解后，水平牵引阻力可表示为[[EQ:F_x = F_0 (\\\\sin\\\\delta + \\\\mu \\\\cos\\\\delta)]]，式中 [[SYM:F_0]] 为作用在铲面上的土壤法向合力，与耕深、幅宽及土壤参数相关；[[SYM:\\mu=\\tan\\phi']] 为土壤-钢摩擦系数。牵引阻力随耕深近似线性增长，因此浅耕（30 mm）既是农艺要求，也直接降低功耗与结构载荷。\n\n对弹齿，其弹性变形使齿尖遇阻后摆让，峰值阻力低于刚性铲，但切根深度一致性差；二者构成\"除草率—伤苗率—阻力\"的权衡关系，为第 5 章对比试验提供了理论预期<待补充：代入田间土壤参数后的阻力数值估算与拉压传感器实测验证>。",
+                "subsections": []
+              },
+              {
+                "id": "ch_2_sub_4_4",
+                "title": "除草装置总体布置",
+                "level": 3,
+                "content": "除草装置按\"三刀并行\"布置：左、中、右三段刀梁覆盖整个行间断面。中间刀安装于横向滑轨组件（300 mm 直线导轨+8 mm 导程滚珠丝杠+NEMA17 步进电机），构成主动对行执行器；两端设限位与原点开关。步进细分驱动下横向运动分辨率为 8 mm/(200×细分) μm 级，远高于对行偏差 ±2 cm 的需求。三段刀梁的提刀由电动推杆实现（见 2.3 节）。\n\n[[FIG:三刀并行除草装置结构简图]]",
+                "subsections": []
+              }
+            ]
+          },
+          {
+            "id": "ch_2_sec_5",
+            "title": "车载电控与固件设计",
+            "level": 2,
+            "content": "",
+            "subsections": [
+              {
+                "id": "ch_2_sub_5_1",
+                "title": "车载控制器硬件资源",
+                "level": 3,
+                "content": "车载控制器为 STM32F407ZG（144 脚），底盘既有外设资源包括：SBUS 遥控输入（USART1+DMA）、四路电机 PWM（TIM1）、四路霍尔轮速捕获（TIM3，硬件在位但固件停用）、电机电流检测（ACS712 经 I2C2 ADS1115）、多路继电器与预留输入输出通道。硬件盘点表明：刀控、轮速上报、过流保护所需硬件均在位，线控改造无需新增硬件。",
+                "subsections": []
+              },
+              {
+                "id": "ch_2_sub_5_2",
+                "title": "SBUS/UDP 双指令源线控方案",
+                "level": 3,
+                "content": "底盘线控改造采用\"固件内双指令源切换\"方案：保留 SBUS 遥控指令源，新增 AUTO/MANUAL 模式。AUTO 模式下，导航控制帧（UDP 经树莓派转发至串口，0xA5 0x5A 帧头+CRC16 校验）经解析后映射为四轮目标轮速，送入原有 PID 速度环；SBUS 心跳丢失或遥控器切至手动档时自动切回 MANUAL，遥控器天然构成备份操纵层。\n\n本文对比了四种线控方案：（1）固件双指令源（本方案），零机械改装、复用速度环、安全分层；（2）电机直控，绕过速度环，丢底层闭环、无线抖动无兜底，安全性下降；（3）外挂执行机构推摇杆，精度差、迟滞大；（4）成品线控底盘，成本达万元级。方案（1）在安全性、成本与工作量上综合最优，被采用。",
+                "subsections": []
+              },
+              {
+                "id": "ch_2_sub_5_3",
+                "title": "通信协议与安全联锁",
+                "level": 3,
+                "content": "PC 与车端间协议帧采用 0xA5 0x5A 帧头+类型+载荷+CRC16 校验格式，经树莓派完成 UDP 与串口双向桥接。安全联锁采用四重机制：（1）急停按钮接入继电器硬线回路，ESTOP 锁存且仅能人工复位；（2）500 ms 心跳超时触发急停并提刀；（3）视觉帧丢失超阈值自动提刀停车；（4）ACS712 采集电机电流，超阈值判定刀具卡滞并提刀。除草刀继电器改为固件程序控制，原继电器硬件回路保留作为最后一级切断。新增功能引脚分配遵循\"不占用既有继电器与通信引脚\"原则<待补充：完整引脚分配表（可引自项目方案引脚清单）>。",
+                "subsections": []
+              },
+              {
+                "id": "ch_2_sub_5_4",
+                "title": "固件改造内容",
+                "level": 3,
+                "content": "固件增量改造包括：协议帧解析（串口空闲中断+DMA 收帧、CRC 校验、按类型分发）、AUTO/MANUAL 指令源切换、刀控联锁逻辑、心跳看门狗、恢复 TIM3 四通道输入捕获实现轮速上报（0x10 帧）、读取 ADS1115 电机电流。原 SBUS 解析、PID 速度环与 PWM 输出逻辑全部保留不动，降低改造引入底盘失控的风险。",
+                "subsections": []
+              }
+            ]
+          },
+          {
+            "id": "ch_2_sec_6",
+            "title": "本章小结",
+            "level": 2,
+            "content": "本章完成了中草药行间除草机的总体方案设计：确定设计需求与指标；介绍四轮独立驱动-独立转向移动平台及其半线控基础；设计了被动限深仿形入土深度装置与电动提刀机构；对 8 类行间除草部件按作用机理逐项论证确定\"鸭掌铲主选、弹齿对比\"配置，建立了铲类部件切削受力模型；完成车载电控的双指令源线控方案、通信协议与四重安全联锁设计。各项台架验收指标已确定<待补充：台架实测数据>。",
+            "subsections": []
+          }
+        ]
+      },
+      {
+        "id": "ch_3",
+        "title": "导航线提取",
+        "level": 1,
+        "content": "",
+        "subsections": [
+          {
+            "id": "ch_3_sec_1",
+            "title": "感知链总体设计",
+            "level": 2,
+            "content": "导航线提取的处理链为：图像采集→去畸变→DeepLabV3+ 二分类分割→逆透视变换→双墙提取→远/近场导航线解算。单目相机以低机位前视安装于车体前部，视场覆盖车前 2~3 m 的行间区域；分割网络区分作物行与行间背景；逆透视变换将前视图投影至田面物理坐标系；在鸟瞰域提取作物行左右内边界（双墙），并解算远场导航线（用于底盘轨迹跟踪）与近场草带中心线（用于中间刀对行）。\n\n[[FIG:导航线提取处理链流程图]]",
+            "subsections": []
+          },
+          {
+            "id": "ch_3_sec_2",
+            "title": "相机标定与图像去畸变",
+            "level": 2,
+            "content": "",
+            "subsections": [
+              {
+                "id": "ch_3_sub_2_1",
+                "title": "标定模型",
+                "level": 3,
+                "content": "采用张正友平面标定法[[REF:23]]获取相机内参矩阵与畸变系数。相机线性成像模型为[[EQ:s\\\\tilde{p}=K[R|t]\\\\tilde{P}]]，式中 [[SYM:K]] 为内参矩阵，[[SYM:[R|t]]] 为外参，[[SYM:\\tilde{p}]]、[[SYM:\\tilde{P}]] 分别为像点与空间点的齐次坐标。径向与切向畸变采用[[EQ:x_c=x(1+k_1r^2+k_2r^4+k_3r^6)+2p_1xy+p_2(r^2+2x^2)]][[EQ:y_c=y(1+k_1r^2+k_2r^4+k_3r^6)+p_1(r^2+2y^2)+2p_2xy]]描述，[[SYM:k_1,k_2,k_3]] 为径向系数，[[SYM:p_1,p_2]] 为切向系数。\n\n标定采用棋盘格标定板多姿态采图，张正友法利用棋盘格平面与像平面的单应约束线性求解内参初值，再经最大似然优化联合估计畸变系数<待补充：标定图数量、重投影误差数值、标定参数表>。每帧图像推理前先按标定参数去畸变，消除镜头畸变对后续几何解算的影响。",
+                "subsections": []
+              },
+              {
+                "id": "ch_3_sub_2_2",
+                "title": "标定参数管理",
+                "level": 3,
+                "content": "标定参数（内参、畸变系数、IPM 单应矩阵）以参数文件形式管理，支持低机位重新安装后的重标定与参数热更新；与 IPM 相关的梯形映射区参数改为可配置，避免硬编码导致换装相机后映射失效。",
+                "subsections": []
+              }
+            ]
+          },
+          {
+            "id": "ch_3_sec_3",
+            "title": "基于 DeepLabV3+ 的作物行分割",
+            "level": 2,
+            "content": "",
+            "subsections": [
+              {
+                "id": "ch_3_sub_3_1",
+                "title": "网络结构",
+                "level": 3,
+                "content": "本文采用 DeepLabv3+[[REF:16]]架构、MobileNetV2[[REF:18]]骨干的轻量化组合。网络以空洞空间金字塔池化（ASPP）模块并行采用多膨胀率空洞卷积[[REF:12]]捕获多尺度上下文，解码器以低层特征补全边界细节；MobileNetV2 骨干采用倒残差结构与线性瓶颈，以深度可分离卷积[[REF:19]]将计算量压缩至常规卷积的约 1/8~1/9，满足地面站逐帧推理需求。\n\n输出为二分类掩膜：作物行（含药材苗带）为一类，行间杂草与裸土为背景类。备选骨干包括 Xception[[REF:19]]、ResNet[[REF:11]]与 HRNet<待核实：HRNet 文献，Wang J, et al., TPAMI 2020>，骨干可替换以支持精度-速度权衡实验。",
+                "subsections": []
+              },
+              {
+                "id": "ch_3_sub_3_2",
+                "title": "损失函数与训练策略",
+                "level": 3,
+                "content": "训练采用交叉熵与 Dice 联合损失[[EQ:L=L_{CE}+\\\\lambda L_{Dice}]]，式中交叉熵项[[EQ:L_{CE}=-\\\\sum_i y_i\\\\log p_i+(1-y_i)\\\\log(1-p_i)]]，Dice 项[[EQ:L_{Dice}=1-\\\\frac{2\\\\sum_i p_i y_i}{\\\\sum_i p_i+\\\\sum_i y_i}]]。Dice 项缓解苗期作物行像素占比小、类别不均衡导致的边界欠分割问题；[[SYM:\\lambda]] 为平衡权重<待补充：训练超参数表（学习率、批大小、优化器、增强策略）与数据集划分>。\n\n训练采用混合精度加速、断点续训与早停策略；备选骨干支持消融对比。针对跨季节杂草种类与色泽差异造成的域偏移，计划补采 200~300 张目标物候期样本微调，并保留传统图像处理行线提取作为兜底通道。",
+                "subsections": []
+              },
+              {
+                "id": "ch_3_sub_3_3",
+                "title": "分割模型训练与评估结果",
+                "level": 3,
+                "content": "模型在夏季田间图像数据集上训练 202 轮，验证集评估指标如表 3-1 所示（证据：项目训练日志）。\n\n表 3-1 DeepLabV3+ 验证集评估指标（第 200~202 轮）\n\n| 指标 | 第 200 轮 | 第 201 轮 | 第 202 轮 |\n| --- | --- | --- | --- |\n| 验证损失 | 0.2936 | 0.2978 | 0.2905 |\n| mIoU | 0.7158 | 0.7163 | 0.7134 |\n| MPA | 0.8480 | 0.8442 | 0.8508 |\n| Dice | 0.7478 | 0.7465 | 0.7472 |\n| 精确率 | 0.6978 | 0.7067 | 0.6863 |\n| 召回率 | 0.8110 | 0.7968 | 0.8254 |\n| 前景 IoU | 0.5994 | 0.5978 | 0.5990 |\n| 背景 IoU | 0.8322 | 0.8347 | 0.8278 |\n\n第 201 轮取得峰值 mIoU 0.7163，背景（行间区域）IoU 达 0.8347，为双墙提取提供了可靠背景识别；前景 IoU 0.5978 相对偏低，主要原因是苗期作物行边缘像素占比小、类别不均衡，可通过损失加权与难例挖掘进一步改善<待补充：测试集指标、逐帧推理速度实测、典型分割结果可视化、不同骨干消融对比>。\n\n需要说明指标的可比性口径：文献中报道的 90% 以上 mIoU 通常基于公开成熟数据集、多类别分割或多轮超参筛选，其类别构成与像素分布与本文任务不同；mIoU 取决于数据集、类别定义与标注口径，跨数据集直接比较不具学术意义。本文模型的定位是支撑双墙提取与导航线解算的系统级任务：行间背景区域分割可靠（背景 IoU 0.8347），足以稳定解算行间导航线；作物行前景 IoU 相对偏低主要源于苗期行带像素占比小与边缘标注的不确定性，属于类别不均衡问题，可通过补采样本微调、损失加权与难例挖掘继续提升（见 3.2.1 节域适应计划）。",
+                "subsections": []
+              }
+            ]
+          },
+          {
+            "id": "ch_3_sec_4",
+            "title": "逆透视变换与误差分析",
+            "level": 2,
+            "content": "",
+            "subsections": [
+              {
+                "id": "ch_3_sub_4_1",
+                "title": "变换原理",
+                "level": 3,
+                "content": "逆透视变换（IPM）利用相机外参将前视图投影至田面平面，使图像像素与田面物理坐标建立映射。设田面为平面 [[SYM:Z=0]]，相机内参 [[SYM:K]]、外参 [[SYM:[R|t]]] 已知，则田面点 [[SYM:(X,Y,0)]] 与像点 [[SYM:(u,v)]] 的关系为单应变换[[EQ:s\\\\begin{bmatrix}u\\\\\\\\v\\\\\\\\1\\\\end{bmatrix}=H\\\\begin{bmatrix}X\\\\\\\\Y\\\\\\\\1\\\\end{bmatrix}]]，[[SYM:H]] 为 3×3 单应矩阵。工程上 [[SYM:H]] 由田面已知标记点（4 点以上）直接反推，避免显式估计外参；IPM 映射区（梯形源区与目标区）参数配置化，适配不同安装高度与俯角。",
+                "subsections": []
+              },
+              {
+                "id": "ch_3_sub_4_2",
+                "title": "投影误差传播分析",
+                "level": 3,
+                "content": "IPM 误差主要来源于三部分：（1）标定重投影误差引起的内参扰动 [[SYM:\\Delta K]]；（2）田面平面假设误差（地表起伏与垄形）；（3）远场透视压缩放大效应。对 [[SYM:H]] 的扰动 [[SYM:\\Delta H]]，像点误差经逆变换传播至田面坐标的相对误差近似为[[EQ:\\\\frac{\\\\Delta Y}{Y}\\\\approx\\\\frac{\\\\Delta H}{H}+2\\\\tan\\\\theta\\\\cdot\\\\frac{\\\\Delta v}{f}]]，式中 [[SYM:\\theta]] 为相机俯角，[[SYM:f]] 为焦距，[[SYM:\\Delta v]] 为像点行方向误差。该式表明：远场（[[SYM:Y]] 大）处误差被放大，且俯角越小放大越显著；低机位、大俯角安装可抑制远场误差，与本文低机位前视安装方案一致<待补充：代入实际标定参数后的定量误差曲线>。",
+                "subsections": []
+              }
+            ]
+          },
+          {
+            "id": "ch_3_sec_5",
+            "title": "双墙提取与导航线解算",
+            "level": 2,
+            "content": "",
+            "subsections": [
+              {
+                "id": "ch_3_sub_5_1",
+                "title": "双墙提取",
+                "level": 3,
+                "content": "对分割掩膜依次执行形态学开闭运算去噪、连通域分析，按面积与长宽比过滤虚假区域；分别对左右作物行区域提取内边界（面向行间一侧的轮廓），即\"双墙\"。为抑制单帧抖动，对边界点序列进行时间维度滑动平均滤波。",
+                "subsections": []
+              },
+              {
+                "id": "ch_3_sub_5_2",
+                "title": "远/近场导航线解算",
+                "level": 3,
+                "content": "在 IPM 鸟瞰域内解算两条导航线：（1）远场导航线取双墙几何中线，作为底盘轨迹跟踪的横向偏差基准；（2）近场草带中心线取行间草带质心线，作为中间刀对行目标。单侧墙漏检时，以另一侧墙结合标定行距约束回退解算，回退阈值可配置，避免固定阈值在不同行距地块失效。连续多帧双墙均失效时判定视觉丢失，触发提刀停车联锁（见 4.3 节）。\n\n[[FIG:双墙提取与导航线解算示意图]]\n\n<待补充：avi 田间视频回放的导航线连续性与横向偏差曲线评价>",
+                "subsections": []
+              }
+            ]
+          },
+          {
+            "id": "ch_3_sec_6",
+            "title": "本章小结",
+            "level": 2,
+            "content": "本章构建了\"标定—分割—IPM—双墙—导航线\"的完整感知链：基于张正友标定完成去畸变，DeepLabV3+（MobileNetV2 骨干）分割模型验证集 mIoU 达 0.7163、背景 IoU 达 0.8347；IPM 将感知映射至田面物理坐标系并给出误差传播分析；双墙提取与远/近场导航线解算为第 4 章运动控制提供了统一基准。",
+            "subsections": []
+          }
+        ]
+      },
+      {
+        "id": "ch_4",
+        "title": "运动控制",
+        "level": 1,
+        "content": "",
+        "subsections": [
+          {
+            "id": "ch_4_sec_1",
+            "title": "控制体系结构",
+            "level": 2,
+            "content": "整机运动控制采用\"底盘轨迹跟踪+入土控制+除草装置控制\"三回路架构。底盘回路以远场导航线为基准实现行间自主行走；入土回路管理除草铲的入土深度与提刀/落刀状态；除草装置回路以近场草带中心线为基准驱动中间刀横向滑移。三回路通过车载状态机统一调度，安全联锁对各回路拥有最高优先级。\n\n[[FIG:运动控制三回路架构图]]\n\n感知与控制之间经无线链路（UDP）连接，端到端时延由采集、编码、传输、推理、下发各环节组成，其估计与补偿在 4.2.4 节专门讨论。",
+            "subsections": []
+          },
+          {
+            "id": "ch_4_sec_2",
+            "title": "轨迹跟踪控制",
+            "level": 2,
+            "content": "",
+            "subsections": [
+              {
+                "id": "ch_4_sub_2_1",
+                "title": "4WS 阿克曼运动学建模",
+                "level": 3,
+                "content": "底盘为四轮独立驱动-四轮独立转向（4WD-4WS）构型。作业速度低（小于 1 m/s），轮胎侧偏角可忽略，四个车轮绕同一瞬时转动中心（ICC）转动的阿克曼几何成立。设轴距为 [[SYM:L]]，前/后轮距为 [[SYM:B_f]]、[[SYM:B_r]]，取底盘中心等效转角 [[SYM:delta]]（左转为正），则绕 ICC 的后轴中心转弯半径为\n\n[[EQ:R=\\frac{L}{\\tan\\delta}]]\n\n四轮转角按阿克曼几何分配：前外轮与后轮（后轮反向偏转）分别为\n\n[[EQ:\\delta_{fr}=\\arctan\\frac{L}{R+B_f/2},\\quad \\delta_{fl}=\\arctan\\frac{L}{R-B_f/2}]]\n\n[[EQ:\\delta_{rl}=-\\arctan\\frac{L}{R-B_r/2},\\quad \\delta_{rr}=-\\arctan\\frac{L}{R+B_r/2}]]\n\n各轮速度按其到 ICC 的转弯半径比例分配：\n\n[[EQ:v_i=\\frac{R_i}{R}v,\\quad i\\in\\{fl,fr,rl,rr\\}]]\n\n式中 [[SYM:R_i]] 为各轮转弯半径（前轮 [[SYM:sqrt((R-B_r/2)^2+L^2)]] 与 [[SYM:sqrt((R+B_r/2)^2+L^2)]]，后轮为 [[SYM:R-B_r/2]] 与 [[SYM:R+B_r/2]]）。导航控制帧（NAV2）下发的即为四轮目标转角与中心速度 [[SYM:v]]：车载固件将目标角经斜率限幅写入转向舵机，并按上式将中心速度映射为四轮目标转速，进入既有 PID 速度环。\n\n松软地面的滑移使实际转弯半径偏离几何值，构成运动学参数不确定性，本文将其归入系统噪声由卡尔曼滤波吸收；同时固件利用转向角反馈实现转向失效检测（指令角与反馈角偏差超阈值持续超时即触发减速、提刀、停车），以覆盖舵机转向链路的特有故障面<待补充：转向阶跃响应标定数据>。",
+                "subsections": []
+              },
+              {
+                "id": "ch_4_sub_2_2",
+                "title": "横向偏差卡尔曼滤波估计",
+                "level": 3,
+                "content": "以横向偏差 [[SYM:e]] 及其变化率 [[SYM:\\dot{e}]] 为状态，建立离散状态方程[[EQ:\\\\mathbf{x}_k=\\\\begin{bmatrix}e_k\\\\\\\\\\\\dot{e}_k\\\\end{bmatrix}=\\\\begin{bmatrix}1&\\\\Delta t\\\\\\\\0&1\\\\end{bmatrix}\\\\begin{bmatrix}e_{k-1}\\\\\\\\\\\\dot{e}_{k-1}\\\\end{bmatrix}+\\\\mathbf{w}_k]]，以视觉帧解算的横向偏差为观测[[EQ:z_k=e_k+v_k]]，[[SYM:\\mathbf{w}_k]]、[[SYM:v_k]] 为零均值高斯噪声。按标准卡尔曼滤波递推[[REF:24]]估计状态，滤波周期 [[SYM:\\Delta t]] 采用实测帧间时延而非固定值，消除变速与链路时延波动下的估计偏差。",
+                "subsections": []
+              },
+              {
+                "id": "ch_4_sub_2_3",
+                "title": "轨迹跟踪控制律",
+                "level": 3,
+                "content": "横向控制采用 PD 控制律[[EQ:\\delta_c=K_p e+K_d \\dot{e}]]，PD 输出的中心等效转角 [[SYM:delta_c]] 经上节阿克曼几何分配为四轮目标转角与轮速；相比纯追踪（pure pursuit）类几何方法[[REF:25]][[REF:26]]，以行间中心线为基准的横向偏差控制更适应窄行短视场场景。控制参数经仿真与台架整定<待补充：整定过程与参数表、阶跃响应曲线>。",
+                "subsections": []
+              },
+              {
+                "id": "ch_4_sub_2_4",
+                "title": "时延估计与前馈补偿",
+                "level": 3,
+                "content": "端到端时延 [[SYM:\\tau]] 使控制量作用于滞后状态，产生与车速成正比的横向偏差。本文采用时延在线估计与前馈补偿：以帧时间戳与心跳包统计估计 [[SYM:\\hat{\\tau}]]（滑动平均滤波），按当前车速将横向控制前馈平移[[EQ:\\\\Delta e_f=v\\\\hat{\\\\tau}]]对应的行驶距离。将链路近似为纯滞后环节 [[SYM:e^{-\\tau s}]]，前馈补偿后系统的相位裕度损失为 [[SYM:\\omega\\hat{\\tau}]]，在 [[SYM:\\omega_c\\hat{\\tau}\\ll 1]] 时补偿近似完备<待补充：时延实测分布与补偿前后横向偏差对比>。该补偿的田间显著性检验在第 5 章试验设计中安排。",
+                "subsections": []
+              }
+            ]
+          },
+          {
+            "id": "ch_4_sec_3",
+            "title": "入土控制",
+            "level": 2,
+            "content": "",
+            "subsections": [
+              {
+                "id": "ch_4_sub_3_1",
+                "title": "深度设定与仿形协同",
+                "level": 3,
+                "content": "除草深度由被动限深仿形机构（2.3 节）机械保证，控制层面完成三件事：（1）深度档位设定，通过机械限位标定机构设定目标深度 30 mm；（2）深度监测，通过限深板摆角传感器估计实际深度趋势<待补充：摆角-深度标定曲线>；（3）低频补偿，对缓坡等趋势性偏差由提刀推杆行程微调，高频扰动交由机械仿形吸收。",
+                "subsections": []
+              },
+              {
+                "id": "ch_4_sub_3_2",
+                "title": "提刀/落刀状态机",
+                "level": 3,
+                "content": "入土控制由车载状态机统一管理，状态包括：待机、作业（落刀）、提刀越障、安全急停。状态转换由导航指令、地头检测、视觉丢失、心跳超时、急停按钮、电机过流六类事件共同驱动；ESTOP 锁存且仅能人工复位，任意安全事件触发提刀并停刀。状态机在固件层实现，pytest 覆盖全部转换路径<待补充：状态转换图与测试报告>。",
+                "subsections": []
+              }
+            ]
+          },
+          {
+            "id": "ch_4_sec_4",
+            "title": "除草装置控制",
+            "level": 2,
+            "content": "",
+            "subsections": [
+              {
+                "id": "ch_4_sub_4_1",
+                "title": "中间刀对行 PID 控制",
+                "level": 3,
+                "content": "中间刀横向滑轨由步进电机驱动，以近场草带中心线横向误差 [[SYM:e_b]] 为输入，采用增量式数字 PID 控制律[[EQ:\\\\Delta u_k=K_p(e_k-e_{k-1})+K_i e_k+K_d(e_k-2e_{k-1}+e_{k-2})]]，输出为步进脉冲数。执行机构运动学分辨率为 [[SYM:s/(200N_s)]]（[[SYM:s]] 为丝杠导程 8 mm，[[SYM:N_s]] 为细分数），μm 级分辨率远高于 ±2 cm 对行需求，控制精度瓶颈在感知端而非执行端。\n\n对行误差源包括：草带中心线抖动（分割噪声）、执行机构齿隙与滑轨摩擦、以及底盘横摆引起的坐标基准变化。针对前两者，对 [[SYM:e_b]] 先经低通滤波并设置死区，避免执行机构频繁抖动<待补充：滤波参数与死区整定、台架阶跃响应（20 mm 阶跃稳定时间、10 次往返重复定位）>。",
+                "subsections": []
+              },
+              {
+                "id": "ch_4_sub_4_2",
+                "title": "刀控联锁",
+                "level": 3,
+                "content": "除草刀（三段提刀推杆）由固件程序控制，联锁条件与状态机一致：导航帧有效、心跳正常、视觉有效、无急停、无过流五条件同时满足才允许落刀作业；任一条件失效立即提刀停刀。原继电器硬件回路保留为最后一级切断，实现软件联锁与硬件回路的冗余。",
+                "subsections": []
+              },
+              {
+                "id": "ch_4_sub_4_3",
+                "title": "电机过载保护",
+                "level": 3,
+                "content": "ACS712 电流计经 ADS1115 采集四电机电流，滑动窗口均值超阈值判定为刀具卡滞或电机堵转，触发提刀并降速；阈值随作业速度档位配置<待补充：电流阈值标定数据>。",
+                "subsections": []
+              }
+            ]
+          },
+          {
+            "id": "ch_4_sec_5",
+            "title": "本章小结",
+            "level": 2,
+            "content": "本章建立了 4WS 阿克曼运动学模型与横向偏差卡尔曼滤波估计方法，设计了轨迹跟踪 PD 控制律与时延前馈补偿；设计了以机械仿形为主、控制微调为辅的入土控制方案与提刀状态机；完成了中间刀增量式 PID 对行控制、刀控联锁与电机过载保护设计。控制参数整定与台架验证数据<待补充>。",
+            "subsections": []
+          }
+        ]
+      },
+      {
+        "id": "ch_5",
+        "title": "田间试验",
+        "level": 1,
+        "content": "",
+        "subsections": [
+          {
+            "id": "ch_5_sec_1",
+            "title": "试验目的与条件",
+            "level": 2,
+            "content": "本章试验目的：（1）对比鸭掌铲与弹齿两种除草装置在中草药行间的除草效果与伤苗风险；（2）验证除草装置控制（中间刀主动对行）相对固定刀的增益；（3）考察整机行间行走的横向控制精度。\n\n试验地条件：中草药（芍药）种植田，行距 30~60 cm<待补充：试验地点、面积、芍药生育期、杂草种类与密度、土壤条件>。试验设备为本文研制的中草药行间除草机样机，联调阶段作业速度 0.5 km/h，单趟作业长度 20 m 草带。真值测量采用<待补充：测量手段（标尺+录像回放等）>。",
+            "subsections": []
+          },
+          {
+            "id": "ch_5_sec_2",
+            "title": "试验设计",
+            "level": 2,
+            "content": "设置两组单因素对比试验，每组各 3 趟重复：\n\n表 5-1 田间对比试验方案\n\n| 组别 | 因素 | 处理 | 观测指标 |\n| --- | --- | --- | --- |\n| 1 | 除草装置类型 | 鸭掌铲 vs 弹齿 | 除草率、伤苗率、牵引阻力 |\n| 2 | 刀具控制方式 | 主动对行 vs 固定刀 | 除草率、伤苗率、对行偏差 |\n\n除草率定义为作业后杂草减少量与作业前杂草量之比；伤苗率定义为被损伤药材幼苗数与作业带内幼苗总数之比；对行偏差为除草铲实际轨迹相对行间草带中心线的横向偏差（录像回放测量）。牵引阻力由<待补充：测力手段>获取。\n\n统计方法：各组处理间采用单因素方差分析，显著性水平取 0.05<待补充：多重比较方法>。",
+            "subsections": []
+          },
+          {
+            "id": "ch_5_sec_3",
+            "title": "试验结果与分析",
+            "level": 2,
+            "content": "本章田间结果待试验完成后填写，当前初稿不含任何田间数据，不预设任何结论。\n\n<待补充：5.3.1 除草装置对比结果（除草率、伤苗率、阻力及显著性检验）；5.3.2 刀具控制与不控制对比结果；5.3.3 整机横向控制精度；各节配数据表、图表与统计分析>",
+            "subsections": []
+          },
+          {
+            "id": "ch_5_sec_4",
+            "title": "本章小结",
+            "level": 2,
+            "content": "本章给出了两组田间对比试验（除草装置类型、刀具控制方式）的完整设计，包括因素水平、观测指标定义与统计方法。所有结论性表述将在数据齐备并经统计检验后给出。",
+            "subsections": []
+          }
+        ]
+      },
+      {
+        "id": "ch_6",
+        "title": "结论与展望",
+        "level": 1,
+        "content": "",
+        "subsections": [
+          {
+            "id": "ch_6_sec_1",
+            "title": "主要工作与结论",
+            "level": 2,
+            "content": "本文面向中草药窄行行间除草需求，完成了行间除草机的系统设计，包括总体方案、机械系统、导航线提取与运动控制，主要工作与结论如下：\n\n（1）完成了中草药行间除草机总体与机械系统设计。确定整机设计需求与指标；完成四轮独立驱动-独立转向（4WD-4WS）移动平台的线控改造（SBUS/UDP 双指令源，复用底层 PID 速度环）；设计被动限深仿形入土深度装置与电动提刀机构；按作用机理对 8 类行间除草部件逐项论证，确定\"鸭掌铲主选、弹齿对比\"配置，并建立铲类部件切削受力模型。\n\n（2）提出了基于语义分割与逆透视变换的导航线提取方法。构建\"标定—去畸变—DeepLabV3+ 分割—IPM—双墙提取—远/近场导航线解算\"完整感知链；夏季田间数据集训练的 DeepLabV3+（MobileNetV2 骨干）验证集 mIoU 达 0.7163、背景 IoU 达 0.8347；双墙几何中线与行间草带质心线分别为底盘跟踪与中间刀对行提供基准，并给出 IPM 误差传播分析。\n\n（3）设计了三回路运动控制系统。建立 4WS 阿克曼运动学模型与横向偏差卡尔曼滤波估计，设计轨迹跟踪 PD 控制律与时延前馈补偿；入土控制以机械仿形为主、控制微调为辅，提刀状态机与四重安全联锁（急停锁存、心跳超时、视觉丢失、过流保护）保障作业安全；中间刀采用增量式 PID 实现横向主动对行。\n\n（4）设计了除草装置对比与刀具控制对比两组田间试验方案，明确除草率、伤苗率、对行偏差等指标定义与统计方法。田间数据获取后<待补充：试验结论>。",
+            "subsections": []
+          },
+          {
+            "id": "ch_6_sec_2",
+            "title": "不足与展望",
+            "level": 2,
+            "content": "（1）跨季节域适应。现有分割模型基于夏季图像训练，杂草种类、密度与色泽的季节差异会造成性能下降，需补采样本微调，并评估与传统行线提取方法的融合兜底策略。\n\n（2）转向执行链路品质约束。横向控制精度受转向舵机响应滞后与松软地面滑移的共同影响，后续将开展指令-反馈阶跃标定，并评估引入转向角反馈闭环与惯性测量单元融合的必要性。\n\n（3）作业速度提升。样机联调速度为 0.5 km/h，与 1.5 km/h 需求指标存在差距，提速前需系统性优化感知时延与控制带宽。\n\n（4）试验验证完整性。本文两组对比试验数据尚未获取，除草装置与刀具控制的定量验证将在田间试验完成后补充，结论表述强度以数据显著性为准。",
+            "subsections": []
+          }
+        ]
+      }
+    ],
+    "abstractZh": "中草药种植中除草环节高度依赖人工，投入占田间管理总成本 40% 以上；中药材对农药残留有严格限定，化学除草应用受限；行距窄（30~60 cm）且幼苗脆嫩，通用机械伤苗率高。针对上述问题，本文设计了基于纯视觉导航的中草药行间除草机。整机以四轮独立驱动-独立转向（4WD-4WS）底盘为移动平台，采用三刀并行除草装置，经作用机理逐项论证选定鸭掌铲为主刀头并以弹齿作对比；设计被动限深仿形入土深度装置与电动提刀机构；车载电控采用 SBUS/UDP 双指令源线控方案，保留底层 PID 速度环与急停硬线回路，并建立铲类部件切削受力模型。导航线提取采用“相机标定—去畸变—DeepLabV3+ 语义分割—逆透视变换—双墙提取”处理链，从单目图像解算作物行双墙边界，同步得到底盘跟踪基准与中间刀对行基准；在自建夏季田间图像数据集上，DeepLabV3+（MobileNetV2 骨干）分割模型的平均交并比达 0.7163，分割结果可稳定支撑双墙提取与导航线解算。运动控制建立四轮独立转向（4WS）阿克曼运动学模型与横向偏差卡尔曼滤波估计，设计轨迹跟踪 PD 控制律、时延估计与前馈补偿、增量式 PID 中间刀对行控制以及四重安全联锁。论文设计了除草装置类型对比与刀具控制方式对比两组田间试验方案，试验结果待田间作业窗口完成后补充。\n\n关键词：中草药；行间除草机；机器视觉；语义分割；DeepLabV3+；逆透视变换；运动控制",
+    "abstractEn": "Manual weeding accounts for more than 40% of total field management cost in Chinese herbal medicine production; chemical weeding is restricted by pesticide residue standards; and the narrow inter-row spacing (30-60 cm) with fragile seedlings leads to high seedling damage for general-purpose machines. This thesis presents the system design of an inter-row weeding machine for Chinese herbal medicine based on pure visual navigation. The machine adopts a four-wheel-drive, four-wheel-steer (4WD-4WS) chassis and a three-blade parallel weeding mechanism; the hoe blade is selected as the main tool through mechanism-based comparison, with flexible tines reserved for comparison. A passive depth-limiting profiling mechanism and electric blade-lift actuators are designed, and a soil-blade cutting force model is established. The onboard controller applies a dual SBUS/UDP command-source drive-by-wire scheme with the original PID speed loop and hardwired emergency stop retained. The navigation line extraction pipeline integrates camera calibration, undistortion, DeepLabV3+ semantic segmentation, and inverse perspective mapping to extract dual-wall crop row boundaries, providing the tracking reference for the chassis and the alignment reference for the middle blade; on a self-built summer field image dataset, the DeepLabV3+ model (MobileNetV2 backbone) achieves a mean intersection-over-union of 0.7163, which stably supports dual-wall extraction and navigation line solution. Motion control includes a 4WS Ackermann kinematic model, Kalman-filtered lateral deviation estimation, PD path tracking with delay feed-forward compensation, incremental PID middle-blade alignment, and a four-fold safety interlock. Two groups of field comparison experiments are designed, and results will be supplemented after the field campaign.\n\nKey words: Chinese herbal medicine; inter-row weeding machine; machine vision; semantic segmentation; DeepLabV3+; inverse perspective mapping; motion control"
+  },
+  "references": [
+    {
+      "id": 1,
+      "description": "潘月占, 丁润锁, 杨顶浩, 等. 京津冀林下中草药种植除草机器人现状与需求调研[J]. 农业工程技术, 2026(待补卷期页).",
+      "placeholder": "[[REF:KEYWORD_PLACEHOLDER: 潘月占, 丁润锁, 杨顶浩, 等. 京津冀林下中草药种植除草机器人现状与需求调研[J]. 农业工程技术, 2026(待补卷期页).]]"
+    },
+    {
+      "id": 2,
+      "description": "Slaughter D C, Giles D K, Downey D. Autonomous robotic weed control systems: A review[J]. Computers and Electronics in Agriculture, 2008, 61(1): 63-78.",
+      "placeholder": "[[REF:KEYWORD_PLACEHOLDER: Slaughter D C, Giles D K, Downey D. Autonomous robotic weed control systems: A review[J]. Computers and Electronics in Agriculture, 2008, 61(1): 63-78.]]"
+    },
+    {
+      "id": 3,
+      "description": "Åstrand B, Baerveldt A J. An agricultural mobile robot with vision-based perception for mechanical weed control[J]. Autonomous Robots, 2002, 13(1): 21-35.",
+      "placeholder": "[[REF:KEYWORD_PLACEHOLDER: Åstrand B, Baerveldt A J. An agricultural mobile robot with vision-based perception for mechanical weed control[J]. Autonomous Robots, 2002, 13(1): 21-35.]]"
+    },
+    {
+      "id": 4,
+      "description": "Ruckelshausen A, Bise P B, Heme P, et al. BoniRob—an autonomous field robot platform for individual plant phenotyping[C]//Precision Agriculture '09. Wageningen: Wageningen Academic Publishers, 2009: 741-747.",
+      "placeholder": "[[REF:KEYWORD_PLACEHOLDER: Ruckelshausen A, Bise P B, Heme P, et al. BoniRob—an autonomous field robot platform for individual plant phenotyping[C]//Precision Agriculture '09. Wageningen: Wageningen Academic Publishers, 2009: 741-747.]]"
+    },
+    {
+      "id": 5,
+      "description": "Hague T, Marchant J A, Tillett N D. Ground based sensing systems for autonomous agricultural vehicles[J]. Computers and Electronics in Agriculture, 2000, 25(1/2): 11-28.",
+      "placeholder": "[[REF:KEYWORD_PLACEHOLDER: Hague T, Marchant J A, Tillett N D. Ground based sensing systems for autonomous agricultural vehicles[J]. Computers and Electronics in Agriculture, 2000, 25(1/2): 11-28.]]"
+    },
+    {
+      "id": 6,
+      "description": "Bakker T, Wouters H, van Asselt K, et al. A vision based row detection system for sugar beet[J]. Computers and Electronics in Agriculture, 2008, 60(1): 87-95.",
+      "placeholder": "[[REF:KEYWORD_PLACEHOLDER: Bakker T, Wouters H, van Asselt K, et al. A vision based row detection system for sugar beet[J]. Computers and Electronics in Agriculture, 2008, 60(1): 87-95.]]"
+    },
+    {
+      "id": 7,
+      "description": "Kise M, Zhang Q, Rovira Más F. A stereovision-based crop row detection method for tractor-automated guidance[J]. Biosystems Engineering, 2005, 90(4): 357-367.",
+      "placeholder": "[[REF:KEYWORD_PLACEHOLDER: Kise M, Zhang Q, Rovira Más F. A stereovision-based crop row detection method for tractor-automated guidance[J]. Biosystems Engineering, 2005, 90(4): 357-367.]]"
+    },
+    {
+      "id": 8,
+      "description": "谭彧, 等. 谷物联合收割机视觉导航路径识别系统: 中国专利 CN103914071.",
+      "placeholder": "[[REF:KEYWORD_PLACEHOLDER: 谭彧, 等. 谷物联合收割机视觉导航路径识别系统: 中国专利 CN103914071.]]"
+    },
+    {
+      "id": 9,
+      "description": "Long J, Shelhamer E, Darrell T. Fully convolutional networks for semantic segmentation[C]//Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition. Boston: IEEE, 2015: 3431-3440.",
+      "placeholder": "[[REF:KEYWORD_PLACEHOLDER: Long J, Shelhamer E, Darrell T. Fully convolutional networks for semantic segmentation[C]//Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition. Boston: IEEE, 2015: 3431-3440.]]"
+    },
+    {
+      "id": 10,
+      "description": "Ronneberger O, Fischer P, Brox T. U-Net: Convolutional networks for biomedical image segmentation[C]//Medical Image Computing and Computer-Assisted Intervention (MICCAI 2015). Cham: Springer, 2015: 234-241.",
+      "placeholder": "[[REF:KEYWORD_PLACEHOLDER: Ronneberger O, Fischer P, Brox T. U-Net: Convolutional networks for biomedical image segmentation[C]//Medical Image Computing and Computer-Assisted Intervention (MICCAI 2015). Cham: Springer, 2015: 234-241.]]"
+    },
+    {
+      "id": 11,
+      "description": "He K, Zhang X, Ren S, et al. Deep residual learning for image recognition[C]//Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition. Las Vegas: IEEE, 2016: 770-778.",
+      "placeholder": "[[REF:KEYWORD_PLACEHOLDER: He K, Zhang X, Ren S, et al. Deep residual learning for image recognition[C]//Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition. Las Vegas: IEEE, 2016: 770-778.]]"
+    },
+    {
+      "id": 12,
+      "description": "Yu F, Koltun V. Multi-scale context aggregation by dilated convolutions[C]//International Conference on Learning Representations (ICLR). San Juan, 2016.",
+      "placeholder": "[[REF:KEYWORD_PLACEHOLDER: Yu F, Koltun V. Multi-scale context aggregation by dilated convolutions[C]//International Conference on Learning Representations (ICLR). San Juan, 2016.]]"
+    },
+    {
+      "id": 13,
+      "description": "Zhao H, Shi J, Qi X, et al. Pyramid scene parsing network[C]//Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition. Honolulu: IEEE, 2017: 2881-2890.",
+      "placeholder": "[[REF:KEYWORD_PLACEHOLDER: Zhao H, Shi J, Qi X, et al. Pyramid scene parsing network[C]//Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition. Honolulu: IEEE, 2017: 2881-2890.]]"
+    },
+    {
+      "id": 14,
+      "description": "Badrinarayanan V, Kendall A, Cipolla R. SegNet: A deep convolutional encoder-decoder architecture for image segmentation[J]. IEEE Transactions on Pattern Analysis and Machine Intelligence, 2017, 39(12): 2481-2495.",
+      "placeholder": "[[REF:KEYWORD_PLACEHOLDER: Badrinarayanan V, Kendall A, Cipolla R. SegNet: A deep convolutional encoder-decoder architecture for image segmentation[J]. IEEE Transactions on Pattern Analysis and Machine Intelligence, 2017, 39(12): 2481-2495.]]"
+    },
+    {
+      "id": 15,
+      "description": "Chen L C, Papandreou G, Schroff F, et al. Rethinking atrous convolution for semantic image segmentation[EB/OL]. (2017-06-15). arXiv: 1706.05587.",
+      "placeholder": "[[REF:KEYWORD_PLACEHOLDER: Chen L C, Papandreou G, Schroff F, et al. Rethinking atrous convolution for semantic image segmentation[EB/OL]. (2017-06-15). arXiv: 1706.05587.]]"
+    },
+    {
+      "id": 16,
+      "description": "Chen L C, Zhu Y, Papandreou G, et al. Encoder-decoder with atrous separable convolution for semantic image segmentation[C]//Proceedings of the European Conference on Computer Vision (ECCV). Munich: Springer, 2018: 801-818.",
+      "placeholder": "[[REF:KEYWORD_PLACEHOLDER: Chen L C, Zhu Y, Papandreou G, et al. Encoder-decoder with atrous separable convolution for semantic image segmentation[C]//Proceedings of the European Conference on Computer Vision (ECCV). Munich: Springer, 2018: 801-818.]]"
+    },
+    {
+      "id": 17,
+      "description": "Howard A G, Zhu M, Chen B, et al. MobileNets: Efficient convolutional neural networks for mobile vision applications[EB/OL]. (2017-04-17). arXiv: 1704.04861.",
+      "placeholder": "[[REF:KEYWORD_PLACEHOLDER: Howard A G, Zhu M, Chen B, et al. MobileNets: Efficient convolutional neural networks for mobile vision applications[EB/OL]. (2017-04-17). arXiv: 1704.04861.]]"
+    },
+    {
+      "id": 18,
+      "description": "Sandler M, Howard A, Zhu M, et al. MobileNetV2: Inverted residuals and linear bottlenecks[C]//Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition. Salt Lake City: IEEE, 2018: 4510-4520.",
+      "placeholder": "[[REF:KEYWORD_PLACEHOLDER: Sandler M, Howard A, Zhu M, et al. MobileNetV2: Inverted residuals and linear bottlenecks[C]//Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition. Salt Lake City: IEEE, 2018: 4510-4520.]]"
+    },
+    {
+      "id": 19,
+      "description": "Chollet F. Xception: Deep learning with depthwise separable convolutions[C]//Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition. Honolulu: IEEE, 2017: 1251-1258.",
+      "placeholder": "[[REF:KEYWORD_PLACEHOLDER: Chollet F. Xception: Deep learning with depthwise separable convolutions[C]//Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition. Honolulu: IEEE, 2017: 1251-1258.]]"
+    },
+    {
+      "id": 20,
+      "description": "Oktay O, Schlemper J, Folgoc L L, et al. Attention U-Net: Learning where to look for the pancreas[EB/OL]. (2018-04-11). arXiv: 1804.03999.",
+      "placeholder": "[[REF:KEYWORD_PLACEHOLDER: Oktay O, Schlemper J, Folgoc L L, et al. Attention U-Net: Learning where to look for the pancreas[EB/OL]. (2018-04-11). arXiv: 1804.03999.]]"
+    },
+    {
+      "id": 21,
+      "description": "Redmon J, Farhadi A. YOLOv3: An incremental improvement[EB/OL]. (2018-04-08). arXiv: 1804.02767.",
+      "placeholder": "[[REF:KEYWORD_PLACEHOLDER: Redmon J, Farhadi A. YOLOv3: An incremental improvement[EB/OL]. (2018-04-08). arXiv: 1804.02767.]]"
+    },
+    {
+      "id": 22,
+      "description": "McKyes E. Soil cutting and tillage[M]. Amsterdam: Elsevier, 1985.",
+      "placeholder": "[[REF:KEYWORD_PLACEHOLDER: McKyes E. Soil cutting and tillage[M]. Amsterdam: Elsevier, 1985.]]"
+    },
+    {
+      "id": 23,
+      "description": "Zhang Z. A flexible new technique for camera calibration[J]. IEEE Transactions on Pattern Analysis and Machine Intelligence, 2000, 22(11): 1330-1334.",
+      "placeholder": "[[REF:KEYWORD_PLACEHOLDER: Zhang Z. A flexible new technique for camera calibration[J]. IEEE Transactions on Pattern Analysis and Machine Intelligence, 2000, 22(11): 1330-1334.]]"
+    },
+    {
+      "id": 24,
+      "description": "Kalman R E. A new approach to linear filtering and prediction problems[J]. Journal of Basic Engineering, 1960, 82(1): 35-45.",
+      "placeholder": "[[REF:KEYWORD_PLACEHOLDER: Kalman R E. A new approach to linear filtering and prediction problems[J]. Journal of Basic Engineering, 1960, 82(1): 35-45.]]"
+    },
+    {
+      "id": 25,
+      "description": "Coulter R C. Implementation of the pure pursuit path tracking algorithm[R]. Pittsburgh: Carnegie Mellon University, CMU-RI-TR-92-01, 1992.",
+      "placeholder": "[[REF:KEYWORD_PLACEHOLDER: Coulter R C. Implementation of the pure pursuit path tracking algorithm[R]. Pittsburgh: Carnegie Mellon University, CMU-RI-TR-92-01, 1992.]]"
+    },
+    {
+      "id": 26,
+      "description": "Snider J M. Automatic steering methods for autonomous automobile path tracking[R]. Pittsburgh: Carnegie Mellon University, CMU-RI-TR-09-08, 2009.",
+      "placeholder": "[[REF:KEYWORD_PLACEHOLDER: Snider J M. Automatic steering methods for autonomous automobile path tracking[R]. Pittsburgh: Carnegie Mellon University, CMU-RI-TR-09-08, 2009.]]"
+    }
+  ],
+  "styleSettings": {
+    "header": {
+      "headerReferenceStyle": "标题 1",
+      "oddPage": "chapterTitle",
+      "evenPageText": "中国农业大学硕士学位论文"
+    }
+  }
+}
