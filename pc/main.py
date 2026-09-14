@@ -27,8 +27,10 @@ from pc.perception import px_to_meters
 from pc.replay import draw_overlay
 from pc.status_rx import StatusReceiver, STATUS_UDP_PORT
 
-PI_IP = '192.168.1.1'
+PI_IP = '192.168.127.10'        # RDK X5 (bridge) — control UDP target
 PI_PORT = 9000
+STREAM_HOST = '192.168.127.10'  # TCP multipart MJPEG server = X5 (R3)
+STREAM_PORT = 5000
 ESTOP_LAT_LIMIT = 0.05      # m, |lateral| beyond -> estop (v0.4 §7.2)
 VISION_LOSS_S = 2.0         # s of unusable frames -> vision_loss event
 
@@ -36,9 +38,12 @@ VISION_LOSS_S = 2.0         # s of unusable frames -> vision_loss event
 class FrameSource:
     """Unified frame iterator over a video/dir (replay) or RTP stream (live)."""
 
-    def __init__(self, source=None, live=False, step=1):
+    def __init__(self, source=None, live=False, step=1,
+                 stream_host=STREAM_HOST, stream_port=STREAM_PORT):
         self.live = live
         self.step = step
+        self.stream_host = stream_host
+        self.stream_port = stream_port
         if not live:
             if os.path.isdir(source):
                 files = sorted(os.path.join(source, f) for f in os.listdir(source)
@@ -66,13 +71,8 @@ class FrameSource:
                 yield img
 
     def _from_stream(self):
-        import cv2
-        cap = cv2.VideoCapture('udp://@:' + str(5000), cv2.CAP_FFMPEG)
-        while True:
-            ok, f = cap.read()
-            if not ok:
-                continue
-            yield f
+        from common.mjpeg import iter_frames
+        yield from iter_frames(self.stream_host, self.stream_port)
 
     def frames(self):
         if self.live:
@@ -89,6 +89,8 @@ def main():
     ap.add_argument('--live', action='store_true')
     ap.add_argument('--step', type=int, default=1)
     ap.add_argument('--pi-ip', default=PI_IP)
+    ap.add_argument('--stream-host', default=STREAM_HOST)
+    ap.add_argument('--stream-port', type=int, default=STREAM_PORT)
     ap.add_argument('--out', default='results/run')
     ap.add_argument('--no-gui', action='store_true')
     args = ap.parse_args()
@@ -130,6 +132,10 @@ def main():
         if rx.alarm(now):
             print('WARNING: %d bad status frames in the last 1 s — '
                   'check firmware/Python STATUS payload sync' % rx.bad)
+        if rx.stale(now):
+            age = rx.age_s(now)
+            print('WARNING: no fresh MCU STATUS (link down / MCU hung) — '
+                  'last-good %s' % ('never' if age is None else '%.1fs' % age))
 
     def send(ftype, payload):
         nonlocal seq
@@ -152,7 +158,9 @@ def main():
         wr.writerow(['t', 'frame_id', 'state', 'status', 'lat_m', 'lat_comp_m',
                      'vL', 'vR', 'tool_mm', 'conf', 'latency_ms',
                      'mcu_mode', 'batt_v', 'rx_good', 'rx_bad'])
-        for fid, frame in enumerate(FrameSource(args.source, args.live, args.step).frames()):
+        for fid, frame in enumerate(FrameSource(
+                args.source, args.live, args.step,
+                args.stream_host, args.stream_port).frames()):
             t0 = time.time()
             dt = max(t0 - t_prev, 1e-3)
             t_prev = t0
@@ -225,6 +233,8 @@ def main():
                                                            st['current_a'])
                     if rx.bad:
                         hud2 += '  bad:%d' % rx.bad
+                    if rx.stale(t0):
+                        hud2 += '  MCU:STALE'
                 cv2.putText(vis, hud2,
                             (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
                 cv2.imshow('weeder', vis)

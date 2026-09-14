@@ -18,6 +18,12 @@ from common import protocol as P
 
 STATUS_UDP_PORT = 9100   # keep in sync with vehicle.bridge.PC_PORT
 ALARM_BAD_PER_S = 5.0
+STALE_S = 1.0            # no fresh STATUS within this -> link down / MCU hung
+
+
+def _seq_newer(a, b):
+    """True if seq a is newer than b under u16 wraparound (forward half-range)."""
+    return 1 <= ((a - b) & 0xFFFF) <= 0x7FFF
 
 
 class StatusReceiver:
@@ -27,10 +33,13 @@ class StatusReceiver:
         self.last = None        # dict from the latest good STATUS frame
         self.good = 0
         self.bad = 0
+        self.out_of_order = 0   # valid frames rejected for a stale sequence no.
+        self.last_good_time = None
+        self._last_seq = None
         self._bad_times = deque(maxlen=64)
 
     def handle(self, raw, now=None):
-        """Parse one datagram. Returns the status dict on a good STATUS
+        """Parse one datagram. Returns the status dict on a good, fresh STATUS
         frame, else None. Never raises on malformed input."""
         now = time.monotonic() if now is None else now
         try:
@@ -42,12 +51,31 @@ class StatusReceiver:
             self.bad += 1
             self._bad_times.append(now)
             return None
+        # R5: never let an old sequence number overwrite fresher state.
+        if self._last_seq is not None and not _seq_newer(seq, self._last_seq):
+            self.out_of_order += 1
+            return None
+        self._last_seq = seq
         self.good += 1
+        self.last_good_time = now
         self.last = {
             'seq': seq, 'speed_mps': speed, 'current_a': current_a,
             'battery_v': battery_v, 'limits': limits, 'mode': mode,
         }
         return dict(self.last)
+
+    def age_s(self, now=None):
+        """Seconds since the last fresh STATUS frame; None if never received."""
+        now = time.monotonic() if now is None else now
+        if self.last_good_time is None:
+            return None
+        return now - self.last_good_time
+
+    def stale(self, now=None, timeout=STALE_S):
+        """True when no fresh STATUS within timeout — total silence, which the
+        bad-frame burst alarm cannot catch (R5)."""
+        age = self.age_s(now)
+        return age is None or age > timeout
 
     def alarm(self, now=None):
         """True while bad frames arrive at >= ALARM_BAD_PER_S per second."""

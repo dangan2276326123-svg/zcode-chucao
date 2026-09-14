@@ -1,46 +1,37 @@
 # -*- coding: utf-8 -*-
-"""Raspberry Pi camera stream: H.264 over RTP to the PC (GStreamer).
+"""RDK X5 camera stream: TCP multipart MJPEG (R3, 2026-09-14).
 
-Latency-first pipeline (720p25): v4l2 -> hardware H.264 -> RTP.
-PC side (see pc/view_stream.sh): gst-launch-1.0 udpsrc ... decodebin.
+X5 is the TCP SERVER; the PC connects OUT — pc/main.py --live reads this via
+common.mjpeg.iter_frames.  This replaced H.264/MPEG-TS-over-UDP because
+OpenCV's FFMPEG backend cannot open a mid-stream UDP TS on this host and MJPEG
+frames exceed the UDP datagram limit (X5 验机 2026-09-10, see
+docs/X5验机与接入执行清单.md).
+
+Camera: USB3.0 UVC (MJPG) on X5 -> /dev/video0.
+
+Usage (on X5):
+  python3 vehicle/stream_pi.py            # listen 0.0.0.0:5000
+  python3 vehicle/stream_pi.py 6000       # custom port
 """
 import os
-import subprocess
 import sys
 
-PC_IP = '192.168.1.2'
 PORT = 5000
-WIDTH, HEIGHT, FPS = 1280, 720, 25
-BITRATE = 2500  # kbps
+WIDTH, HEIGHT, FPS = 1280, 720, 30
 
 
-def build_pipeline(pc_ip=PC_IP, port=PORT, w=WIDTH, h=HEIGHT, fps=FPS,
-                   bitrate=BITRATE):
-    return (
-        'gst-launch-1.0 -e v4l2src device=/dev/video0 io-mode=4 ! '
-        f'video/x-h264,width={w},height={h},framerate={fps}/1 ! '
-        f'h264parse config-interval=1 ! mpegtsmux ! '
-        f'udpsink host={pc_ip} port={port}'
-    )   # MPEG-TS over UDP: decodable by OpenCV/ffmpeg udp:// without SDP
-
-
-def build_pipeline_soft(pc_ip=PC_IP, port=PORT, w=WIDTH, h=HEIGHT, fps=FPS,
-                        bitrate=BITRATE):
-    """If the camera does not output H.264 natively, encode in software
-    (or use v4l2h264enc on Pi with hardware encoder):"""
+def build_pipeline(port=PORT, w=WIDTH, h=HEIGHT, fps=FPS, host='0.0.0.0'):
     return (
         'gst-launch-1.0 -e v4l2src device=/dev/video0 ! '
-        f'video/x-raw,width={w},height={h},framerate={fps}/1 ! '
-        'videoconvert ! '
-        f'x264enc tune=zerolatency bitrate={bitrate} key-int-max={fps} ! '
-        f'h264parse config-interval=1 ! mpegtsmux ! '
-        f'udpsink host={pc_ip} port={port}'
-    )   # MPEG-TS over UDP: decodable by OpenCV/ffmpeg udp:// without SDP
+        f'image/jpeg,width={w},height={h},framerate={fps}/1 ! '
+        f'jpegparse ! multipartmux ! '
+        f'tcpserversink host={host} port={port}'
+    )   # TCP multipart MJPEG: PC connects out, cv2.imdecode per whole frame
 
 
 def main():
-    pc_ip = sys.argv[1] if len(sys.argv) > 1 else PC_IP
-    cmd = build_pipeline(pc_ip)
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else PORT
+    cmd = build_pipeline(port)
     print('run:', cmd)
     os.system(cmd)
 

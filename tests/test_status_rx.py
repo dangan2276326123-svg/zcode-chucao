@@ -65,3 +65,25 @@ def test_good_frames_do_not_trigger_alarm():
         rx.handle(good_status(i), now=i * 0.01)
     assert not rx.alarm(now=0.5)
     assert rx.good == 20
+
+
+# ---- R5 (2026-09-14 re-review): freshness & sequence monotonicity --------
+
+def test_stale_before_any_frame():
+    rx = StatusReceiver()
+    assert rx.stale(now=0.0)          # never received -> link considered down
+
+
+def test_stale_on_silence_and_fresh_on_receipt():
+    rx = StatusReceiver()
+    rx.handle(good_status(1), now=0.0)
+    assert not rx.stale(now=0.5)
+    assert rx.stale(now=2.0)          # > STALE_S with no new frame
+
+
+def test_old_seq_does_not_overwrite_fresh_state():
+    rx = StatusReceiver()
+    rx.handle(good_status(20), now=0.0)
+    assert rx.handle(good_status(19), now=0.1) is None   # stale seq rejected
+    assert rx.last['seq'] == 20
+    assert rx.out_of_order == 1 and rx.good == 1

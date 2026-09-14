@@ -125,7 +125,7 @@ def main():
     ap.add_argument('--source', default=os.path.join(WORKSPACE, 'data',
                                                      'autumn_data', 'raw'))
     ap.add_argument('--out-root',
-                    default=os.path.join(WORKSPACE, 'model_data', 'dataset'))
+                    default=os.path.join(WORKSPACE, 'model_data'))
     ap.add_argument('--seed', type=int, default=42)
     ap.add_argument('--force', action='store_true',
                     help='清空目标目录后再写（默认拒绝破坏性操作）')
