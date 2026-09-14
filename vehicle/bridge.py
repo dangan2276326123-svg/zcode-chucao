@@ -30,11 +30,22 @@ UDP_PORT = 9000
 SEEN_WINDOW_MS = 60000   # PC considered 'running' if a frame seen within 60 s
 
 
-def decide_forward(raw, now_ms, last_pc_ms, auto_on, seen_any=False):
-    """Return (forward_bytes_or_None, estop_inject_bool, new_last_pc_ms).
+INJECT_INTERVAL_MS = 500  # min gap between self-injected ESTOP frames (H2.5)
+
+
+def decide_forward(raw, now_ms, last_pc_ms, auto_on, seen_any=False,
+                   last_inject_ms=0):
+    """Return (forward_bytes_or_None, estop_inject_bool,
+    new_last_pc_ms, new_last_inject_ms).
+
+    H2.5 (review 2026-09-14): self-injected ESTOP must NOT refresh
+    last_pc_ms — that timestamp means "last REAL PC frame" and feeding it
+    from the injection loop removes the exit window (a bridged run could
+    inject forever).  Injection throttling now uses its own clock
+    (last_inject_ms, one frame per INJECT_INTERVAL_MS).
 
     Watchdog injects ESTOP only while the PC application is actually in use
-    (a frame was seen within SEEN_WINDOW_MS) AND the link went silent for
+    (a real frame seen within SEEN_WINDOW_MS) AND the link went silent for
     LINK_TIMEOUT_MS.  A PC that is simply switched off never triggers the
     injection, so pure-RC operation stays possible.
     """
@@ -43,20 +54,23 @@ def decide_forward(raw, now_ms, last_pc_ms, auto_on, seen_any=False):
                                   (now_ms - last_pc_ms) < SEEN_WINDOW_MS)
     if raw is not None:
         last_pc_ms = now_ms
-        return raw, False, last_pc_ms
-    if auto_on and seen_any and (now_ms - last_pc_ms) > LINK_TIMEOUT_MS:
+        return raw, False, last_pc_ms, last_inject_ms
+    if (auto_on and seen_any and (now_ms - last_pc_ms) > LINK_TIMEOUT_MS
+            and (now_ms - last_inject_ms) >= INJECT_INTERVAL_MS):
         inject = True
-        last_pc_ms = now_ms    # one injection per timeout window
-    return None, inject, last_pc_ms
+        last_inject_ms = now_ms
+    return None, inject, last_pc_ms, last_inject_ms
 
 
-def relay_once(ser, sock, buf, last_pc_ms, auto_on, now_ms=None):
+def relay_once(ser, sock, buf, last_pc_ms, auto_on, now_ms=None,
+               last_inject_ms=0):
     """One poll iteration: read UDP (non-blocking via settimeout earlier),
     forward to serial; read serial, forward status to PC. Returns updated
-    last_pc_ms and whether estop was injected (for logging)."""
+    last_pc_ms, last_inject_ms and whether estop was injected (for logging)."""
     now_ms = now_ms if now_ms is not None else _ms()
     data = buf.get_udp()
-    fwd, inject, last_pc_ms = decide_forward(data, now_ms, last_pc_ms, auto_on)
+    fwd, inject, last_pc_ms, last_inject_ms = decide_forward(
+        data, now_ms, last_pc_ms, auto_on, last_inject_ms=last_inject_ms)
     if fwd:
         ser.write(fwd)
     if inject:
@@ -69,7 +83,7 @@ def relay_once(ser, sock, buf, last_pc_ms, auto_on, now_ms=None):
             sock.sendto(frame, (PC_IP, PC_PORT))
         except OSError:
             pass
-    return last_pc_ms, inject
+    return last_pc_ms, last_inject_ms, inject
 
 
 def extract_one_stream(frame_bytes):
@@ -172,6 +186,7 @@ def main():
     # 0 = "no PC ever seen": pure-RC boot must NOT arm the watchdog (P0-5).
     # seen_any becomes true only after the first real PC frame arrives.
     last_pc = 0
+    last_inject = 0
     ser_buf = b''
     print('bridge up: udp:%d -> %s' % (cfg.get('udp_port', UDP_PORT), ser.port))
     while True:
@@ -187,7 +202,8 @@ def main():
             raw = None
         now = _ms()
         raw = valid_frame(raw)   # LAN hygiene: garbage never feeds the link
-        fwd, inject, last_pc = decide_forward(raw, now, last_pc, auto_on=True)
+        fwd, inject, last_pc, last_inject = decide_forward(
+            raw, now, last_pc, auto_on=True, last_inject_ms=last_inject)
         if fwd:
             ser.write(fwd)
         if inject:

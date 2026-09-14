@@ -193,20 +193,20 @@ def test_poll_serial_frames_garbage_prefix_partial_header():
 def test_watchdog_injects_estop_after_timeout():
     now = 1000
     # 1000-600=400 ms <= 500 -> no inject
-    fwd, inject, last = decide_forward(None, now, last_pc_ms=600, auto_on=True)
+    fwd, inject, last, li = decide_forward(None, now, last_pc_ms=600, auto_on=True)
     assert fwd is None and not inject
-    # 1000-400=600 ms > 500 -> inject once, timer reset
-    fwd, inject, last = decide_forward(None, now, last_pc_ms=400, auto_on=True)
-    assert fwd is None and inject and last == now
+    # 1000-400=600 ms > 500 -> inject once; last_real NOT touched (H2.5)
+    fwd, inject, last, li = decide_forward(None, now, last_pc_ms=400, auto_on=True)
+    assert fwd is None and inject and last == 400 and li == now
 
 
 def test_watchdog_idle_when_not_auto():
-    fwd, inject, last = decide_forward(None, 10000, last_pc_ms=100, auto_on=False)
+    fwd, inject, last, li = decide_forward(None, 10000, last_pc_ms=100, auto_on=False)
     assert fwd is None and not inject
 
 
 def test_watchdog_resets_on_pc_frame():
-    fwd, inject, last = decide_forward(b'frame', 10000, last_pc_ms=100, auto_on=True)
+    fwd, inject, last, li = decide_forward(b'frame', 10000, last_pc_ms=100, auto_on=True)
     assert fwd == b'frame' and not inject and last == 10000
 
 
@@ -219,19 +219,19 @@ def test_extract_one_stream_helper():
 
 def test_bridge_cold_start_pure_rc_no_inject():
     # last_pc=0 means "no PC ever seen": even with auto_on, never inject
-    fwd, inject, last = decide_forward(None, 5000, last_pc_ms=0, auto_on=True)
+    fwd, inject, last, li = decide_forward(None, 5000, last_pc_ms=0, auto_on=True)
     assert fwd is None and not inject and last == 0
 
 
 def test_bridge_inject_only_after_pc_seen_then_lost():
     # PC seen 10 s ago, silent 10 s (>500 ms) -> inject exactly once
-    fwd, inject, last = decide_forward(None, 20000, last_pc_ms=10000, auto_on=True)
-    assert fwd is None and inject and last == 20000
+    fwd, inject, last, li = decide_forward(None, 20000, last_pc_ms=10000, auto_on=True)
+    assert fwd is None and inject and last == 10000 and li == 20000
 
 
 def test_bridge_seen_window_expiry_stops_injection():
     # PC seen 70 s ago (window 60 s expired) -> no injection
-    fwd, inject, last = decide_forward(None, 100000, last_pc_ms=30000, auto_on=True)
+    fwd, inject, last, li = decide_forward(None, 100000, last_pc_ms=30000, auto_on=True)
     assert fwd is None and not inject
 
 
@@ -292,3 +292,34 @@ def test_vision_loss_in_estop_stays_estop():
     sm.estop()
     sm.vision_loss()
     assert sm.state == 'ESTOP'           # latched state is never downgraded
+
+
+# ---- H2.5 (review 2026-09-14): injection must not extend the PC window ----
+
+def test_bridge_continuous_polling_throttles_injection():
+    """The old bug: inject refreshed last_pc_ms, so a polled loop kept
+    re-arming its own window forever (review measured 139 injections in
+    70 s with no stop).  Now: injections start after 500 ms silence, are
+    rate-limited to one per 500 ms, STOP at the 60 s seen-window expiry,
+    and the real-PC timestamp is never advanced by an injection."""
+    last_real, last_inj = 10000, 0
+    inj_times = []
+    for now in range(10600, 70639, 2):          # ~60 s of polling, no PC frame
+        fwd, inject, last_real, last_inj = decide_forward(
+            None, now, last_real, auto_on=True, last_inject_ms=last_inj)
+        if inject:
+            inj_times.append(now)
+    assert last_real == 10000                   # never extended by injections
+    assert inj_times                            # watchdog did fire...
+    assert inj_times[0] >= 10501                # ...only after 500 ms silence
+    assert all(t < 70000 for t in inj_times)    # ...and STOPPED at window expiry
+    gaps = [b - a for a, b in zip(inj_times, inj_times[1:])]
+    assert all(g >= 500 for g in gaps)          # rate-limited
+
+
+def test_bridge_real_frame_never_losing_window():
+    """A real PC frame still refreshes the watchdog window (semantics kept)."""
+    fwd, inject, last, li = decide_forward(None, 50000, last_pc_ms=49000,
+                                           auto_on=True, last_inject_ms=49900)
+    assert fwd is None and not inject           # silence 1 s < 500 ms
+
