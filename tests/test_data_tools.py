@@ -216,3 +216,50 @@ def test_r2_source_output_overlap_refused(tmp_path, monkeypatch):
     _make_pairs(str(src), 6)
     with pytest.raises(SystemExit):
         sd.split_peony_dataset(str(src), str(src / 'split_out'), force=True)
+
+
+# ---- H1.3 / H1.7 grouped split + frozen manifest ----------------------
+
+def _make_grouped(src, groups):
+    os.makedirs(src, exist_ok=True)
+    n = 0
+    for g, cnt in groups.items():
+        for _ in range(cnt):
+            base = '%s_%03d' % (g, n)
+            n += 1
+            with open(os.path.join(src, base + '.jpg'), 'wb') as f:
+                f.write(b'\xff\xd8\xff\xd9')
+            with open(os.path.join(src, base + '.json'), 'w') as f:
+                f.write('{}')
+
+
+def test_group_of_helper():
+    assert sd._group_of('videoA_000123', '_') == 'videoA'
+    assert sd._group_of('nosep', '_') == 'nosep'      # no delim -> own group
+
+
+def test_grouped_split_no_straddle(tmp_path, monkeypatch):
+    """H1.3: a group (video/plot/day) must never appear in two sets."""
+    monkeypatch.setattr(sd, 'WORKSPACE', str(tmp_path))
+    src, out = tmp_path / 'src', tmp_path / 'out'
+    _make_grouped(str(src), {'videoA': 4, 'videoB': 4, 'videoC': 4, 'videoD': 4})
+    sd.split_peony_dataset(str(src), str(out), seed=1, grouped=True)
+    seen = {}
+    for stage in ('train', 'val', 'test'):
+        d = os.path.join(str(out), stage, 'images')
+        for f in os.listdir(d):
+            if f.endswith('.jpg'):
+                seen.setdefault(f.split('_')[0], set()).add(stage)
+    assert all(len(v) == 1 for v in seen.values()), 'group straddled: %s' % seen
+
+
+def test_grouped_split_manifest_frozen(tmp_path, monkeypatch):
+    monkeypatch.setattr(sd, 'WORKSPACE', str(tmp_path))
+    src, out = tmp_path / 'src', tmp_path / 'out'
+    _make_grouped(str(src), {'videoA': 3, 'videoB': 3, 'videoC': 3})
+    sd.split_peony_dataset(str(src), str(out), seed=1, grouped=True)
+    import json
+    m = json.load(open(os.path.join(str(out), 'split_manifest.json'), encoding='utf-8'))
+    assert m['grouped'] is True
+    assert set(m['groups']) == {'videoA', 'videoB', 'videoC'}
+    assert sum(m['counts'].values()) == 9
