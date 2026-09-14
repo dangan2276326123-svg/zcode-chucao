@@ -1,16 +1,16 @@
-# vehicle side config (Raspberry Pi) — fill in per deployment
-serial_dev: /dev/ttyAMA0   # UART to STM32 (via USB-TTL or GPIO UART + level shift)
+# vehicle side config (RDK X5) — fill in per deployment  (R3, 2026-09-14)
+serial_dev: /dev/ttyS1     # 40-pin UART1 (Pin8/10) to STM32 USART6, 3.3V direct
 baud: 115200
 udp_port: 9000             # bridge listens here for PC control frames
-pc_ip: 192.168.1.2         # PC running perception/control
+pc_ip: 192.168.127.100     # PC running perception/control (X5 eth0 is .10)
 pc_port: 9100              # bridge sends MCU status frames here
 stream:
-  pc_ip: 192.168.1.2
+  # TCP multipart MJPEG: X5 is the SERVER (tcpserversink); PC connects OUT.
+  # No pc_ip here — see vehicle/stream_pi.py + common/mjpeg.py.
   port: 5000
   width: 1280
   height: 720
-  fps: 25
-  bitrate_kbps: 2500
+  fps: 30
 watchdog_ms: 500           # must match firmware LINK_TIMEOUT_MS
-# allowed_sources: [192.168.1.2, 192.168.1.10]   # optional: UDP source IPs
+# allowed_sources: [192.168.127.100]   # optional: UDP source IPs
 #                           default = pc_ip above; other LAN hosts are dropped

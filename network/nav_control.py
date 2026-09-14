@@ -93,12 +93,14 @@ class PDController:
 # 4WS Ackermann steering geometry
 # ============================================================
 class Ackermann4WS:
-    """Four-wheel independent steering (4WS) geometry.
+    """Front-wheel Ackermann steering geometry (rear wheels straight).
+
+    R4 (2026-09-14): the作业 mode is front-steer + rear-straight, so all four
+    wheels are consistent with a single ICC on the rear-axle line.
 
     Assumes:
-      - Front and rear axles steer independently (crab steering not used).
-      - Instantaneous center of rotation lies on the rear axle extension
-        for front-steer, and similarly for rear-steer.
+      - Only the front axle steers; rear wheels stay straight (angle 0).
+      - Instantaneous center of rotation (ICC) lies on the rear-axle extension.
       - Speed is low (< 2 m/s), so tire slip angles are negligible.
     """
 
@@ -131,43 +133,33 @@ class Ackermann4WS:
                 {"fl": speed_ms, "fr": speed_ms, "rl": speed_ms, "rr": speed_ms},
             )
 
-        R = self.L / np.tan(abs(steer_center))  # turn radius at rear axle center
+        R = self.L / np.tan(abs(steer_center))  # ICC on the rear-axle line (y)
 
-        # Front axle center turn radius
-        R_front = np.hypot(R, self.L)
+        # R4 fix (2026-09-14): front-wheel Ackermann only, rear wheels straight.
+        # The previous rear counter-steer (-atan(L/(R -/+ tr/2))) made the four
+        # wheels NOT share one ICC (re-review: left/right ICC differ by the
+        # track).  With rear angle == 0 the geometry is consistent by
+        # construction: front wheels follow Ackermann about ICC=(0, R), rear
+        # wheels (on the ICC's x) stay straight, and every wheel's speed is
+        # omega * its radius to that single ICC.
+        fi_in = max(R - self.tf / 2, 1e-6)     # front inner lateral dist to ICC
+        fo = R + self.tf / 2                   # front outer
+        ri_in = max(R - self.tr / 2, 1e-6)     # rear inner (x=0 -> radius = y-dist)
+        ro = R + self.tr / 2                   # rear outer
+        a_in = float(np.arctan(self.L / fi_in))
+        a_out = float(np.arctan(self.L / fo))
+        r_fin = float(np.hypot(self.L, fi_in))
+        r_fout = float(np.hypot(self.L, fo))
+        omega = float(speed_ms) / R
 
-        # Inner/outer radii
-        R_rear_inner  = R - self.tr / 2
-        R_rear_outer  = R + self.tr / 2
-        R_front_inner = np.hypot(R_rear_inner, self.L)
-        R_front_outer = np.hypot(R_rear_outer, self.L)
-
-        # Steer angles (all positive magnitude, sign applied later)
-        ang_fl = np.arctan(self.L / (R - self.tf / 2))
-        ang_fr = np.arctan(self.L / (R + self.tf / 2))
-        ang_rl = -np.arctan(self.L / (R - self.tr / 2))  # rear counter-steer
-        ang_rr = -np.arctan(self.L / (R + self.tr / 2))
-
-        # Apply direction sign (positive steer = left turn)
-        if steer_center > 0:
-            angles = {"fl":  ang_fl, "fr":  ang_fr, "rl": ang_rl, "rr": ang_rr}
-            # Wheel speeds proportional to turn radius
-            base = speed_ms / R
-            speeds = {
-                "fl": float(R_front_inner * base),
-                "fr": float(R_front_outer * base),
-                "rl": float(R_rear_inner  * base),
-                "rr": float(R_rear_outer  * base),
-            }
-        else:
-            angles = {"fl": -ang_fr, "fr": -ang_fl, "rl": -ang_rr, "rr": -ang_rl}
-            base = speed_ms / R
-            speeds = {
-                "fl": float(R_front_outer * base),
-                "fr": float(R_front_inner * base),
-                "rl": float(R_rear_outer  * base),
-                "rr": float(R_rear_inner  * base),
-            }
+        if steer_center > 0:                   # left turn: left side is inner
+            angles = {"fl": a_in, "fr": a_out, "rl": 0.0, "rr": 0.0}
+            speeds = {"fl": r_fin * omega, "fr": r_fout * omega,
+                      "rl": ri_in * omega, "rr": ro * omega}
+        else:                                  # right turn: mirror
+            angles = {"fl": -a_out, "fr": -a_in, "rl": 0.0, "rr": 0.0}
+            speeds = {"fl": r_fout * omega, "fr": r_fin * omega,
+                      "rl": ro * omega, "rr": ri_in * omega}
 
         return angles, speeds
 

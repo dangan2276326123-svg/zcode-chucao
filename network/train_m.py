@@ -131,10 +131,10 @@ TEST_MASK_DIR = os.path.join(_WS, "model_data", "test", "masks")
 
 
 # 权重存盘路径
-
-# R1 fix (review 2026-09-14): weights must live in THIS workspace — writing into the
-# read-only research repo would overwrite the original study weights, and online
-# perception reads zcode's local weights (train-A/deploy-B mismatch).
+# R1 修复（复审 2026-09-14）：原为 r"D:/JetBrains/chucao_prj/model_data/weights"，
+# 会把训练产物写进只读原仓、覆盖原始权重；且与 pc/perception.py 实际加载的
+# <工作区>/model_data/weights/best_model.pth 不一致（训 A 用 B）。改为工作区内、
+# 与 perception 同一处。
 SAVE_WEIGHT_DIR = os.path.join(_WS, "model_data", "weights")
 
 RESUME_CHECKPOINT = os.path.join(SAVE_WEIGHT_DIR, "latest_checkpoint.pth")
@@ -824,8 +824,8 @@ def execute_independent_test_evaluation():
     print(f"Test mIoU: {t_miou / num:.4f}")
     print(f"Test Precision: {t_precision / num:.4f}")
     print(f"Test Recall:    {t_recall / num:.4f}")
-    print(f"FG IoU: {val_fg_iou:.4f}     | BG IoU: {val_bg_iou:.4f}")
-    print(f"FPR: {val_fpr:.4f}     | FNR: {val_fnr:.4f}")
+    print(f"FG IoU: {t_fg / num:.4f}     | BG IoU: {t_bg / num:.4f}")
+    print(f"FPR: {t_fpr / num:.4f}     | FNR: {t_fnr / num:.4f}")
     print(f"All test results saved to: {TEST_VISUALS_DIR}\n")
 
 

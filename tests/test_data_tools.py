@@ -156,3 +156,63 @@ def test_force_run_clears_before_write(tmp_path, monkeypatch):
                       if f.endswith('.jpg')])
               for s in ('train', 'val', 'test')}
     assert counts == {'train': 6, 'val': 2, 'test': 2}      # exact, no mixing
+
+
+# ---- R1 / R2 (2026-09-14 re-review) ------------------------------------
+
+def test_r1_train_weights_not_in_readonly_repo():
+    """R1: SAVE_WEIGHT_DIR must not point at the read-only JetBrains repo and
+    must be workspace-derived. Checked statically (no torch import)."""
+    import io
+    path = os.path.join(sd.WORKSPACE, 'network', 'train_m.py')
+    with io.open(path, encoding='utf-8') as f:
+        text = f.read()
+    assert 'SAVE_WEIGHT_DIR = r"D:/JetBrains' not in text, \
+        'R1 回归：训练权重仍写死到只读原仓'
+    assert 'SAVE_WEIGHT_DIR = os.path.join(_WS' in text, \
+        'R1 回归：SAVE_WEIGHT_DIR 未改为工作区路径'
+    """R1: SAVE_WEIGHT_DIR must not point at the read-only JetBrains repo and
+    must be workspace-derived. Checked statically (no torch import)."""
+    import io
+    path = os.path.join(sd.WORKSPACE, 'network', 'train_m.py')
+    with io.open(path, encoding='utf-8') as f:
+        text = f.read()
+    assert 'SAVE_WEIGHT_DIR = r"D:/JetBrains' not in text, \
+        'R1 回归：训练权重仍写死到只读原仓'
+    assert 'SAVE_WEIGHT_DIR = os.path.join(_WS' in text, \
+        'R1 回归：SAVE_WEIGHT_DIR 未改为工作区路径'
+
+
+def test_r2_nonempty_target_refused_without_force(tmp_path, monkeypatch):
+    """R2: re-running without --force into a non-empty split must be refused
+    (otherwise old samples silently mix into the new split)."""
+    monkeypatch.setattr(sd, 'WORKSPACE', str(tmp_path))
+    src, out = tmp_path / 'src', tmp_path / 'out'
+    _make_pairs(str(src), 10)
+    sd.split_peony_dataset(str(src), str(out), seed=1)      # first run OK
+    with pytest.raises(SystemExit):
+        sd.split_peony_dataset(str(src), str(out), seed=2)  # re-run must refuse
+
+
+def test_r2_force_allows_resplit(tmp_path, monkeypatch):
+    monkeypatch.setattr(sd, 'WORKSPACE', str(tmp_path))
+    src, out = tmp_path / 'src', tmp_path / 'out'
+    _make_pairs(str(src), 10)
+    sd.split_peony_dataset(str(src), str(out), seed=1)
+    sd.split_peony_dataset(str(src), str(out), seed=2, force=True)
+    counts = {s: len([f for f in os.listdir(os.path.join(str(out), s, 'images'))
+                      if f.endswith('.jpg')])
+              for s in ('train', 'val', 'test')}
+    assert counts == {'train': 6, 'val': 2, 'test': 2}      # exact, no mixing
+    sd.split_peony_dataset(str(src), str(out), seed=2, force=True)  # no raise
+    n = len([f for f in os.listdir(os.path.join(str(out), 'train', 'images'))
+             if f.endswith('.jpg')])
+    assert n == 6
+
+
+def test_r2_source_output_overlap_refused(tmp_path, monkeypatch):
+    monkeypatch.setattr(sd, 'WORKSPACE', str(tmp_path))
+    src = tmp_path / 'src'
+    _make_pairs(str(src), 6)
+    with pytest.raises(SystemExit):
+        sd.split_peony_dataset(str(src), str(src / 'split_out'), force=True)
