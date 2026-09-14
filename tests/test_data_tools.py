@@ -123,3 +123,36 @@ def test_all_background_reported(tmp_path):
     _labelme(src / 'a.json', ['background'], with_peony=False)
     fg, labels = j2m.convert_one(str(src / 'a.json'), str(tmp_path))
     assert fg == 0   # caller (main) turns this into a warning
+
+
+# ---- R2 (review 2026-09-14): non-empty target must refuse, not mix --------
+
+def test_nonempty_target_refused_without_force(tmp_path, monkeypatch):
+    """Reproduces the review's 7/4/3 cross-set scenario: two runs with
+    different seeds into the same target used to mix old+new files
+    (img_4/img_8 in both train and val). Now the second run must refuse."""
+    monkeypatch.setattr(sd, 'WORKSPACE', str(tmp_path))
+    src, out = tmp_path / 'src', tmp_path / 'out'
+    _make_pairs(str(src), 10)
+
+    sd.split_peony_dataset(str(src), str(out), seed=1)      # first run OK
+    img_dir = os.path.join(str(out), 'train', 'images')
+    n_after_first = len([f for f in os.listdir(img_dir) if f.endswith('.jpg')])
+    assert n_after_first == 6
+
+    with pytest.raises(SystemExit):                          # second run refuses
+        sd.split_peony_dataset(str(src), str(out), seed=2)
+    # nothing changed by the refused run
+    assert len([f for f in os.listdir(img_dir) if f.endswith('.jpg')]) == 6
+
+
+def test_force_run_clears_before_write(tmp_path, monkeypatch):
+    monkeypatch.setattr(sd, 'WORKSPACE', str(tmp_path))
+    src, out = tmp_path / 'src', tmp_path / 'out'
+    _make_pairs(str(src), 10)
+    sd.split_peony_dataset(str(src), str(out), seed=1)
+    sd.split_peony_dataset(str(src), str(out), seed=2, force=True)
+    counts = {s: len([f for f in os.listdir(os.path.join(str(out), s, 'images'))
+                      if f.endswith('.jpg')])
+              for s in ('train', 'val', 'test')}
+    assert counts == {'train': 6, 'val': 2, 'test': 2}      # exact, no mixing

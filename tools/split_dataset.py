@@ -72,6 +72,21 @@ def split_peony_dataset(source_dir, out_root, seed=42, force=False, dry_run=Fals
         print('[dry-run] 未写入任何文件。')
         return
 
+    # R2 guard: check ALL target dirs BEFORE touching anything, so a refusal
+    # never leaves a half-written split.
+    if not force:
+        for stage in ('train', 'val', 'test'):
+            for sub in ('images', 'masks'):
+                d = os.path.join(out_root, stage, sub)
+                _guard(d)
+                if os.path.isdir(d) and os.listdir(d):
+                    # copying into a non-empty target mixes old and new
+                    # splits — same-name files land in two sets (reproduced).
+                    raise SystemExit(
+                        '拒绝执行: 目标目录非空 %s\n'
+                        '  混写会让旧样本残留、同名样本跨集合（已复现的数据交叉）。\n'
+                        '  确认要覆盖请加 --force（会先清空再写）。' % d)
+
     for stage, items in (('train', train), ('val', val), ('test', test)):
         for sub in ('images', 'masks'):
             d = os.path.join(out_root, stage, sub)

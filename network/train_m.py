@@ -132,7 +132,10 @@ TEST_MASK_DIR = os.path.join(_WS, "model_data", "test", "masks")
 
 # 权重存盘路径
 
-SAVE_WEIGHT_DIR = r"D:/JetBrains/chucao_prj/model_data/weights"
+# R1 fix (review 2026-09-14): weights must live in THIS workspace — writing into the
+# read-only research repo would overwrite the original study weights, and online
+# perception reads zcode's local weights (train-A/deploy-B mismatch).
+SAVE_WEIGHT_DIR = os.path.join(_WS, "model_data", "weights")
 
 RESUME_CHECKPOINT = os.path.join(SAVE_WEIGHT_DIR, "latest_checkpoint.pth")
 
