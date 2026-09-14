@@ -257,3 +257,38 @@ def test_bridge_valid_frame_rejects_trailing_bytes():
     f = P.pack_frame(P.TYPE_NAV, P.pack_nav(0.1, 0.1), 7)
     assert valid_frame(f + b'\x00') is None          # smuggled tail
     assert valid_frame(f) == f                        # exact frame ok
+
+
+# ---- H2.1: vision_loss authority contract (review 2026-09-14) -------------
+
+def test_vision_loss_in_manual_stays_manual():
+    """MANUAL is RC control: vision loss must NOT route to LIFT (whose wire
+    form NAV(0,0) makes the MCU enter AUTO = silent loss of RC authority)."""
+    sm = StateMachine()
+    sm.vision_loss()
+    assert sm.state == 'MANUAL'          # unchanged, RC keeps authority
+    # (in MANUAL the PC sends HEARTBEAT only — no NAV/TOOL leaves the wire)
+
+
+def test_vision_loss_in_auto_goes_lift():
+    sm = StateMachine()
+    sm.go_auto()
+    sm.vision_loss()
+    assert sm.state == 'LIFT'
+    assert sm.tools_raised
+
+
+def test_vision_loss_in_lift_stays_lift():
+    sm = StateMachine()
+    sm.go_auto()
+    sm.vision_loss()
+    sm.vision_loss()                     # repeated event: no change
+    assert sm.state == 'LIFT'
+
+
+def test_vision_loss_in_estop_stays_estop():
+    sm = StateMachine()
+    sm.go_auto()
+    sm.estop()
+    sm.vision_loss()
+    assert sm.state == 'ESTOP'           # latched state is never downgraded

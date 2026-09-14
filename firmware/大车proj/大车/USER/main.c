@@ -263,7 +263,7 @@ while(1)
 {
 
 	
-	char tjcstr[30];	//定义一个字符串数组
+	char tjcstr[48];	//定义一个字符串数组
 	
 			 count_time=count_time+1;
 			
@@ -300,7 +300,7 @@ while(1)
 							angle[2]=0;
 							angle[3]=0;	
 							printf(" 遥控器未连接！\r\n");	
-							sprintf(tjcstr, "t6.txt=\"遥控器未连接！\"\xff\xff\xff" ); 
+							snprintf(tjcstr, sizeof(tjcstr), "t6.txt=\"遥控器未连接！\"\xff\xff\xff" ); 
 							 HMISends(tjcstr);	
 								delay_ms(50);
 							mp3_other=10;
@@ -328,7 +328,7 @@ while(1)
 															IWDG_Feed();
 															printf(" 请将遥控器油门扳到最下方！\r\n");	
 															
-															sprintf(tjcstr, "t6.txt=\"请将遥控器油门扳到最下方!\"\xff\xff\xff" ); 
+															snprintf(tjcstr, sizeof(tjcstr), "t6.txt=\"请将遥控器油门扳到最下方!\"\xff\xff\xff" ); 
 															 HMISends(tjcstr);	
 															//原延时50
 																delay_ms(10);
@@ -470,7 +470,7 @@ while(1)
 						veloc[3]=0;
 					
 							printf(" 刹车有障碍物 %d \r\n",delay_usr);	
-							sprintf(tjcstr, "t8.txt=\"请注意有障碍物!\"\xff\xff\xff" ); 
+							snprintf(tjcstr, sizeof(tjcstr), "t8.txt=\"请注意有障碍物!\"\xff\xff\xff" ); 
 								HMISends(tjcstr);	
 							 mp3_other=8;	
 					
@@ -518,16 +518,16 @@ while(1)
 	  if (retrofit_mode() == MODE_AUTO) {
 	      angle[0] = angle[1] = angle[2] = angle[3] = 0.0;
 	  }
-	  send_angle(4,-(angle[0]-wheel_Angle_correct[0]-Last_wheel_Angle_correct_run[1]-Switch_direction));   //角度控制  adress, angle    四个轮子 但是一个伺服电机控制两个  所以只控制两个就可以
+	  send_angle(4,-(angle[0]-wheel_Angle_correct[0]-Last_wheel_Angle_correct_run[1]-(retrofit_mode()==MODE_AUTO?0.0:Switch_direction)));   //角度控制  adress, angle    四个轮子 但是一个伺服电机控制两个  所以只控制两个就可以
 	  delay_ms(12);
  
-	  send_angle(1,(angle[1]+wheel_Angle_correct[1]-Last_wheel_Angle_correct_run[1]+Switch_direction));   //角度控制  adress, angle    四个轮子 但是一个伺服电机控制两个  所以只控制两个就可以
+	  send_angle(1,(angle[1]+wheel_Angle_correct[1]-Last_wheel_Angle_correct_run[1]+(retrofit_mode()==MODE_AUTO?0.0:Switch_direction)));   //角度控制  adress, angle    四个轮子 但是一个伺服电机控制两个  所以只控制两个就可以
 	  delay_ms(12);
 	
-	  send_angle(2,(angle[2]-wheel_Angle_correct[2]-Last_wheel_Angle_correct_run[1]+Switch_direction));   //角度控制  adress, angle    四个轮子 但是一个伺服电机控制两个  所以只控制两个就可以
+	  send_angle(2,(angle[2]-wheel_Angle_correct[2]-Last_wheel_Angle_correct_run[1]+(retrofit_mode()==MODE_AUTO?0.0:Switch_direction)));   //角度控制  adress, angle    四个轮子 但是一个伺服电机控制两个  所以只控制两个就可以
 	  delay_ms(12);
 	
-	  send_angle(3,-(angle[3]+wheel_Angle_correct[3]-Last_wheel_Angle_correct_run[1]-Switch_direction));   //角度控制  adress, angle    四个轮子 但是一个伺服电机控制两个  所以只控制两个就可以
+	  send_angle(3,-(angle[3]+wheel_Angle_correct[3]-Last_wheel_Angle_correct_run[1]-(retrofit_mode()==MODE_AUTO?0.0:Switch_direction)));   //角度控制  adress, angle    四个轮子 但是一个伺服电机控制两个  所以只控制两个就可以
 	  delay_ms(12);
 		
 	//控制伺服电机
@@ -541,6 +541,11 @@ while(1)
 		veloc[0] = veloc[2] = vl;   /* left front/rear */
 		veloc[1] = veloc[3] = vr;   /* right front/rear */
 	} else if (retrofit_mode() == MODE_ESTOP) {
+		veloc[0] = veloc[1] = veloc[2] = veloc[3] = 0.0;
+	} else if (retrofit_mode() == MODE_MANUAL && !retrofit_sbus_ok()) {
+		/* H2.3 (review 09-14): SBUS stale in MANUAL -> revoke stale RC
+		   commands at the drive point. Recoverable, covers all 4 wheels
+		   (unlike SW_Stop which only cuts MOTOR_1, see ledger Hw-2). */
 		veloc[0] = veloc[1] = veloc[2] = veloc[3] = 0.0;
 	}
 //左前
@@ -603,19 +608,19 @@ printf("总角度 %.3f  总速度 %.3f 角度: 左前%.3f  左后%.3f 右前%.3f 右后%.3f 速度
 			
 		//向上位机传输信息
 		//电压
-		sprintf(tjcstr, "t1.txt=\"%d.%d V\"\xff\xff\xff", (int)battery_voltage,(int)((battery_voltage-(int)battery_voltage)*10)); 
+		snprintf(tjcstr, sizeof(tjcstr), "t1.txt=\"%d.%d V\"\xff\xff\xff", (int)battery_voltage,(int)((battery_voltage-(int)battery_voltage)*10)); 
     HMISends(tjcstr);	
 
     voltage_Progress_bar=(int)((battery_voltage-44.0)/(56.0-44.0)*100);
 		if (voltage_Progress_bar>=20)
 			{
-			sprintf(tjcstr, "j1.pco=2024\xff\xff\xff" ); //绿色
+			snprintf(tjcstr, sizeof(tjcstr), "j1.pco=2024\xff\xff\xff" ); //绿色
 			HMISends(tjcstr);	
-			sprintf(tjcstr, "j1.val=%d\xff\xff\xff",voltage_Progress_bar );  
+			snprintf(tjcstr, sizeof(tjcstr), "j1.val=%d\xff\xff\xff",voltage_Progress_bar );  
 			HMISends(tjcstr);
-			sprintf(tjcstr, "t8.txt=\"正常运行!\"\xff\xff\xff" ); 
+			snprintf(tjcstr, sizeof(tjcstr), "t8.txt=\"正常运行!\"\xff\xff\xff" ); 
 			HMISends(tjcstr);			
-			sprintf(tjcstr, "t6.txt=\"遥控器连接成功!\"\xff\xff\xff" );   
+			snprintf(tjcstr, sizeof(tjcstr), "t6.txt=\"遥控器连接成功!\"\xff\xff\xff" );   
 			HMISends(tjcstr);		
 			if( battery_voltage_flag_only==1)
 			{mp3_other=0;	 //让其一直响吧
@@ -628,11 +633,11 @@ printf("总角度 %.3f  总速度 %.3f 角度: 左前%.3f  左后%.3f 右前%.3f 右后%.3f 速度
 			}
 		if (voltage_Progress_bar<10)   //没电了
 			{
-			sprintf(tjcstr, "j1.pco=63488\xff\xff\xff" ); //红色
+			snprintf(tjcstr, sizeof(tjcstr), "j1.pco=63488\xff\xff\xff" ); //红色
 			HMISends(tjcstr);		
-			sprintf(tjcstr, "j1.val=%d\xff\xff\xff",voltage_Progress_bar ); 
+			snprintf(tjcstr, sizeof(tjcstr), "j1.val=%d\xff\xff\xff",voltage_Progress_bar ); 
 			HMISends(tjcstr);			
-			sprintf(tjcstr, "t8.txt=\"请充电!\"\xff\xff\xff" ); 
+			snprintf(tjcstr, sizeof(tjcstr), "t8.txt=\"请充电!\"\xff\xff\xff" ); 
 			HMISends(tjcstr);	
       //mp3_other=9;	 //让其一直响吧
 				
@@ -645,31 +650,31 @@ printf("总角度 %.3f  总速度 %.3f 角度: 左前%.3f  左后%.3f 右前%.3f 右后%.3f 速度
 			}			
 		//速度信息
 
-		sprintf(tjcstr, "t7.txt=\"%d.%dm/s\"\xff\xff\xff", (int)control_flag[4],(int)((control_flag[4]-(int)control_flag[4])*10));  
+		snprintf(tjcstr, sizeof(tjcstr), "t7.txt=\"%d.%dm/s\"\xff\xff\xff", (int)control_flag[4],(int)((control_flag[4]-(int)control_flag[4])*10));  
 		HMISends(tjcstr);	
 		
-		sprintf(tjcstr, "j0.val=%d\xff\xff\xff",(int)((control_flag[4]-0.0)/(veloc_limit-0.0)*100) );  
+		snprintf(tjcstr, sizeof(tjcstr), "j0.val=%d\xff\xff\xff",(int)((control_flag[4]-0.0)/(veloc_limit-0.0)*100) );  
 		HMISends(tjcstr);
 		// 转向模式
 			
 			if(control_flag[2]==1)
 			{
-			sprintf(tjcstr, "t4.txt=\"两轮转向!\"\xff\xff\xff" ); 
+			snprintf(tjcstr, sizeof(tjcstr), "t4.txt=\"两轮转向!\"\xff\xff\xff" ); 
 			HMISends(tjcstr);	
 			}
 			if(control_flag[2]==2)
 			{
-			sprintf(tjcstr, "t4.txt=\"四轮转向!\"\xff\xff\xff" ); 
+			snprintf(tjcstr, sizeof(tjcstr), "t4.txt=\"四轮转向!\"\xff\xff\xff" ); 
 			HMISends(tjcstr);	
 			}
 			if(control_flag[2]==3)
 			{
-			sprintf(tjcstr, "t4.txt=\"斜行转向!\"\xff\xff\xff" ); 
+			snprintf(tjcstr, sizeof(tjcstr), "t4.txt=\"斜行转向!\"\xff\xff\xff" ); 
 			HMISends(tjcstr);	
 			}
 			if(control_flag[2]==4)
 			{
-			sprintf(tjcstr, "t4.txt=\"原地转向!\"\xff\xff\xff" ); 
+			snprintf(tjcstr, sizeof(tjcstr), "t4.txt=\"原地转向!\"\xff\xff\xff" ); 
 			HMISends(tjcstr);	
 			}
 

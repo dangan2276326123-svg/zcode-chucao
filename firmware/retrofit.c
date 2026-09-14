@@ -156,6 +156,16 @@ static void slew_step(void)
     out_vr += dr;
 }
 
+uint8_t retrofit_sbus_ok(void)
+{
+    /* H2.3 (review 2026-09-14): MANUAL SBUS fail-safe.  Receiver off
+     * or SBUS wire broken must revoke stale RC commands within the
+     * same window as the PC watchdog.  Never true before the first
+     * valid SBUS frame (pure-RC boot is safe by construction). */
+    return sbus_last_ms != 0u &&
+           (uint32_t)(tick_ms - sbus_last_ms) <= 500u;
+}
+
 uint8_t retrofit_mode(void)
 {
     return mode;

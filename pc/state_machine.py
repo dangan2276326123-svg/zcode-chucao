@@ -41,8 +41,15 @@ class StateMachine:
         return False
 
     def vision_loss(self):
-        """Confidence lost / link timeout -> lift and stop (recoverable)."""
-        if self.state == self.ESTOP:
+        """Vision lost while AUTO -> LIFT (recoverable, drives NAV0+TOOL-up).
+
+        H2.1 contract (review 2026-09-14): MANUAL is RC control — the PC
+        never sends NAV there, so vision loss in MANUAL must NOT change
+        state (it would route through LIFT and emit NAV(0,0), which the
+        MCU interprets as entering AUTO = silent loss of RC authority).
+        In MANUAL the loss is surfaced as a HUD/log warning only.
+        """
+        if self.state != self.AUTO:
             return
         self._to(self.LIFT)
 
