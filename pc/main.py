@@ -203,8 +203,9 @@ def main():
                 tool_px = res.get('tool_offset_px')
                 if tool_px is None:      # far field ok, near field lost (P1-3)
                     tool_px = 0.0
-                lat_c = comp.compensate(lat_m, rate.update(lat_m, dt))
-                vl, vr = drive.wheel_speeds(lat_c)
+                e_dot = rate.update(lat_m, dt)   # filtered lateral rate (ė)
+                lat_c = comp.compensate(lat_m, e_dot)
+                vl, vr = drive.wheel_speeds(lat_c, err_rate=e_dot)  # PD(e,ė), H4.6-A
                 tool_mm = pid.update(tool_px * px_to_meters(1.0) * 1000.0, dt)
                 send(P.TYPE_NAV, P.pack_nav(vl, vr))
                 send(P.TYPE_TOOL, P.pack_tool(tool_mm, 0))

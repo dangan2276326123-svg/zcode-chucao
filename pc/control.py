@@ -80,20 +80,28 @@ class LatencyCompensator:
 class DifferentialDrive:
     """Skid-steer chassis: lateral error -> (vL, vR).
 
-    v = nominal forward speed; correction dv = k * err (+ heading damping).
+    v = nominal forward speed; correction dv = k_lat*err + k_d*err_rate
+    (+ optional k_heading*heading).  This is the PD on (e, ė) of method-material
+    §4.x.1 (H4.6-A): the ė damping term is wired here and fed by the caller's
+    LatErrorRate.  k_d defaults 0.0 => behavior identical to the old P-only until
+    tuned on the bench (NOT a validated gain — see v0.9 §13).
     vL = v - dv, vR = v + dv, both clamped to [-v_max, v_max].
     E-stop condition |err| > estop_limit handled by caller via .estop().
     """
 
-    def __init__(self, v_nominal=0.14, v_max=0.2, k_lat=1.5, k_heading=0.3):
+    def __init__(self, v_nominal=0.14, v_max=0.2, k_lat=1.5, k_heading=0.3,
+                 k_d=0.0):
         self.v_nominal = v_nominal   # 0.5 km/h
         self.v_max = v_max
-        self.k_lat = k_lat           # 1/s lateral gain
+        self.k_lat = k_lat           # 1/s lateral (proportional) gain
         self.k_heading = k_heading
+        self.k_d = k_d               # 1/s lateral-rate (derivative) gain, 待台架整定
 
-    def wheel_speeds(self, err_m, heading_err_rad=0.0, speed_mps=None):
+    def wheel_speeds(self, err_m, heading_err_rad=0.0, speed_mps=None,
+                     err_rate=0.0):
         v = self.v_nominal if speed_mps is None else speed_mps
-        dv = self.k_lat * err_m + self.k_heading * heading_err_rad
+        dv = (self.k_lat * err_m + self.k_heading * heading_err_rad
+              + self.k_d * err_rate)
         vl = max(-self.v_max, min(self.v_max, v - dv))
         vr = max(-self.v_max, min(self.v_max, v + dv))
         return vl, vr

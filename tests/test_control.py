@@ -62,6 +62,23 @@ def test_differential_drive_clamp_and_direction():
     assert vl == pytest.approx(-0.2) and vr == pytest.approx(0.2)
 
 
+def test_wheel_speeds_kd_zero_is_p_only():
+    """H4.6-A: default k_d=0 => err_rate has NO effect (backward compatible,
+    no invented gain active until bench tuning)."""
+    dd = DifferentialDrive()                     # k_d defaults 0.0
+    assert dd.wheel_speeds(0.05, err_rate=2.0) == dd.wheel_speeds(0.05)
+
+
+def test_wheel_speeds_kd_adds_derivative_differential():
+    """k_d>0: lateral rate ė contributes a real differential (PD damping).
+    v_max raised so the clamp doesn't mask the term."""
+    dd = DifferentialDrive(v_max=1.0, k_lat=0.0, k_heading=0.0, k_d=0.5)
+    vl0, vr0 = dd.wheel_speeds(0.0, err_rate=0.0)
+    vl1, vr1 = dd.wheel_speeds(0.0, err_rate=0.2)              # dv += 0.5*0.2=0.1
+    assert vl1 == pytest.approx(vl0 - 0.1)
+    assert vr1 == pytest.approx(vr0 + 0.1)
+
+
 def test_lat_rate_estimator():
     r = LatErrorRate(alpha=1.0)
     r.update(0.0, 0.05)
