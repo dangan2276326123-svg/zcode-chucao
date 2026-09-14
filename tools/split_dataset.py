@@ -53,6 +53,13 @@ def split_peony_dataset(source_dir, out_root, seed=42, force=False, dry_run=Fals
     _guard(source_dir)
     _guard(out_root)
 
+    # R2 修复（复审 2026-09-14）：源与输出重叠时，force 清空会误删源数据。
+    ap_src = os.path.abspath(source_dir)
+    ap_out = os.path.abspath(out_root)
+    if ap_src == ap_out or ap_out.startswith(ap_src + os.sep) \
+            or ap_src.startswith(ap_out + os.sep):
+        raise SystemExit('拒绝: 源目录与输出目录重叠，--force 会误删源数据')
+
     pairs = scan_pairs(source_dir)
     print('源目录: %s' % source_dir)
     print('找到成对 [.jpg + .json]: %d 对' % len(pairs))
@@ -71,6 +78,18 @@ def split_peony_dataset(source_dir, out_root, seed=42, force=False, dry_run=Fals
     if dry_run:
         print('[dry-run] 未写入任何文件。')
         return
+
+    # R2 修复（复审 2026-09-14）：非 force 时，若目标已存在且非空，直接 copy
+    # 会把旧样本混进新划分（同名覆盖 + 换 seed 后跨集合重复）。拒绝，除非
+    # 显式 --force 清空，或换一个空的 --out-root。
+    if not force:
+        for stage in ('train', 'val', 'test'):
+            for sub in ('images', 'masks'):
+                d = os.path.join(out_root, stage, sub)
+                if os.path.isdir(d) and os.listdir(d):
+                    raise SystemExit(
+                        '拒绝: 目标非空 %s —— 用 --force 覆盖，或换空的 --out-root'
+                        '（防新旧样本混集，见复审 R2）' % d)
 
     for stage, items in (('train', train), ('val', val), ('test', test)):
         for sub in ('images', 'masks'):
