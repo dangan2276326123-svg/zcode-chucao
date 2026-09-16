@@ -105,7 +105,7 @@
       "source_page": 46,
       "source_label": "参数差异台账.md Hw-9 第46行 电推杆规格",
       "direct_observation": "3 根电推杆 BST-YF-L，48V、行程 200mm、10mm/s、3000N，用于三行刀升降，被动进土",
-      "does_not_prove": "不含任何位置反馈能力；且与 ch02:80 的 12V/100mm 表述冲突，按事实权威序以台账为准",
+      "does_not_prove": "不含任何位置反馈能力；与 ch02:80 的 12V/100mm 冲突，按台账为准；且板上 ACS712 电流通道登记对象是行走电机回路，是否覆盖电推杆未跟线确认",
       "evidence_strength": "direct"
     },
     {
@@ -149,8 +149,8 @@
       "source_id": "thesis",
       "source_page": 14,
       "source_label": "ch02_draft.md 第14、18行；ch05:8",
-      "direct_observation": "登记的设计输入为行距 30~60 cm、坡地 5~15°、目标耕深 30 mm 且误差不超过 ±5 mm",
-      "does_not_prove": "全部是设计目标值；株丛直径、杂草种名、作业次数在仓库中未见登记",
+      "direct_observation": "汇报人 09-16 现场确认：行距 30~40 cm、坡地 0~15°、目标耕深 30 mm 误差 ±5 mm",
+      "does_not_prove": "与 ch02:14 登记的 30~60 cm、5~15° 冲突，按事实权威序以现场值为准，论文待改；株丛直径与杂草种名仍未实测",
       "evidence_strength": "direct"
     },
     {
@@ -394,41 +394,30 @@
     },
     {
       "evidence_id": "e_depth",
-      "question": "为什么现在说入土深度无法确定",
+      "question": "为什么现在做不到主动抬刀",
       "figure_ids": [
         "f_lift_bits",
         "f_proto_tool",
         "f_limits",
-        "f_depth_doc"
+        "f_actuator"
       ],
-      "interpretation": "固件侧是二值开关、协议无深度字段、限位只做滑台防撞，电推杆没有任何位置反馈通路；现有硬件下唯一可用量是时间",
-      "slide_claim": "进土深度目前没有可用反馈",
-      "caution": "论文 ch04:50 曾写有摆角传感器，属未登记硬件的过度声明，本次不采用该说法",
+      "interpretation": "刀梁只有通电正反转，无位置与负载反馈；撞石是瞬时冲击而 10 mm/s 抬 50 mm 需 5 秒；挂草是缓变负载，理论上可判电流但采样通道覆盖范围未确认",
+      "slide_claim": "开放问题：刀上发生了什么，机器不知道",
+      "caution": "不得写成定深精度问题，也不得声称电流硬件已覆盖推杆回路",
       "evidence_strength": "direct"
     },
     {
       "evidence_id": "e_depthfix",
-      "question": "深度问题有哪些可走的路",
+      "question": "主动抬刀怎么解",
       "figure_ids": [
         "f_decisions",
         "f_actuator",
         "f_limits"
       ],
-      "interpretation": "外置行程测量、时间推算加实测标定、限深轮机械定深三条路；D6 已写明推翻条件是台架达不到 ±5mm 再加反馈",
-      "slide_claim": "三条候选解法，倾向先用限深轮机械定深",
-      "caution": "时间推算能否达 ±5mm 完全取决于实测重复定位误差，未测之前不作承诺",
+      "interpretation": "分两层：撞石用机械卸载（剪切销或弹簧避障，不依赖传感器），挂草用电机电流趋势（阈值须台架标定）；两者都仍受抬刀速度本身限制",
+      "slide_claim": "先机械保机，再电流辨草",
+      "caution": "机械卸载结构未设计；电流判据在未标定前不得称可用",
       "evidence_strength": "proposed"
-    },
-    {
-      "evidence_id": "e_progress",
-      "question": "现在推进到哪一步",
-      "figure_ids": [
-        "f_status"
-      ],
-      "interpretation": "设计与代码层已完成并可复现编译，卡点是烧录对拍安全实测这条串行门，不是代码没写",
-      "slide_claim": "进度按门讲：已完成实现，卡在台架门前",
-      "caution": "不得把 0 错误与测试数说成已验证；秋季只做自主沿行预实验，刀控推到春季",
-      "evidence_strength": "direct"
     }
   ],
   "navigation": [
@@ -449,8 +438,8 @@
       "purpose": "把无反馈这一空白作为开放问题抛出并给候选解法"
     },
     {
-      "label": "进度与下一步",
-      "purpose": "按验证门汇报进度与本周期死线"
+      "label": "小结与讨论",
+      "purpose": "收尾并列出请组会决定的问题"
     }
   ],
   "slides": [
@@ -460,7 +449,7 @@
       "section": "立题与约束",
       "page_role": "cover",
       "mainline_or_backup": "mainline",
-      "title": "纯视觉芍药行间除草机器人：设计与样机验证",
+      "title": "纯视觉芍药行间除草机器人",
       "evidence_ids": [],
       "figure_ids": []
     },
@@ -576,14 +565,12 @@
       "section": "设计与控制原理",
       "page_role": "method",
       "mainline_or_backup": "mainline",
-      "title": "分割选 DeepLabV3+，峰值 mIoU 0.7459",
+      "title": "分割选 DeepLabV3+",
       "evidence_ids": [
-        "e_seg",
-        "e_seg_limit"
+        "e_seg"
       ],
       "figure_ids": [
-        "f_miou",
-        "f_ipm"
+        "f_miou"
       ]
     },
     {
@@ -636,7 +623,7 @@
       "section": "设计与控制原理",
       "page_role": "method",
       "mainline_or_backup": "mainline",
-      "title": "中间刀控制的关键不在参数，在误差定义",
+      "title": "中间刀还不能叫闭环：刀到位了，相机看不出来",
       "evidence_ids": [
         "e_toolctrl"
       ],
@@ -667,7 +654,7 @@
       "section": "进土深度问题",
       "page_role": "open_problem",
       "mainline_or_backup": "mainline",
-      "title": "开放问题：进土深度目前没有可用反馈",
+      "title": "开放问题：刀上发生了什么，机器不知道",
       "evidence_ids": [
         "e_depth"
       ],
@@ -683,7 +670,7 @@
       "section": "进土深度问题",
       "page_role": "discussion",
       "mainline_or_backup": "mainline",
-      "title": "三条候选解法，倾向先用限深轮机械定深",
+      "title": "分两层解：先机械保机，再电流辨草",
       "evidence_ids": [
         "e_depthfix"
       ],
@@ -695,24 +682,10 @@
     {
       "slide_no": 17,
       "slide_id": "s17",
-      "section": "进度与下一步",
-      "page_role": "result",
-      "mainline_or_backup": "mainline",
-      "title": "进度按验证门讲，不按完成度百分比讲",
-      "evidence_ids": [
-        "e_progress"
-      ],
-      "figure_ids": [
-        "f_status"
-      ]
-    },
-    {
-      "slide_no": 18,
-      "slide_id": "s18",
-      "section": "进度与下一步",
+      "section": "小结与讨论",
       "page_role": "closing",
       "mainline_or_backup": "mainline",
-      "title": "请老师同学批评指正",
+      "title": "请各位老师同学批评指正",
       "evidence_ids": [],
       "figure_ids": []
     }

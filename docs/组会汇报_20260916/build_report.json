@@ -1,6 +1,6 @@
 {
   "status": "passed",
-  "slide_count": 18,
+  "slide_count": 17,
   "output": "组会汇报_纯视觉芍药行间除草机器人_20260916.pptx",
   "route": "pragmatic_fallback",
   "layouts": [
@@ -19,7 +19,6 @@
     "text",
     "summary",
     "text",
-    "summary",
     "summary",
     "closing"
   ]

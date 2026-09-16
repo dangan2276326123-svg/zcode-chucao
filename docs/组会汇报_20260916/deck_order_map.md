@@ -1,45 +1,42 @@
-# 组会汇报 deck 页面清单与溯源表（2026-09-16）
+# 组会汇报 deck 页面清单与溯源表（2026-09-16，第 2 版）
 
-- 交付物：`组会汇报_纯视觉芍药行间除草机器人_20260916.pptx`（18 页，16:9，全可编辑）
-- 生产路线：**Route C 务实回退**（见文末交付声明）
-- 证据合同：`paper_analysis.json`（13 个源文件 / 17 条溯源记录 / 16 条证据链 / 18 页），校验通过 `paper_analysis_validation.json`
-- 页面计划：`pragmatic_edit_plan.json`；结构校验 `validate_pragmatic_fallback_pptx.py` → passed，0 issues
-- 渲染验收：PowerPoint COM 导出 18 张 PNG（`render_qa/png/`）+ `render_qa/montage.png`，逐页目视过
+- 交付物：`组会汇报_纯视觉芍药行间除草机器人_20260916.pptx`（17 页，16:9，全可编辑）
+- 生产路线：**Route C 务实回退**；本表由 `pragmatic_edit_plan.json` + `paper_analysis.json` 自动生成，不与 deck 脱钩
+- 校验：`validate_paper_analysis.py` passed；`validate_pragmatic_fallback_pptx.py` passed（0 issues）；PowerPoint COM 导出 17 张 PNG 逐页目视（`render_qa/`）
+- 第 2 版变更：按汇报人手改回写 6 处；删进度页；第 13 页改直白版；第 15/16 页由「定深无反馈」重构为「挂草与撞石无法主动抬刀」
 
 ## 展示图清单
 
-**本页面无任何展示图**：18 页 `figure_count` 合计 0。按汇报人决定，分割实际输出、导航线叠加、整机照片均**现场单独展示**，不进 PPT。下表 `溯源记录` 不是展示图，而是每个数字的出处登记，答辩被追问时按它回查。
-
-## 页面顺序与主张溯源
+**全 deck 无任何展示图**（17 页 `figure_count` 合计 0）。分割实际输出、导航线叠加、整机照片由汇报人现场展示。下表『溯源记录』不是展示图，是每个数字的出处登记，被追问时按它回查。
 
 | 页 | 导航段 | 版式 | 标题（结论式） | 证据链 | 关键数字的溯源记录 | 口径边界（不可越的部分） |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | 立题与约束 | cover | 纯视觉芍药行间除草机器人 | — | — | 封面不作任何完成性表述 |
-| 2 | 立题与约束 | text | 行间除草是芍药管理的劳力与成本瓶颈 | e_labor | ch01:8 人工 0.3~0.5 亩/人·天、占成本 40%+ | 该处文献引用仍是待核占位符 → **只作背景陈述，不作定量论据** |
-| 3 | 立题与约束 | summary | 农艺约束框定了样机的设计边界 | e_agron | ch02:14 行距 30~60cm、坡地 5~15°；ch02:18 耕深 30mm±5mm | 三项均为**设计目标值**；株丛直径/杂草种名/作业次数**未见登记**，页面已标"待实测" |
-| 4 | 除草机构选型 | text | 八类除草机构逐个筛，六类被排除 | e_screen | ch02:86-101 表 2-3；决策依据 D2/D4 | 属**针对性检索非系统综述**；商品机型与中文核心期刊机具文献缺失，已如实写在 takeaway |
-| 5 | 除草机构选型 | comparison | 入选两类：鸭掌铲主选，弹齿作对比 | e_pick | ch02:86-101；台账 Hw-9（弹齿 250mm 五齿） | **鸭掌铲幅宽未登记** → 与弹齿对比条件不对等，页面直接写明"对比前须先补铲幅" |
-| 6 | 设计与控制原理 | process | 技术路线：单一相机到刀具位移的四段链路 | e_route | morph_process.py:189；nav_control.py:134 | IPM 仍硬编码、秋季域未闭环 → 链路是**设计结构**，不是已验证数据流 |
-| 7 | 设计与控制原理 | text | 跨 4 行作业，3 条草带由 2 侧刀加 1 中间刀清除 | e_arch | 计划:11 四行三带；台账 Hw-9；大板实物标注.jpg | 刀数配置为汇报人 09-15 现场确认（2 侧刀 + 1 中间刀），已补记台账；**无整机照片**，结构关系靠现场展示 |
-| 8 | 设计与控制原理 | comparison | 底盘粗纠偏加刀具细对行，比只纠底盘更可行 | e_twolevel | 台账 Hw-7/Hw-12 滑台；ch02:117 | 滑台**未接线**，刀具一级带宽与精度无实测 → 该页是**设计论证（proposed）**，不是实测结论 |
-| 9 | 设计与控制原理 | text | 分割选 DeepLabV3+，峰值 mIoU 0.7459 | e_seg | train_metric_log.csv 第 76 行（共 202 行） | 峰值在**第 76 轮**（不是 201 轮 0.7163）；属**夏季域验证集**，秋季域指标未产出 |
-| 10 | 设计与控制原理 | text | 分割分数不等于能导航，评价要分三层 | e_seg_limit | train_metric_log.csv；morph_process.py:189 | 三层评价中**只有第一层有数**；页面明写"实际输出与失效样例现场演示" |
-| 11 | 设计与控制原理 | process | 行墙提取分远近两场，三条目标线要分开 | e_navline | morph_process.py:189-193；camera_calib.py:55-73 | 作物行中心／通道中心／作业带中心**必须分开**；模型只分作物与背景，**不得称识别了杂草质心** |
-| 12 | 设计与控制原理 | text | 轨迹跟踪用 PD 加横向速率阻尼 | e_track | nav_control.py:134-155；pc/control.py | 当前 AUTO **只发左右轮速、转角锁直** → 不得说成四轮转向自主控制已实现；Ackermann 属实现细节 |
-| 13 | 设计与控制原理 | text | 中间刀控制的关键不在参数，在误差定义 | e_toolctrl | pc/control.py:27；pc/main.py:209；protocol.py:109 | 34 s 累积至 50 mm 限幅是**纯函数复现**，页面已带该限定词，**不证明整车会失稳** |
-| 14 | 设计与控制原理 | summary | 升降管三梁、横移管中间刀，两套机构 | e_lift | 台账 Hw-9（48V/200mm/10mm/s/3000N）；retrofit.c:12,244-258 | 电推杆规格**以台账为准**（ch02:80 的 12V/100mm 是错的，未上页面）；滑台未接线、刀梁接入待实物确认 |
-| 15 | 进土深度问题 | text | 开放问题：进土深度目前没有可用反馈 | e_depth | retrofit.c:12/244-258/275-281；protocol.py:109-111 | **不提** ch04:50"限深板摆角传感器"——该硬件无任何登记，属过度声明；本页只讲可核实的空白 |
-| 16 | 进土深度问题 | summary | 三条候选解法，倾向先用限深轮机械定深 | e_depthfix | 决策依据 D6（含推翻条件）；台账 Hw-9 | ②时间推算能否达 ±5 mm **完全取决于未做的实测**，页面写成"须先实测"，不作承诺 |
-| 17 | 进度与下一步 | summary | 进度按验证门讲，不按完成度百分比讲 | e_progress | 缺口清单『总览』板；USER/build_log.txt | takeaway 明写**两条硬禁令仍未解除**；0 错误与测试数**不得**说成已验证 |
-| 18 | 进度与下一步 | closing | 汇报完毕，敬请批评指正 | — | — | 三条讨论问题作为收尾诉求：深度走哪条路／铲幅何时补测／春季田块书面确认 |
+| 1 | 立题与约束 | cover | 纯视觉芍药行间除草机器人 | — | — | — |
+| 2 | 立题与约束 | text | 行间除草是芍药管理的劳力与成本瓶颈 | e_labor | f_labor: ch01_draft.md 第8行 人工除草成本；f_agron: ch02_draft.md 第14、18行；ch05:8 | 成本数字的文献出处尚未核验，汇报时按背景陈述不作定量论据 |
+| 3 | 立题与约束 | summary | 农艺约束框定了样机的设计边界 | e_agron | f_agron: ch02_draft.md 第14、18行；ch05:8；f_frames: avi_frames/ 295 张 1920x1080 田间抽帧 + data/calib_params.npz | 三项均为设计目标值，未登记的项必须标待实测，不能补常识值 |
+| 4 | 除草机构选型 | text | 八类除草机构逐个筛，六类被排除 | e_screen | f_table23: ch02_draft.md 第86-101行 表2-3 八类除草机构机理与适用性；f_decisions: 决策依据说明.md D2/D4/D6（第17-18、32-33、43-46行）；D8（第58行）已过时 | 商品机型与中文核心期刊机具文献缺失，筛选覆盖面有限，需说明为针对性检索 |
+| 5 | 除草机构选型 | comparison | 入选两类：鸭掌铲主选，弹齿作对比 | e_pick | f_table23: ch02_draft.md 第86-101行 表2-3 八类除草机构机理与适用性；f_actuator: 参数差异台账.md Hw-9 第46行 电推杆规格 | 鸭掌铲幅宽尚未登记，与弹齿 250mm 对比条件不对等，须先补齐 |
+| 6 | 设计与控制原理 | process | 技术路线：单一相机到刀具位移的四段链路 | e_route | f_ipm: tools/morph_process.py 第189-193行；camera_calib.py 第55-73行；f_drive: network/nav_control.py 第134-155行 Ackermann4WS；pc/control.py DifferentialDrive | IPM 参数仍为硬编码，链路在真实秋季域上尚未闭环验证 |
+| 7 | 设计与控制原理 | text | 跨 4 行作业，3 条草带由 2 侧刀加 1 中间刀清除 | e_arch | f_actuator: 参数差异台账.md Hw-9 第46行 电推杆规格；f_slide: 参数差异台账.md Hw-7/Hw-12 第44、50行；ch02:117 滑台参数；f_board: docs/大板实物标注.jpg（1080x1920，13 处编号标注） | 整机装配照片缺失，本节结构关系以现场展示为准 |
+| 8 | 设计与控制原理 | comparison | 底盘粗纠偏加刀具细对行，比只纠底盘更可行 | e_twolevel | f_slide: 参数差异台账.md Hw-7/Hw-12 第44、50行；ch02:117 滑台参数；f_pid: pc/control.py 第27行起 PID；pc/main.py 第209行调用 | 滑台未接线，刀具一级的实际带宽与精度尚无实测 |
+| 9 | 设计与控制原理 | text | 分割选 DeepLabV3+ | e_seg | f_miou: network/train_metric_log.csv 第76行（epoch 76），共 202 行 | 该值是夏季域验证集结果，秋季域指标尚未产出；最终 checkpoint 与划分需冻结 |
+| 10 | 设计与控制原理 | text | 分割分数不等于能导航，评价要分三层 | e_seg_limit | f_miou: network/train_metric_log.csv 第76行（epoch 76），共 202 行；f_ipm: tools/morph_process.py 第189-193行；camera_calib.py 第55-73行 | 导航线横向误差与失效分层的真值还未标，三层里只有第一层有数 |
+| 11 | 设计与控制原理 | process | 行墙提取分远近两场，三条目标线要分开 | e_navline | f_ipm: tools/morph_process.py 第189-193行；camera_calib.py 第55-73行；f_frames: avi_frames/ 295 张 1920x1080 田间抽帧 + data/calib_params.npz | 单墙回退仍是粗偏移，低机位标定未做，秋季帧上的有效性未测 |
+| 12 | 设计与控制原理 | text | 轨迹跟踪用 PD 加横向速率阻尼 | e_track | f_drive: network/nav_control.py 第134-155行 Ackermann4WS；pc/control.py DifferentialDrive | 未台架验证；阿克曼几何是实现细节不作创新点，不得称已实现四轮转向自主控制 |
+| 13 | 设计与控制原理 | text | 中间刀还不能叫闭环：刀到位了，相机看不出来 | e_toolctrl | f_pid: pc/control.py 第27行起 PID；pc/main.py 第209行调用；f_proto_tool: common/protocol.py 第109-111行 pack_tool(offset_mm, lift) | 复现是纯函数结果，不证明整车行为；刀位反馈通路目前不存在 |
+| 14 | 设计与控制原理 | summary | 升降管三梁、横移管中间刀，两套机构 | e_lift | f_actuator: 参数差异台账.md Hw-9 第46行 电推杆规格；f_slide: 参数差异台账.md Hw-7/Hw-12 第44、50行；ch02:117 滑台参数；f_board: docs/大板实物标注.jpg（1080x1920，13 处编号标注） | 电推杆接入方式仍待继电器板实物确认，滑台未接线 |
+| 15 | 进土深度问题 | text | 开放问题：刀上发生了什么，机器不知道 | e_depth | f_lift_bits: retrofit.c 第12行与第244-258行 apply_outputs；f_proto_tool: common/protocol.py 第109-111行 pack_tool(offset_mm, lift)；f_limits: retrofit.c 第14行注释与第275-281行 stepper_update | 不得写成定深精度问题，也不得声称电流硬件已覆盖推杆回路 |
+| 16 | 进土深度问题 | summary | 分两层解：先机械保机，再电流辨草 | e_depthfix | f_decisions: 决策依据说明.md D2/D4/D6（第17-18、32-33、43-46行）；D8（第58行）已过时；f_actuator: 参数差异台账.md Hw-9 第46行 电推杆规格 | 机械卸载结构未设计；电流判据在未标定前不得称可用 |
+| 17 | 小结与讨论 | closing | 请各位老师同学批评指正 | — | — | — |
 
 ## 讲这页时要挡住的反问
 
-- **第 4-5 页**："为什么没有第三种刀？"→ 表 2-3 的六种排除理由各自成立，且 ch05 组1 既定对比就是鸭掌铲 vs 弹齿；加第三种会同时改变刀头与控制两个变量，归因不清。
-- **第 8 页**："两级纠偏是不是已经做了？"→ 没有。滑台未接线，这一页讲的是**分工设计**，实测排在春季。
-- **第 9 页**："0.7459 够不够？"→ 这个数只回答"分割层有多少数"，不回答能不能导航，所以紧跟第 10 页。
-- **第 12 页**："你不是四轮转向吗？"→ 硬件具备四轮转向能力，**当前 AUTO 只用轮速差**；能力／拟用模式／已运行模式三者分开说。
-- **第 15 页**："论文里不是写了深度监测？"→ 那句是过度声明，已登记待改，本次汇报不采用该说法。
+- **第 3 页**：行距 30~40 cm、坡地 0~15° 为汇报人 09-16 现场确认值，与论文 `ch02:14` 的 30~60 cm、5~15° 冲突；按事实权威序以现场值为准，论文待改（台账已记）。
+- **第 4-5 页**：为什么没有第三种刀 → 表 2-3 六种排除理由各自成立，ch05 组1 既定对比就是鸭掌铲 vs 弹齿；加第三种会同时改刀头与控制两个变量，归因不清。
+- **第 8 页**：两级纠偏做了吗 → 没有，滑台未接线，本页是分工设计（proposed），实测排春季。
+- **第 12 页**：你不是四轮转向吗 → 硬件具备该能力，当前 AUTO 只用轮速差；能力／拟用模式／已运行模式三者分开说。
+- **第 13 页**：刀移过去图像偏差为什么不变 → 相机在车架上，量的是行相对车；这就是还不能叫闭环的原因。
+- **第 15-16 页**：论文里不是写了深度监测？→ `ch04:50` 的摆角传感器无任何硬件登记，属过度声明，本次不采用；本页只讲可核实的空白。电流判据在标定前不得称可用，且板上 ACS712 登记对象是行走电机回路。
 
 ## 交付声明
 
@@ -47,8 +44,8 @@
 Image2 backend used: no
 Delivery mode: pragmatic editable fallback accepted by user
 Visual style: sample-deck-derived white/red/black academic grammar
-Scientific visuals: none displayed（全部数据图与整机照片由汇报人现场展示）
-Structural QA completed: yes（18 页，0 issues）
-Render/layout QA completed: yes（PowerPoint COM 导出 18 张 PNG + 拼图目视）
+Scientific visuals: none displayed（数据图与整机照片由汇报人现场展示）
+Structural QA completed: yes（17 页，0 issues）
+Render/layout QA completed: yes（PowerPoint COM 导出 17 张 PNG + 目视复核）
 Editable elements may exist: yes
 ```
