@@ -66,7 +66,7 @@
 | `json2mask.py` | 标注 JSON → 训练用灰度 mask |
 | `morph_process.py` | 分割结果后处理 + **导航线拟合**（被 `pc/perception.py` 和 `network/local_single_station.py` 导入）：`extract_dual_walls` 从 IPM 鸟瞰掩膜提取左右垄墙 → `fit_centerline_lsq` 对双墙各拟合 x=a·y+b 取中点 → `fit_centerline_lsq_weighted` 裁剪最小二乘 + 按内点率加权融合（遮挡鲁棒，单墙退化时门控回退）→ 输出 lookahead 行的横向偏差 `center_x` |
 | `split_dataset.py` | **数据集划分（分组模式）**：按 视频/地块/日期 前缀整组划分，杜绝邻帧跨集合（H1.3）；冻结 `split_manifest.json`；硬性保证 train/val/test 各≥1 组，组数 <3 直接拒绝而非静默退回逐图；源目录先校验后清空，`--force` 才清目标 |
-| `geometry_check.py` | **整车空间口径判据**（09-21）：要 N 把刀各进一条等距草带，车宽至少 `(N−1)·s + 刀宽`；行走约束单独判（车宽>行距即压在作物行上）。未实测的量返回"不下结论"，不补默认值。配合 `docs/整车尺寸实测表_20260921.md` |
+| `geometry_check.py` | **整车空间口径判据（只报事实，不报结论）**：要 N 把刀各进一条等距草带，车宽至少 `(N−1)·s + 刀宽`。`track_span` 给"轮距等于几个行距／离整行距还差多少／几何上是否可能对得上行"，**不输出压苗结论**——旧版那句"车宽>行距即压在作物行上"是 09-21 复审撤回的过度推论（行距 38.2 时轮距 191 恰为 5 个行距，两轮正落在行间）；判压苗要另量胎宽（M14）与轮迹对行线偏差（M15）。`slide_reach_verdict` 按"总行程 = 2 × 单侧需求"判够不够（旧实现拿总行程跟单侧比，会把 30 cm 报成够）。未实测的量返回"不下结论"，不补默认值。配合 `docs/整车尺寸实测表_20260921.md` |
 | `pre_annotate.py` | **半自动预标注**（DeepLabV3+ → labelme JSON + 叠加目检图）：qoder 工作区版，缺依赖时打人话提示、输出默认锁在工作区内、打印权重 md5/mtime 与解释器路径。原脚本在只读仓 `chucao_prj/annotation_tools/`，不改它 |
 | `启动预标注.bat` | 预标注启动入口（写死可用解释器）。**故意只写 ASCII**：.bat 里的中文必须 GBK 编码，否则 cmd 显示乱码 |
 
@@ -113,7 +113,7 @@
 | `calib_imgs/` | 标定棋盘格照片 `IMG_XXXX.jpg`（已 gitignore） |
 | `model_data/weights/` | 训练权重 `best_model.pth`（已 gitignore）。⚠️ 与只读仓 `chucao_prj/model_data/0.7428m/best_model.pth` **同大小不同 md5**（`32da179c…` vs `cdd22733…`），不是同一个 checkpoint，引用前必须点名 |
 | `results/smoke*` | 冒烟测试输出：标定/去畸变/推理样例图与 `run_log.csv` |
-| `tests/` | **10 个测试文件，`pytest -q` = 109 passed（09-21 实测）**。逐个：`test_protocol.py` 协议编解码/CRC 向量（**不含** C 对拍，那要台架 B2）；`test_control.py` 控制量与跨边界拆帧；`test_status_rx.py` STATUS 坏帧/新鲜度/MCU 重启重新同步；`test_nav_geometry.py` 前轮 Ackermann 几何（直行极限/后轮零角/共 ICC/刚体速度/镜像）；`test_mjpeg.py` TCP 流解析；`test_adaptive_walls.py` 自适应双墙；`test_perception_norm.py` 感知归一化；`test_data_tools.py` 资产安全 + 分组划分；`test_geometry_check.py` 空间口径判据；`test_pre_annotate.py` 预标注护栏 |
+| `tests/` | **11 个测试文件，`python -B -m pytest tests/ -q` = **120 passed（09-21 复审批次后实测）**。逐个：`test_protocol.py` 协议编解码/CRC 向量（**不含** C 对拍，那要台架 B2）；`test_control.py` 控制量与跨边界拆帧；`test_status_rx.py` STATUS 坏帧/新鲜度/MCU 重启重新同步；`test_nav_geometry.py` 前轮 Ackermann 几何（直行极限/后轮零角/共 ICC/刚体速度/镜像）；`test_mjpeg.py` TCP 流解析；`test_adaptive_walls.py` 自适应双墙；`test_perception_norm.py` 感知归一化；`test_data_tools.py` 资产安全 + 分组划分；`test_geometry_check.py` 空间口径判据（**只测事实与单位，不测物理结论**）；`test_ipm_io.py` 标定来源校验＋跑真实 solve() 的闭环；`test_pre_annotate.py` 预标注护栏（含"人工改过后重跑仍保留"） |
 | `docs/缺口清单.md` | **项目"欠账台账"**：顶部『📊 总览：做完的/没做的』板为进度权威，逐项含做法/验收/耗时/依赖 |
 | `docs/参数差异台账.md` | **硬件/参数事实的唯一权威**（Hw/Fw/Pc 项 + 改一笔记一笔）。当前到 Hw-19 |
 | `docs/决策依据说明.md` | 设计决策记录（D1–D8）。⚠️ D8"实车无转向执行器"已作废未标，见台账 Hw-13 |
@@ -139,18 +139,55 @@
 > 解释器见上面「运行环境」表：训练与预标注用 `D:\ruanjian\anac\envs\deeplab\python.exe`（或 PATH 里的 `D:\ruanjian\anac\python.exe`）；**别用 `labelme_env`**。
 > 权重默认 `model_data/weights/best_model.pth`，标定文件 `data/calib_params.npz`。
 
-### 标注 → 划分 → 训练（C1/C2 链路）
+### 标注 → 划分 → 训练（C1/C2 链路，**逐步可执行版**）
+
+> 这一段 09-21 复审指出两处会真出事的接口错配，已改：① 旧示例从 `raw/` 划分，
+> 但人工修正后的 JSON 在 `pre_annotated/labelme/`，从 `raw/` 划分等于**把人工成果丢掉**；
+> ② `split_dataset.scan_pairs()` 只按 `.jpg` 配对，而 `pre_annotate` 接受 PNG/BMP，
+> 非 `.jpg` 的图**不会进训练集**（预标注脚本现在会打这句警告）。
 
 ```bash
-# 1) 半自动预标注（先 --limit 3 小批试跑，产物在 output/labelme 与 output/check）
-python tools/pre_annotate.py --input 图片目录 --output data/autumn_data/pre_annotated --limit 3
-# 2) 用 labelme 人工复核并修正（labelme 打开 output/labelme，标签见 docs/秋季图像采集清单.md）
-# 3) 划分：先 --dry-run 看数，再冻结 manifest
-python tools/split_dataset.py --source data/autumn_data/raw --dry-run
-python tools/split_dataset.py --source data/autumn_data/raw --force
-# 4) 训练
-python network/train_m.py
+PY=D:/ruanjian/anac/envs/deeplab/python.exe     # 见上面「运行环境」表，别用 labelme_env
+
+# 0) 采集原图放这里；文件名首段就是分组键（默认按 _ 切），例 A3_000123.jpg → 组 A3
+#    分组决定 train/val/test 的边界，同一组绝不跨集合（H1.3）
+ls data/autumn_data/raw | head
+
+# 1) 半自动预标注：先 --limit 3 小批试跑
+$PY tools/pre_annotate.py --input data/autumn_data/raw \
+    --output data/autumn_data/pre_annotated --limit 3
+#    产物：pre_annotated/labelme/{同名 .jpg + 同名 .json}   ← labelme 要求图与 JSON 同目录
+#          pre_annotated/check/check_*.jpg                ← 机器草稿叠加图，仅目检用
+#          pre_annotated/重点检查清单.txt                  ← 前景占比异常/无多边形，优先人工复核
+#    ⚠️ 重跑同一目录**默认跳过已存在的 JSON**（里面可能有人工修正）。
+#       确实要推倒重做才加 --overwrite；同名不同扩展（a.jpg + a.png）直接拒绝。
+
+# 2) 人工复核：labelme 打开 pre_annotated/labelme/（不是 raw/，也不是 check/）
+#    labelme 只用于**打开图形界面**时才用 labelme_env 的解释器。
+#    标签必须落在冻结字典内（默认写 shaoyao），否则第 5 步严格模式报错。
+
+# 3) 划分：--source 指人工定稿所在的 labelme 目录，不是 raw
+$PY tools/split_dataset.py --source data/autumn_data/pre_annotated/labelme \
+    --out-root model_data --dry-run        # 先看组数与三集合分配
+$PY tools/split_dataset.py --source data/autumn_data/pre_annotated/labelme \
+    --out-root model_data --force          # 分组不足 3 组会直接拒绝，不再静默退回逐图
+#    产物：model_data/{train,val,test}/images/{.jpg,.json} + 空的 masks/
+#          model_data/split_manifest.json   ← 分组已冻结，训练与复核都以它为准
+#    ⚠️ --force 会清空目标目录；源目录与输出目录重叠时脚本会拒绝（R2 修复）
+
+# 4) 生成 mask：split 只建空 masks/ 目录，要自己跑 json2mask（三个集合各一次）
+for s in train val test; do
+  $PY tools/json2mask.py --input model_data/$s/images --output model_data/$s/masks
+done
+#    全背景掩码会单独点名（多半是标签名不在冻结字典里或该图未标注）
+
+# 5) 训练
+$PY network/train_m.py                     # 读 model_data/{train,val,test}/{images,masks}
 ```
+
+**口径提醒（复审 §6）**：训练集可以用模型预标注再人工修正，但**评价用的真值要独立制作并复核**。
+看过算法输出、只纠正了几处明显错处的草稿，不能当无偏真值；
+S0 用来调阈值的数据也要与最终留出评价分开记用途。
 
 ### 回放推理（离线验证整条链路）
 
@@ -170,9 +207,9 @@ python pc/main.py --live --pi-ip 192.168.127.10 --stream-host 192.168.127.10 --s
 ### 测试
 
 ```bash
-python -m pytest tests/ -q      # 09-21 基线：109 passed
+python -B -m pytest tests/ -q   # 09-21 复审批次后基线：120 passed
 ```
 
 ## 数据流
 
-田间视频（`data/videos/`）→ 抽帧（`avi_frames/`）→ **`tools/pre_annotate.py` 半自动预标注**（labelme JSON + 叠加目检图）→ 人工复核修正 → `tools/json2mask.py` 转 mask → `tools/split_dataset.py` **分组划分 + 冻结 `split_manifest.json`** → `network/train_m.py` 训练 → 权重（`model_data/weights/`）→ `pc/main.py` 感知（去畸变/标定 → 分割 `network/` → IPM 鸟瞰 → **`tools/morph_process.py` 双墙提取 + 最小二乘导航线拟合**：远场线给底盘、近场线给中间刀）→ `pc/state_machine.py`/`pc/control.py` → 串口协议（`common/protocol.py` ↔ `firmware/protocol.c`）→ 车端网关（RDK X5，`vehicle/`）→ STM32 固件（`firmware/`）驱动执行机构。
+田间视频（`data/videos/`）→ 抽帧（`avi_frames/`）→ **`tools/pre_annotate.py` 半自动预标注**（labelme JSON + 叠加目检图）→ **在 `pre_annotated/labelme/` 里用 labelme 人工复核修正**（重跑预标注默认跳过已有 JSON，不覆盖人工成果）→ `tools/split_dataset.py` **分组划分 + 冻结 `split_manifest.json`**（`--source` 指人工定稿目录，不是 `raw/`）→ `tools/json2mask.py` 按集合转 mask → `network/train_m.py` 训练 → 权重（`model_data/weights/`）→ `pc/main.py` 感知（去畸变/标定 → 分割 `network/` → IPM 鸟瞰（⚠️ 现在仍是 `perception.py` 里的**占位几何**；`pc/ipm_io.py` 这个带来源校验的加载器**还没有调用方**，接线属 E2③ 未完项）→ **`tools/morph_process.py` 双墙提取 + 最小二乘导航线拟合**：远场线给底盘、近场线给中间刀）→ `pc/state_machine.py`/`pc/control.py` → 串口协议（`common/protocol.py` ↔ `firmware/protocol.c`）→ 车端网关（RDK X5，`vehicle/`）→ STM32 固件（`firmware/`）驱动执行机构。
