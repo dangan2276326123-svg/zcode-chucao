@@ -294,3 +294,67 @@ def test_fewer_than_three_groups_is_refused_not_silently_degraded(tmp_path, monk
         sd.split_peony_dataset(str(src), str(out), seed=1, grouped=True)
     assert '至少需要 3 个组' in str(e.value)
     assert not (out / 'train').exists(), '拒绝时不得写任何目标目录'
+
+
+# ---- 采集清单命名契约（09-21 加）------------------------------------------
+# 采集清单原来写 `IMG_0001.jpg`，分组键 = 文件名首段 = 每张都是 IMG →
+# 240 张塌成 1 组，独立测试集根本不存在。工具必须说清这是命名问题。
+
+def test_all_same_prefix_names_are_flagged_as_a_naming_problem(tmp_path, monkeypatch):
+    monkeypatch.setattr(sd, 'WORKSPACE', str(tmp_path))
+    src = tmp_path / 'raw'
+    os.makedirs(src)
+    for i in range(8):
+        (src / ('IMG_%04d.jpg' % i)).write_bytes(b'\xff\xd8\xff\xd9')
+        (src / ('IMG_%04d.json' % i)).write_text('{}')
+    with pytest.raises(SystemExit) as e:
+        sd.split_peony_dataset(str(src), str(tmp_path / 'out'), seed=1, grouped=True)
+    msg = str(e.value)
+    assert '命名问题' in msg, msg                   # 不能只喊"请补采集批次"
+    assert 'IMG' in msg                             # 并且要点出塌掉的那个前缀
+
+
+def test_take_prefixed_names_split_into_real_groups(tmp_path, monkeypatch):
+    """按修正后的命名（{批次}_{日期}_{序号}）就应该是 3 组、三集合各 1 组。"""
+    monkeypatch.setattr(sd, 'WORKSPACE', str(tmp_path))
+    src = tmp_path / 'raw'
+    os.makedirs(src)
+    for take in ('t01', 't02', 't03'):
+        for i in range(3):
+            base = '%s_0928_%04d' % (take, i)
+            (src / (base + '.jpg')).write_bytes(b'\xff\xd8\xff\xd9')
+            (src / (base + '.json')).write_text('{}')
+    groups, set_of = sd.assign_groups(sd.scan_pairs(str(src)), '_', seed=3)
+    assert sorted(groups) == ['t01', 't02', 't03']
+    assert sorted(set(set_of.values())) == ['test', 'train', 'val']
+
+
+def test_nested_batch_dirs_are_refused_not_silently_skipped(tmp_path, monkeypatch):
+    """只扫一层是刻意的，但必须说出来——否则嵌套布局读成"0 对配对"，
+    报的是配对问题而不是目录结构问题。"""
+    monkeypatch.setattr(sd, 'WORKSPACE', str(tmp_path))
+    src = tmp_path / 'raw'
+    os.makedirs(src / 'sun_front_dense')
+    (src / 't01_0928_0001.jpg').write_bytes(b'\xff\xd8\xff\xd9')
+    (src / 't01_0928_0001.json').write_text('{}')
+    (src / 'sun_front_dense' / 't02_0928_0001.jpg').write_bytes(b'\xff\xd8\xff\xd9')
+    with pytest.raises(SystemExit) as e:
+        sd.scan_pairs(str(src))
+    assert '子目录' in str(e.value) and 'sun_front_dense' in str(e.value)
+
+
+def test_non_jpg_with_json_is_reported_not_dropped_quietly(tmp_path, monkeypatch,
+                                                           capsys):
+    """scan_pairs 只认 .jpg（历史数据集就是 .jpg）。预标注却接受 PNG/BMP，
+    两边对不上时必须点名，不能悄悄把这一批漏出训练集。"""
+    monkeypatch.setattr(sd, 'WORKSPACE', str(tmp_path))
+    src = tmp_path / 'raw'
+    os.makedirs(src)
+    (src / 't01_0928_0001.jpg').write_bytes(b'\xff\xd8\xff\xd9')
+    (src / 't01_0928_0001.json').write_text('{}')
+    (src / 't01_0928_0002.png').write_bytes(b'\x89PNG')
+    (src / 't01_0928_0002.json').write_text('{}')
+    assert sd.scan_pairs(str(src)) == ['t01_0928_0001']
+    out = capsys.readouterr().out
+    assert 't01_0928_0002.png' in out and '只认 .jpg' in out
+

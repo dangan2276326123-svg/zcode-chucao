@@ -19,6 +19,14 @@ import random
 import shutil
 import sys
 
+# Windows console here is cp936, which cannot encode the emoji used in the
+# messages below.  A UnicodeEncodeError halfway through a 350-image batch is
+# far worse than one dropped glyph, so replace unencodable characters instead
+# of crashing.  (Observed live 2026-09-21 on tools/split_dataset.py.)
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(errors='replace')
+    sys.stderr.reconfigure(errors='replace')
+
 WORKSPACE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FORBIDDEN_MARKERS = ('JetBrains', 'chucao_prj', 'avi_project')
 
@@ -32,16 +40,55 @@ def _guard(path):
         raise SystemExit('拒绝操作只读研究仓路径: %s' % path)
 
 
+def _subdirs_with_images(source_dir):
+    """Names of sub-folders that hold images.  Both this script and
+    pre_annotate.py scan ONE level, so a nested layout would otherwise read as
+    '0 valid pairs' and abort with a message about pairing, not about nesting."""
+    out = []
+    for name in sorted(os.listdir(source_dir)):
+        p = os.path.join(source_dir, name)
+        if os.path.isdir(p) and any(
+                f.lower().endswith(IMG_EXT) for f in os.listdir(p)):
+            out.append(name)
+    return out
+
+
+IMG_EXT = ('.jpg', '.jpeg', '.png', '.bmp')
+
+
 def scan_pairs(source_dir):
-    """Return sorted base names that have BOTH a .jpg and a same-name .json."""
+    """Return sorted base names that have BOTH a .jpg and a same-name .json.
+
+    Only .jpg pairs count (the shipped datasets are .jpg); PNG/BMP alongside a
+    .json are reported so a mis-converted batch cannot silently shrink the set.
+    """
     if not os.path.isdir(source_dir):
         raise SystemExit('源目录不存在: %s' % source_dir)
+    subdirs = _subdirs_with_images(source_dir)
+    if subdirs:
+        raise SystemExit(
+            '拒绝: 源目录下还有含图片的子目录（%s…）；本脚本只扫一层，'
+            '递归下去会把同一段连续拍摄拆成看不见的组，划分与预标注都会漏掉它们。'
+            '要么把某个批次目录本身当 --source，'
+            '要么先合并成一个平铺目录（合并前确认文件名前缀能区分组）'
+            % ', '.join(subdirs[:4]))
     names = []
+    skipped_ext = []
     for f in os.listdir(source_dir):
-        if f.lower().endswith('.jpg'):
-            base = os.path.splitext(f)[0]
-            if os.path.exists(os.path.join(source_dir, base + '.json')):
-                names.append(base)
+        low = f.lower()
+        if not low.endswith(IMG_EXT):
+            continue
+        base = os.path.splitext(f)[0]
+        if not os.path.exists(os.path.join(source_dir, base + '.json')):
+            continue
+        if low.endswith('.jpg'):
+            names.append(base)
+        else:
+            skipped_ext.append(f)
+    if skipped_ext:
+        print('⚠️  %d 张有同名 JSON 但不是 .jpg，未参与划分（scan_pairs 只认 .jpg）：'
+              '%s%s' % (len(skipped_ext), ', '.join(skipped_ext[:5]),
+                        ' …' if len(skipped_ext) > 5 else ''))
     return sorted(names)
 
 
@@ -63,10 +110,26 @@ def assign_groups(pairs, delim, seed, ratios=(0.6, 0.2, 0.2)):
     for b in pairs:
         groups.setdefault(_group_of(b, delim), []).append(b)
     n = len(groups)
+    if n:
+        share = max(len(v) for v in groups.values()) / float(len(pairs))
+        print('分组形态: %d 张 → %d 组，最大组占 %.0f%%（分隔符 %r）'
+              % (len(pairs), n, 100 * share, delim))
+        if share > 0.6:
+            print('⚠️  单组占比 >60% 以上。分组键切的是文件名首段，'
+                  '如果所有文件名同一个前缀（IMG_0001 之类），整批会塌成一组。')
     if n < 3:
+        biggest = max(groups.values(), key=len) if groups else []
         raise SystemExit(
-            '拒绝: 分组模式至少需要 3 个组（train/val/test 各≥1），实得 %d 组。'
-            '请补采集批次，或显式 --no-group 走逐图模式（邻帧跨集合风险 H1.3 自负）。' % n)
+            '拒绝: 分组模式至少需要 3 个组（train/val/test 各≥1），实得 %d 组'
+            '（%d 张图 → %d 组，最大组 %d 张，分隔符 %r）。\n'
+            '  先分清是哪种情况：\n'
+            '  ① 文件名没带批次前缀（如 IMG_0001.jpg → 每张切出来都是 %s）：'
+            '这是命名问题，不是数据不够。改命名为 {批次}_{日期}_{序号}.jpg '
+            '再划，一组＝一段连续拍摄/一块田/一天。\n'
+            '  ② 真的只采了 %d 个批次：补采集，或显式 --no-group 走逐图模式'
+            '（邻帧跨集合风险 H1.3 自负，且正式评价不得用这一档）。'
+            % (n, len(pairs), n, len(biggest), delim,
+               (biggest[0].split(delim)[0] if biggest and delim else 'IMG'), n))
     keys = sorted(groups)
     random.seed(seed)
     random.shuffle(keys)

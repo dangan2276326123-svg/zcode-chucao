@@ -20,6 +20,14 @@ import sys
 import cv2
 import numpy as np
 
+# Windows console here is cp936, which cannot encode the emoji used in the
+# messages below.  A UnicodeEncodeError halfway through a 350-image batch is
+# far worse than one dropped glyph, so replace unencodable characters instead
+# of crashing.  (Observed live 2026-09-21 on tools/split_dataset.py.)
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(errors='replace')
+    sys.stderr.reconfigure(errors='replace')
+
 # Frozen label dictionary. Add synonyms HERE, never inline elsewhere.
 PEONY_LABELS = {'peony', 'shaoyao', '芍药', 'shao_yao'}
 BACKGROUND_LABELS = {'background', 'bg', '背景'}

@@ -47,6 +47,14 @@ except ImportError as e:
 sys.path.insert(0, WORKSPACE)
 from network.modeling import deeplabv3plus_mobilenet  # noqa: E402
 
+# Windows console here is cp936, which cannot encode the emoji used in the
+# messages below.  A UnicodeEncodeError halfway through a 350-image batch is
+# far worse than one dropped glyph, so replace unencodable characters instead
+# of crashing.  (Observed live 2026-09-21 on tools/split_dataset.py.)
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(errors='replace')
+    sys.stderr.reconfigure(errors='replace')
+
 NUM_CLASSES = 2
 MODEL_W, MODEL_H = 960, 720
 MIN_AREA_PX = 400
@@ -147,6 +155,17 @@ def main():
         raise SystemExit('权重不存在: %s' % a.weights)
 
     exts = ('.jpg', '.jpeg', '.png', '.bmp')
+    subdirs = [d for d in sorted(os.listdir(a.input))
+               if os.path.isdir(os.path.join(a.input, d)) and any(
+                   f.lower().endswith(exts)
+                   for f in os.listdir(os.path.join(a.input, d)))]
+    if subdirs:
+        # 只扫一层是刻意的：递归下去会把"同一段连续拍摄"摊平，
+        # 而 split_dataset 的分组键来自文件名，摊平之后就再也分不开了。
+        raise SystemExit('拒绝: 输入目录下还有含图片的子目录（%s…）。'
+                         '一次只处理一个批次目录，把 --input 指到那一层；'
+                         '若要合并，请先确认合并后的文件名前缀仍能区分组。'
+                         % ', '.join(subdirs[:4]))
     imgs = sorted(f for f in os.listdir(a.input) if f.lower().endswith(exts))
     _assert_no_stem_collision(imgs)          # 先查冲突，再花时间加载模型
     if a.limit:

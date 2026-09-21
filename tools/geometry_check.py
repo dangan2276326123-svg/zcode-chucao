@@ -21,6 +21,16 @@
 """
 import argparse
 
+import sys
+
+# Windows console here is cp936, which cannot encode the emoji used in the
+# messages below.  A UnicodeEncodeError halfway through a 350-image batch is
+# far worse than one dropped glyph, so replace unencodable characters instead
+# of crashing.  (Observed live 2026-09-21 on tools/split_dataset.py.)
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(errors='replace')
+    sys.stderr.reconfigure(errors='replace')
+
 # 文档口径（不是实测）：仅用于"跑一遍看矛盾在哪"，不作为结论
 DOC_ROW_PITCH = 35.0         # Hw-19 现场确认 30~40 cm，取中值
 DOC_BODY_WIDTH = 215.0       # 台账 Hw-20：样机（真实车）外廓宽
