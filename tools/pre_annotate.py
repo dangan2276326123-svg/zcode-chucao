@@ -114,6 +114,17 @@ def default_weights():
     return cand[0]
 
 
+def _assert_no_stem_collision(imgs):
+    """同名不同扩展（a.jpg 与 a.png）会写进同一个 a.json —— 静默互相覆盖。"""
+    seen = {}
+    for n in imgs:
+        seen.setdefault(os.path.splitext(n)[0], []).append(n)
+    clash = {k: v for k, v in seen.items() if len(v) > 1}
+    if clash:
+        raise SystemExit('拒绝: 存在同名不同扩展的输入，会写坏同一个 JSON：%s'
+                         % '; '.join('%s -> %s.json' % (v, k) for k, v in clash.items()))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--input', default=os.path.join(WORKSPACE, 'data', 'autumn_data', 'raw'),
@@ -124,6 +135,8 @@ def main():
     ap.add_argument('--fg-low', type=float, default=0.05)
     ap.add_argument('--fg-high', type=float, default=0.60)
     ap.add_argument('--limit', type=int, default=0, help='只处理前 N 张（0=全部），先小批试跑用')
+    ap.add_argument('--overwrite', action='store_true',
+                    help='允许覆盖已存在的 JSON（默认不覆盖——那里面可能有人工修正）')
     ap.add_argument('--allow-outside', action='store_true', help='允许输出到工作区之外')
     a = ap.parse_args()
 
@@ -132,6 +145,17 @@ def main():
         raise SystemExit('输入目录不存在: %s' % a.input)
     if not os.path.isfile(a.weights):
         raise SystemExit('权重不存在: %s' % a.weights)
+
+    exts = ('.jpg', '.jpeg', '.png', '.bmp')
+    imgs = sorted(f for f in os.listdir(a.input) if f.lower().endswith(exts))
+    _assert_no_stem_collision(imgs)          # 先查冲突，再花时间加载模型
+    if a.limit:
+        imgs = imgs[:a.limit]
+    if not imgs:
+        raise SystemExit('输入目录里没有可处理的图片，未写任何输出')
+    if any(not f.lower().endswith('.jpg') for f in imgs):
+        print('⚠️  含非 .jpg 图片：`tools/split_dataset.py` 目前只按 .jpg 配对，'
+              '这些图不会被划进训练集。要么统一转 .jpg，要么改 scan_pairs()。')
 
     lm = os.path.join(out, 'labelme')
     ck = os.path.join(out, 'check')
@@ -144,16 +168,17 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = load_model(a.weights).to(device)
 
-    exts = ('.jpg', '.jpeg', '.png', '.bmp')
-    imgs = sorted(f for f in os.listdir(a.input) if f.lower().endswith(exts))
-    if a.limit:
-        imgs = imgs[:a.limit]
     print('共 %d 张图片，设备 %s' % (len(imgs), device))
-    if not imgs:
-        raise SystemExit('输入目录里没有可处理的图片，未写任何输出')
 
     review = []
+    skipped = []
     for i, name in enumerate(imgs, 1):
+        dst_json = os.path.join(lm, os.path.splitext(name)[0] + '.json')
+        if os.path.exists(dst_json) and not a.overwrite:
+            # README 的流程是"先预标注、再 labelme 人工修正"。重跑同一目录时
+            # 若无条件 'w' 重建 JSON，人工成果会被模型输出静默替换（09-21 复审 P1）。
+            skipped.append(name)
+            continue
         raw = np.fromfile(os.path.join(a.input, name), dtype=np.uint8)
         bgr = cv2.imdecode(raw, cv2.IMREAD_COLOR)
         if bgr is None:
@@ -173,7 +198,7 @@ def main():
             j['shapes'].append({'label': a.label, 'points': poly, 'group_id': None,
                                 'description': '', 'shape_type': 'polygon', 'flags': {}})
         stem = os.path.splitext(name)[0]
-        with open(os.path.join(lm, stem + '.json'), 'w', encoding='utf-8') as f:
+        with open(dst_json, 'w', encoding='utf-8') as f:
             json.dump(j, f, ensure_ascii=False, indent=1)
         ext = os.path.splitext(name)[1]
         cv2.imencode(ext, bgr)[1].tofile(os.path.join(lm, name))
@@ -190,7 +215,10 @@ def main():
 
     with open(os.path.join(out, '重点检查清单.txt'), 'w', encoding='utf-8') as f:
         f.write('\n'.join(review) if review else '无异常，全部预标注正常。')
-    print('完成，输出在 %s；重点检查 %d 张' % (out, len(review)))
+    print('完成，输出在 %s；重点检查 %d 张；**跳过 %d 张（已有 JSON，未覆盖人工成果；'
+          '确需重做加 --overwrite）**' % (out, len(review), len(skipped)))
+    if skipped:
+        print('  跳过示例：' + ', '.join(skipped[:5]) + (' …' if len(skipped) > 5 else ''))
 
 
 if __name__ == '__main__':

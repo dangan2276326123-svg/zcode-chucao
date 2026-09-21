@@ -98,6 +98,30 @@ def test_rejects_degenerate_homography(tmp_path):
         load_ipm_params(_make_good(tmp_path, H_img2ground=bad.tolist()), 'REAL')
 
 
+def test_rejects_the_three_unsound_numeric_inputs(tmp_path):
+    """复审 §4.2 的三个探针：NaN 前视距离、负重投影误差、h22≠0 但不可逆的 H。
+
+    旧实现三条都放行（或用原始 LinAlgError 崩掉），现在统一走 IpmRejected。
+    """
+    nan_far = _make_good(tmp_path)
+    d = json.load(open(nan_far, encoding='utf-8'))
+    d['lookahead']['far_m'] = float('nan')
+    json.dump(d, open(nan_far, 'w', encoding='utf-8'))
+    with pytest.raises(IpmRejected) as e:
+        load_ipm_params(nan_far, 'REAL')
+    assert 'lookahead' in str(e.value)
+
+    with pytest.raises(IpmRejected) as e:
+        load_ipm_params(_make_good(tmp_path, reproj_mean_m=-0.2), 'REAL')
+    assert '非负' in str(e.value)
+
+    # h22 = 1 但第二行为零：只看 h22 的旧校验会放过它
+    d = np.eye(3); d[1, 1] = 0.0
+    with pytest.raises(IpmRejected) as e:
+        load_ipm_params(_make_good(tmp_path, H_img2ground=d.tolist()), 'REAL')
+    assert '退化' in str(e.value)
+
+
 def test_px_ground_roundtrip_is_consistent(tmp_path):
     """像素→米→像素必须回到原点；且 M_img2bev 等于"先解到米再仿射到 BEV"。"""
     c = load_ipm_params(_make_good(tmp_path), 'REAL')
@@ -109,3 +133,36 @@ def test_px_ground_roundtrip_is_consistent(tmp_path):
     step = (step[:2] / step[2]).T
     composed = cv2.perspectiveTransform(px.reshape(-1, 1, 2), c.M_img2bev).reshape(-1, 2)
     assert np.allclose(composed, step, atol=1e-6)
+
+
+def test_calibrator_output_loads_in_loader(tmp_path):
+    """复审 2026-09-21 §4.1：生产者写出的文件必须能被消费者加载。
+
+    之前的症状是"新加载器拒绝现有标定器生成的文件"，缺五项来源字段。
+    这里跑**真实的 solve()**，把产物原样交给真实的 load_ipm_params()。
+    点对由一个已知真值单应反投影得到，所以重投影误差≈0 —— 否则加载器
+    会因为误差超限而拒（那是正确行为，但不是本条要测的东西）。
+    """
+    from pc.calib_ipm import solve
+    img = (np.random.default_rng(3).random((720, 960, 3)) * 255).astype(np.uint8)
+    src = str(tmp_path / 'field.jpg')
+    cv2.imwrite(src, img)
+
+    anchor_px = np.float32([[480, 700], [100, 700], [860, 700], [480, 300]])
+    anchor_gm = np.float32([[0.0, 0.5], [-0.4, 0.5], [0.4, 0.5], [0.0, 2.0]])
+    H_true = cv2.getPerspectiveTransform(anchor_px, anchor_gm)
+    gm = np.float32([[0.0, 0.5], [-0.4, 0.5], [0.4, 0.5], [0.0, 2.0],
+                     [-0.5, 1.2], [0.5, 1.2], [-0.8, 2.5], [0.8, 2.5]])
+    px = cv2.perspectiveTransform(gm.reshape(-1, 1, 2), np.linalg.inv(H_true))
+    px = np.round(px.reshape(-1, 2), 2).tolist()
+    assert all(0 <= x < 960 and 0 <= y < 720 for x, y in px), px
+
+    jp = tmp_path / 'pts.json'
+    json.dump({'points_px': px, 'points_m': gm.tolist()},
+              open(str(jp), 'w', encoding='utf-8'))
+    solve(src, str(jp), str(tmp_path / 'o'), vehicle_profile='REAL')
+    c = load_ipm_params(str(tmp_path / 'o' / 'ipm_params.json'), 'REAL')
+    assert c.provenance['n_points'] == 8
+    assert c.provenance['points_source'] == 'field'
+    assert c.provenance['pixel_space']['width'] == 960     # 坐标系声明随产物一起走
+

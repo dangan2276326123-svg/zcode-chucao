@@ -103,7 +103,9 @@ def load_ipm_params(path, vehicle_profile, model_wh=(960, 720),
     if int(d['n_points']) < MIN_POINTS:
         raise IpmRejected('标定点只有 %s 个，<%d 无法解单应' % (d['n_points'], MIN_POINTS))
     reproj = float(d['reproj_mean_m'])
-    if not np.isfinite(reproj) or reproj > max_reproj_m:
+    if not np.isfinite(reproj) or reproj < 0.0:
+        raise IpmRejected('重投影误差 %r m 非法（必须是非负有限值）' % d['reproj_mean_m'])
+    if reproj > max_reproj_m:
         raise IpmRejected('重投影误差 %.4f m 超过上限 %.4f m' % (reproj, max_reproj_m))
 
     src = d['source_image']
@@ -117,8 +119,9 @@ def load_ipm_params(path, vehicle_profile, model_wh=(960, 720),
     H = np.array(d['H_img2ground'], dtype=np.float64)
     if H.shape != (3, 3) or not np.isfinite(H).all():
         raise IpmRejected('H_img2ground 必须是 3x3 有限矩阵')
-    if abs(H[2, 2]) < 1e-12:
-        raise IpmRejected('H 的 h22 近零，投影退化')
+    # 退化判定用秩，不能只看 h22：diag(1,0,1) 的 h22=1 但矩阵不可逆（复审 §4.2）
+    if np.linalg.matrix_rank(H) < 3 or abs(np.linalg.det(H)) < 1e-18:
+        raise IpmRejected('H 退化（秩<3 或行列式≈0），无法求逆')
     scale = float(d['scale_px_per_m'])
     if not np.isfinite(scale) or scale <= 0:
         raise IpmRejected('scale_px_per_m 必须为正')
@@ -126,6 +129,14 @@ def load_ipm_params(path, vehicle_profile, model_wh=(960, 720),
     la = d['lookahead']
     if 'far_m' not in la or 'near_m' not in la:
         raise IpmRejected('lookahead 缺 far_m/near_m')
+    far_m, near_m = float(la['far_m']), float(la['near_m'])
+    if not (np.isfinite(far_m) and np.isfinite(near_m)) or not (0 < near_m < far_m <= 10.0):
+        raise IpmRejected('lookahead 需满足 0<near<far≤10 m 且有限，实得 near=%r far=%r'
+                          % (la['near_m'], la['far_m']))
+    # 前视距离必须落在 BEV 画布内，否则"矩阵正确但采样区在图外"
+    if far_m * float(d['scale_px_per_m']) > max(model_wh) * 1.5:
+        raise IpmRejected('far_m=%s 在 scale=%s px/m 下超出 BEV 画布，采样区不可用'
+                          % (far_m, d['scale_px_per_m']))
     prov = dict(d)
     prov['image_std'] = std
-    return IpmCalib(H, scale, model_wh, float(la['far_m']), float(la['near_m']), prov)
+    return IpmCalib(H, scale, model_wh, far_m, near_m, prov)

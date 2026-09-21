@@ -10,10 +10,12 @@ Workflow:
   3. Click the markers in order, typing their (x,y) meters when prompted:
      python pc/calib_ipm.py pick results/ipm_calib/frame.jpg
      -> writes results/ipm_calib/ipm_points.json
-  4. Solve and verify:
-     python pc/calib_ipm.py solve results/ipm_calib/frame.jpg
-     -> prints reprojection error (target <= 2 cm), writes ipm_params.json
-        and updates pc/perception.py constants suggestion.
+  4. Solve and verify — **必须点名是哪台车**：
+     python pc/calib_ipm.py solve results/ipm_calib/frame.jpg          results/ipm_calib/ipm_points.json results/ipm_calib REAL
+     -> refuses a near-blank frame; prints reprojection error (target <= 2 cm);
+        writes ipm_params.json carrying source_image / points_source /
+        vehicle_profile / calib_date / n_points / pixel_space so that
+        pc/ipm_io.py can load it. 标定属于车，不属于算法。
 
 Math: image point p_h = H_ground -> bird's-eye is split into
   (u,v) = homography(image -> ground-plane metric) solved by DLT from the
@@ -23,6 +25,7 @@ Math: image point p_h = H_ground -> bird's-eye is split into
 import json
 import os
 import sys
+import time
 
 import cv2
 import numpy as np
@@ -90,7 +93,23 @@ def pick(img_path, out_json):
     cv2.destroyAllWindows()
 
 
-def solve(img_path, json_path, out_dir):
+def solve(img_path, json_path, out_dir, vehicle_profile='UNKNOWN', undistorted=True):
+    """解单应并写出**带来源**的标定文件。
+
+    `vehicle_profile` 必须显式给（PREV / REAL）：标定属于车，不属于算法。
+    没给就写 UNKNOWN，加载器会拒——这是故意的，逼着人在标定时说清是哪台车。
+    """
+    if vehicle_profile == 'UNKNOWN':
+        print('⚠️  未指定 --profile（PREV/REAL），产物将标 UNKNOWN，加载器会拒绝使用它。')
+    img = cv2.imread(img_path)
+    if img is None:
+        raise SystemExit('标定源图读不了：%s' % img_path)
+    gray_std = float(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).std())
+    if gray_std < 5.0:
+        # 09-21 的教训：results/smoke_ipm 那份"标定"就是从近乎全黑的帧上解出来的，
+        # reproj 0.00588 好看，但它跟相机、车、地面无涉。生产者这一侧直接拦住。
+        raise SystemExit('拒绝: 源图近乎纯色/全黑（像素标准差 %.2f < 5），'
+                         '不可能是真实地面标定图' % gray_std)
     data = json.load(open(json_path, encoding='utf-8'))
     px = np.float32(data['points_px'])
     m = np.float32(data['points_m'])
@@ -116,6 +135,17 @@ def solve(img_path, json_path, out_dir):
         'scale_px_per_m': scale,
         'reproj_mean_m': float(err.mean()),
         'lookahead': {'far_m': far_d, 'near_m': near_d},
+        # —— 来源字段：`pc/ipm_io.py` 的加载器要求这几项，缺一项就拒绝加载。
+        # 生产者不写、消费者不认，等于没有标定（09-21 复审 §4.1 抓到的断链）。
+        'source_image': os.path.abspath(img_path),
+        'points_source': 'field',          # pick() 是人眼看着真实图点的
+        'vehicle_profile': vehicle_profile,
+        'calib_date': time.strftime('%Y-%m-%d'),
+        'n_points': int(len(px)),
+        # 坐标系声明：H 只对**这个**像素空间成立（分辨率 + 是否已去畸变）。
+        # 换分辨率或换去畸变流程，这张 H 就不能用 —— 矩阵尺寸对也不代表能用。
+        'pixel_space': {'width': int(img.shape[1]), 'height': int(img.shape[0]),
+                        'undistorted': bool(undistorted)},
         'note': 'replace IPM_SRC/IPM_DST/Scales in pc/perception.py with this H '
                 '(warp image with Hinv to render BEV, or sample line via H)'
     }
@@ -158,8 +188,10 @@ if __name__ == '__main__':
         pick(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else
              'results/ipm_calib/ipm_points.json')
     elif cmd == 'solve':
+        # 用法: solve <frame.jpg> [points.json] [out_dir] [PREV|REAL]
         solve(sys.argv[2],
               sys.argv[3] if len(sys.argv) > 3 else 'results/ipm_calib/ipm_points.json',
-              sys.argv[4] if len(sys.argv) > 4 else 'results/ipm_calib')
+              sys.argv[4] if len(sys.argv) > 4 else 'results/ipm_calib',
+              vehicle_profile=sys.argv[5] if len(sys.argv) > 5 else 'UNKNOWN')
     else:
         print(__doc__)
