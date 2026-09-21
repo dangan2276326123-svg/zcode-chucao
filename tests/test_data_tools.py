@@ -53,7 +53,7 @@ def test_empty_source_does_not_clear_targets(tmp_path, monkeypatch):
     # force the guard to allow tmp_path (simulate a workspace-local run)
     monkeypatch.setattr(sd, 'WORKSPACE', str(tmp_path))
     with pytest.raises(SystemExit):
-        sd.split_peony_dataset(str(src), str(out), force=True)
+        sd.split_peony_dataset(str(src), str(out), force=True, grouped=False)
     assert sentinel.exists(), 'target was cleared before source validated!'
 
 
@@ -61,7 +61,7 @@ def test_dry_run_writes_nothing(tmp_path, monkeypatch):
     monkeypatch.setattr(sd, 'WORKSPACE', str(tmp_path))
     src, out = tmp_path / 'src', tmp_path / 'out'
     _make_pairs(str(src), 10)
-    sd.split_peony_dataset(str(src), str(out), dry_run=True)
+    sd.split_peony_dataset(str(src), str(out), dry_run=True, grouped=False)
     assert not os.path.exists(str(out))
 
 
@@ -69,7 +69,7 @@ def test_split_counts_and_copy(tmp_path, monkeypatch):
     monkeypatch.setattr(sd, 'WORKSPACE', str(tmp_path))
     src, out = tmp_path / 'src', tmp_path / 'out'
     _make_pairs(str(src), 10)
-    sd.split_peony_dataset(str(src), str(out), seed=1)
+    sd.split_peony_dataset(str(src), str(out), seed=1, grouped=False)
     counts = {s: len([f for f in os.listdir(os.path.join(str(out), s, 'images'))
                       if f.endswith('.jpg')])
               for s in ('train', 'val', 'test')}
@@ -135,13 +135,13 @@ def test_nonempty_target_refused_without_force(tmp_path, monkeypatch):
     src, out = tmp_path / 'src', tmp_path / 'out'
     _make_pairs(str(src), 10)
 
-    sd.split_peony_dataset(str(src), str(out), seed=1)      # first run OK
+    sd.split_peony_dataset(str(src), str(out), seed=1, grouped=False)# first run OK
     img_dir = os.path.join(str(out), 'train', 'images')
     n_after_first = len([f for f in os.listdir(img_dir) if f.endswith('.jpg')])
     assert n_after_first == 6
 
     with pytest.raises(SystemExit):                          # second run refuses
-        sd.split_peony_dataset(str(src), str(out), seed=2)
+        sd.split_peony_dataset(str(src), str(out), seed=2, grouped=False)
     # nothing changed by the refused run
     assert len([f for f in os.listdir(img_dir) if f.endswith('.jpg')]) == 6
 
@@ -150,8 +150,8 @@ def test_force_run_clears_before_write(tmp_path, monkeypatch):
     monkeypatch.setattr(sd, 'WORKSPACE', str(tmp_path))
     src, out = tmp_path / 'src', tmp_path / 'out'
     _make_pairs(str(src), 10)
-    sd.split_peony_dataset(str(src), str(out), seed=1)
-    sd.split_peony_dataset(str(src), str(out), seed=2, force=True)
+    sd.split_peony_dataset(str(src), str(out), seed=1, grouped=False)
+    sd.split_peony_dataset(str(src), str(out), seed=2, force=True, grouped=False)
     counts = {s: len([f for f in os.listdir(os.path.join(str(out), s, 'images'))
                       if f.endswith('.jpg')])
               for s in ('train', 'val', 'test')}
@@ -189,22 +189,22 @@ def test_r2_nonempty_target_refused_without_force(tmp_path, monkeypatch):
     monkeypatch.setattr(sd, 'WORKSPACE', str(tmp_path))
     src, out = tmp_path / 'src', tmp_path / 'out'
     _make_pairs(str(src), 10)
-    sd.split_peony_dataset(str(src), str(out), seed=1)      # first run OK
+    sd.split_peony_dataset(str(src), str(out), seed=1, grouped=False)# first run OK
     with pytest.raises(SystemExit):
-        sd.split_peony_dataset(str(src), str(out), seed=2)  # re-run must refuse
+        sd.split_peony_dataset(str(src), str(out), seed=2, grouped=False)# re-run must refuse
 
 
 def test_r2_force_allows_resplit(tmp_path, monkeypatch):
     monkeypatch.setattr(sd, 'WORKSPACE', str(tmp_path))
     src, out = tmp_path / 'src', tmp_path / 'out'
     _make_pairs(str(src), 10)
-    sd.split_peony_dataset(str(src), str(out), seed=1)
-    sd.split_peony_dataset(str(src), str(out), seed=2, force=True)
+    sd.split_peony_dataset(str(src), str(out), seed=1, grouped=False)
+    sd.split_peony_dataset(str(src), str(out), seed=2, force=True, grouped=False)
     counts = {s: len([f for f in os.listdir(os.path.join(str(out), s, 'images'))
                       if f.endswith('.jpg')])
               for s in ('train', 'val', 'test')}
     assert counts == {'train': 6, 'val': 2, 'test': 2}      # exact, no mixing
-    sd.split_peony_dataset(str(src), str(out), seed=2, force=True)  # no raise
+    sd.split_peony_dataset(str(src), str(out), seed=2, force=True, grouped=False)# no raise
     n = len([f for f in os.listdir(os.path.join(str(out), 'train', 'images'))
              if f.endswith('.jpg')])
     assert n == 6
@@ -215,7 +215,7 @@ def test_r2_source_output_overlap_refused(tmp_path, monkeypatch):
     src = tmp_path / 'src'
     _make_pairs(str(src), 6)
     with pytest.raises(SystemExit):
-        sd.split_peony_dataset(str(src), str(src / 'split_out'), force=True)
+        sd.split_peony_dataset(str(src), str(src / 'split_out'), force=True, grouped=False)
 
 
 # ---- H1.3 / H1.7 grouped split + frozen manifest ----------------------
@@ -263,3 +263,34 @@ def test_grouped_split_manifest_frozen(tmp_path, monkeypatch):
     assert m['grouped'] is True
     assert set(m['groups']) == {'videoA', 'videoB', 'videoC'}
     assert sum(m['counts'].values()) == 9
+
+
+# ---- E1② 分组划分的三集合非空保证（09-21 复审复现场景）----------------
+def test_three_groups_still_yields_nonempty_test_set(tmp_path, monkeypatch):
+    """旧写法 round(3*0.6)=2 + round(3*0.2)=1 -> test 组为 0，独立测试集被静默清空。"""
+    monkeypatch.setattr(sd, 'WORKSPACE', str(tmp_path))
+    src, out = tmp_path / 'raw', tmp_path / 'out'
+    _make_grouped(str(src), {'videoA': 3, 'videoB': 3, 'videoC': 3})
+    sd.split_peony_dataset(str(src), str(out), seed=1, grouped=True)
+    m = json.loads((out / 'split_manifest.json').read_text(encoding='utf-8'))
+    assert m['counts']['test'] >= 1, m['counts']
+    assert m['counts']['train'] >= 1 and m['counts']['val'] >= 1, m['counts']
+
+
+def test_assign_groups_pure_function_never_leaves_a_set_empty():
+    for n in range(3, 12):
+        pairs = ['g%d_%03d' % (g, i) for g in range(n) for i in range(2)]
+        groups, set_of = sd.assign_groups(pairs, '_', seed=7)
+        used = set(set_of.values())
+        assert used == {'train', 'val', 'test'}, (n, set_of)
+
+
+def test_fewer_than_three_groups_is_refused_not_silently_degraded(tmp_path, monkeypatch):
+    """<3 组不得静默退回逐文件随机——那等于悄悄失去独立测试前提（H1.3）。"""
+    monkeypatch.setattr(sd, 'WORKSPACE', str(tmp_path))
+    src, out = tmp_path / 'raw', tmp_path / 'out'
+    _make_grouped(str(src), {'videoA': 4, 'videoB': 4})
+    with pytest.raises(SystemExit) as e:
+        sd.split_peony_dataset(str(src), str(out), seed=1, grouped=True)
+    assert '至少需要 3 个组' in str(e.value)
+    assert not (out / 'train').exists(), '拒绝时不得写任何目标目录'

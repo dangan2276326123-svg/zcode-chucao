@@ -53,19 +53,34 @@ def _group_of(base, delim):
 
 def assign_groups(pairs, delim, seed, ratios=(0.6, 0.2, 0.2)):
     """Assign WHOLE groups (video/plot/day) to train/val/test so no group ever
-    straddles sets — the fix for H1.3 (random per-frame split leaks neighbours)."""
+    straddles sets — the fix for H1.3 (random per-frame split leaks neighbours).
+
+    E1② 修复（09-21 复审）：旧写法 n=3 时 `round(3*0.6)=2` 且 `round(3*0.2)=1`
+    → train 2 / val 1 / **test 0**，独立测试集被静默清空。现在硬性保证三集合
+    各≥1 组；组数不足 3 时**报错拒绝**，不再悄悄退回逐文件随机划分。
+    """
     groups = {}
     for b in pairs:
         groups.setdefault(_group_of(b, delim), []).append(b)
+    n = len(groups)
+    if n < 3:
+        raise SystemExit(
+            '拒绝: 分组模式至少需要 3 个组（train/val/test 各≥1），实得 %d 组。'
+            '请补采集批次，或显式 --no-group 走逐图模式（邻帧跨集合风险 H1.3 自负）。' % n)
     keys = sorted(groups)
     random.seed(seed)
     random.shuffle(keys)
-    n = len(keys)
-    n_tr = int(round(n * ratios[0]))
-    n_va = int(round(n * ratios[1]))
-    if n >= 3:
-        n_tr = max(1, n_tr)
-        n_va = max(1, n_va)
+    n_tr = max(1, int(round(n * ratios[0])))
+    n_va = max(1, int(round(n * ratios[1])))
+    for _ in range(n):                       # 把 test 挤回至少 1 组
+        if n_tr + n_va <= n - 1:
+            break
+        if n_va > 1:
+            n_va -= 1
+        elif n_tr > 1:
+            n_tr -= 1
+    if n_tr + n_va > n - 1:                  # n>=3 时理论不可达，留作硬护栏
+        raise SystemExit('拒绝: 无法在 %d 组上同时保证 train/val/test 非空' % n)
     set_of = {}
     for i, g in enumerate(keys):
         set_of[g] = 'train' if i < n_tr else ('val' if i < n_tr + n_va else 'test')
@@ -99,8 +114,7 @@ def split_peony_dataset(source_dir, out_root, seed=42, force=False, dry_run=Fals
         raise SystemExit('中止: 源目录没有有效配对，未改动任何目标目录。')
 
     if grouped:
-        groups, set_of = assign_groups(pairs, group_delim, seed)
-    if grouped and len(groups) >= 3:
+        groups, set_of = assign_groups(pairs, group_delim, seed)   # <3 组直接拒绝
         stage_items = {s: [] for s in ('train', 'val', 'test')}
         for g, s in set_of.items():
             stage_items[s].extend(groups[g])
@@ -108,10 +122,6 @@ def split_peony_dataset(source_dir, out_root, seed=42, force=False, dry_run=Fals
                     'groups': {g: set_of[g] for g in sorted(set_of)},
                     'counts': {s: len(stage_items[s]) for s in stage_items}}
     else:
-        if grouped:
-            print('⚠️  分组不足(<3, 分隔符 %r)，退回逐文件随机划分——正式训练前'
-                  '请让文件名以 视频/地块/日期 为前缀以启用分组（H1.3）。'
-                  % group_delim)
         random.seed(seed)
         random.shuffle(pairs)
         n_tr = int(len(pairs) * 0.6)
