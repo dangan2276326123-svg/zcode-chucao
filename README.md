@@ -48,6 +48,7 @@
 | `control.py` | 控制层 4 个纯 Python 类（无 torch/cv2 依赖，各带单元测试）：`MiddleToolPID` 近场横向误差 → 中间刀滑台偏移（条件积分抗饱和，输出限幅 ±50mm）；`LatencyCompensator` 链路时延估计（滚动 p50/p95）+ 误差前移补偿 err+rate·delay；`LatErrorRate` 横向误差变化率估计（有限差分 + 平滑，供上者）；`DifferentialDrive` 底盘差速：远场横向误差+航向阻尼 → 左右轮速 v∓dv（标称 0.14 m/s，限幅 ±0.2）。⚠️ 过渡态：实车有四轮转向伺服但固件在 AUTO 锁直，按纯差速走；四轮转向+差速混合重写未做（缺口清单 P0-1），电流前馈也未实现（F4） |
 | `state_machine.py` | 作业状态机（待机/作业/掉头/急停等状态切换） |
 | `status_rx.py` | MCU STATUS 接收（live 模式，UDP 9100）：坏帧捕获计数绝不裸抛（D7 约束），滚动 1 秒 ≥5 坏帧报警（多半是固件/Python 协议字段失同步）；纯逻辑类，socket 留在 main |
+| `ipm_io.py` | **IPM 外参加载器（带来源校验）**：拒绝无来源字段、`points_source != field`、源图近乎纯色/全黑、重投影超 2 cm、点数 <4、**车辆档案不匹配**的标定文件。存在的原因：仓库里那份 `results/smoke_ipm/ipm_params.json` 看着像标定，其实源图全黑（mean=0/std=0），只是求解器的冒烟测试 |
 
 ### `vehicle/` — 车端（树莓派）
 
