@@ -19,6 +19,7 @@ from common import protocol as P
 STATUS_UDP_PORT = 9100   # keep in sync with vehicle.bridge.PC_PORT
 ALARM_BAD_PER_S = 5.0
 STALE_S = 1.0            # no fresh STATUS within this -> link down / MCU hung
+RESYNC_RUN = 50          # 连续这么多帧"序号互不相同且递增"且已判 stale -> MCU 重启，重新同步
 
 
 def _seq_newer(a, b):
@@ -34,9 +35,26 @@ class StatusReceiver:
         self.good = 0
         self.bad = 0
         self.out_of_order = 0   # valid frames rejected for a stale sequence no.
+        self.resynced = 0       # reboots detected via a monotonic rejected run
         self.last_good_time = None
         self._last_seq = None
+        self._rej_run = 0       # consecutive rejected frames with increasing seq
+        self._rej_last = None   # last rejected seq, to require distinct+increasing
         self._bad_times = deque(maxlen=64)
+
+    def _note_rejection(self, seq):
+        """E1② 判据（09-21 复审修正）：只有**互不相同且单调递增**的被拒序号才累计。
+
+        旧帧被重复投递（同一 seq 来 50 次）不是重启证据，一次都不算。
+        """
+        if self._rej_last is not None and _seq_newer(seq, self._rej_last):
+            self._rej_run += 1
+        elif self._rej_last == seq:
+            pass                       # 重复旧帧：不累计也不清零
+        else:
+            self._rej_run = 1
+        self._rej_last = seq
+        return self._rej_run >= RESYNC_RUN
 
     def handle(self, raw, now=None):
         """Parse one datagram. Returns the status dict on a good, fresh STATUS
@@ -53,8 +71,17 @@ class StatusReceiver:
             return None
         # R5: never let an old sequence number overwrite fresher state.
         if self._last_seq is not None and not _seq_newer(seq, self._last_seq):
-            self.out_of_order += 1
-            return None
+            # E1① 修复：MCU 重启后序号回退，旧逻辑会一直拒到对方追平
+            # （最坏约 27 min，取决于重启前序号在 16 位环上的位置）。
+            # 重新同步**只恢复状态显示**；是否恢复 AUTO、急停是否解除由调用方
+            # 决定，这里绝不代为放行（复审 E3/R1 口径）。
+            if self._note_rejection(seq) and self.stale(now):
+                self.resynced += 1
+                self._rej_run, self._rej_last = 0, None
+            else:
+                self.out_of_order += 1     # 只统计真正被丢掉的那帧
+                return None
+        self._rej_run, self._rej_last = 0, None
         self._last_seq = seq
         self.good += 1
         self.last_good_time = now

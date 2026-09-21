@@ -134,13 +134,19 @@ void USART1_IRQHandler(void)
 		//***********帧数据处理函数************//		
 		DMA_ClearFlag(DMA2_Stream7,DMA_FLAG_TCIF7);
 		CHANGE_FLAG = 1;
-		retrofit_notify_sbus();	/* RETROFIT: SBUS heartbeat */
 		XOR=rec_sbus_data[1];
 		for(i=2;i<34;i++)
 		{
 			XOR=XOR^rec_sbus_data[i];
 		}                                                                               
-	if(rec_sbus_data[0]==0x0F&&rec_sbus_data[34]==XOR)//
+	if(UART1_Rec_Len==SBUS_DATA_LEN&&rec_sbus_data[0]==0x0F&&rec_sbus_data[34]==XOR)//
+	/* E2-3 (review 2026-09-21): require a FULL 35-byte frame before accepting it.
+	   The XOR loop reads bytes 1..33 and byte 34 regardless of how many bytes actually
+	   arrived, so a short IDLE (partial frame) decodes channels from bytes the
+	   PREVIOUS frame left in rec_sbus_data -- and because that stale tail was
+	 itself valid, header 0x0F + XOR can still pass while the channel words are
+	   a mix of two frames.  Length is part of the validity decision, same rationale
+	   as the H2.3 heartbeat gate above (ledger Hw-17). */
 		{
 		sbus_channel[0]  = (rec_sbus_data[1]<<8|rec_sbus_data[2])   ;
 		sbus_channel[1]  = (rec_sbus_data[3]<<8|rec_sbus_data[4])   ;
@@ -160,6 +166,16 @@ void USART1_IRQHandler(void)
 		sbus_channel[15] = (rec_sbus_data[31]<<8|rec_sbus_data[32])   ;
 			
 		flag_sbus=	rec_sbus_data[33];
+		/* H2.3 fix (review 2026-09-14): the heartbeat must follow frame
+	   VALIDITY, not every USART IDLE event.  A broken/floating SBUS wire
+	   still clocks bytes, so the old unconditional call in the ISR head
+	   let garbage refresh sbus_last_ms and defeated the MANUAL fail-safe.
+	   The receiver flag byte rec_sbus_data[33] is deliberately NOT used as
+	   a gate: its polarity is unverified (SBUS spec = 0 healthy, bit1
+	   failsafe, bit2 frame-lost, i.e. opposite to the legacy LOCK_FLAG
+	   line below, and LOCK_FLAG is dead code).  Gating on it could revoke
+	   all RC drive.  Bench read -> ledger Hw-17. */
+		retrofit_notify_sbus();
 		}
 		
 		if (flag_sbus >0)//电机锁上锁（默认上锁）		

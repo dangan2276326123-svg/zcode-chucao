@@ -1,0 +1,693 @@
+{
+  "$schema": "academic-paper-analysis/v1",
+  "paper": {
+    "title": "纯视觉芍药行间除草机器人 · 设计与样机验证（组会汇报 2026-09-16）",
+    "domain": "农业装备 / 机器视觉 / 机电控制",
+    "source_files": [
+      {
+        "source_id": "thesis",
+        "role": "main",
+        "path": "D:/JetBrains/chucao_prj/thesis_cau/03_chapters"
+      },
+      {
+        "source_id": "ledger",
+        "role": "evidence",
+        "path": "D:/ai work/qoder/docs/参数差异台账.md"
+      },
+      {
+        "source_id": "decision",
+        "role": "evidence",
+        "path": "D:/ai work/qoder/docs/决策依据说明.md"
+      },
+      {
+        "source_id": "firmware",
+        "role": "evidence",
+        "path": "D:/ai work/qoder/firmware/大车proj/大车/HARDWARE/retrofit/retrofit.c"
+      },
+      {
+        "source_id": "protocol",
+        "role": "evidence",
+        "path": "D:/ai work/qoder/common/protocol.py"
+      },
+      {
+        "source_id": "trainlog",
+        "role": "evidence",
+        "path": "D:/ai work/qoder/network/train_metric_log.csv"
+      },
+      {
+        "source_id": "perception",
+        "role": "evidence",
+        "path": "D:/ai work/qoder/tools/morph_process.py"
+      },
+      {
+        "source_id": "control",
+        "role": "evidence",
+        "path": "D:/ai work/qoder/pc/control.py"
+      },
+      {
+        "source_id": "navgeom",
+        "role": "evidence",
+        "path": "D:/ai work/qoder/network/nav_control.py"
+      },
+      {
+        "source_id": "board",
+        "role": "evidence",
+        "path": "D:/ai work/qoder/docs/大板实物标注.jpg"
+      },
+      {
+        "source_id": "frames",
+        "role": "evidence",
+        "path": "D:/ai work/qoder/avi_frames"
+      },
+      {
+        "source_id": "gaps",
+        "role": "evidence",
+        "path": "D:/ai work/qoder/docs/缺口清单.md"
+      },
+      {
+        "source_id": "calib",
+        "role": "evidence",
+        "path": "D:/ai work/qoder/results/smoke_ipm/ipm_params.json"
+      }
+    ]
+  },
+  "logic_tree": {
+    "research_object": "芍药大田窄行间的行间机械除草作业：底盘跨 4 行通过，一次清除 3 条草带",
+    "background": "人工行间除草 0.3~0.5 亩/(人·天)、占种植管理总成本 40% 以上；双子叶作物行内无法选择性施药",
+    "unresolved_problem": "不用 RTK 与激光雷达，仅靠单目相机能否稳定沿行并把刀具对到草带中心；而入土深度目前连反馈通路都不存在",
+    "author_strategy": "整机系统验证路线：把误差沿 感知→导航→执行→作业效果 逐级拆开，每一环配独立真值",
+    "methods": "DeepLabV3+ 分割 + 双墙导航线拟合 + 差速 PD 轨迹跟踪 + 中间刀横移执行；3 电推杆管三梁升降",
+    "key_conclusion": "设计定义与代码实现已完成并可复现编译；台架与田间证据一项都还没有，深度反馈是当前最大的硬件空白",
+    "limitations_and_inspiration": "秋季只做自主沿行预实验（刀抬起空跑），刀控与除草效果对照推到春季；所有指标为设计目标而非实测"
+  },
+  "figures": [
+    {
+      "figure_id": "f_table23",
+      "source_id": "thesis",
+      "source_page": 86,
+      "source_label": "ch02_draft.md 第86-101行 表2-3 八类除草机构机理与适用性",
+      "direct_observation": "草稿正文登记了八类除草机构的逐项机理描述与结论，鸭掌铲列为主选、弹齿列为对比保留",
+      "does_not_prove": "不含任何田间实测对比数据；两类入选是文献筛选结论，不是择优试验结果",
+      "evidence_strength": "direct"
+    },
+    {
+      "figure_id": "f_decisions",
+      "source_id": "decision",
+      "source_page": 17,
+      "source_label": "决策依据说明.md D2/D4/D6（第17-18、32-33、43-46行）；D8（第58行）已过时",
+      "direct_observation": "项目对化学、激光、机械臂拔草及六种机具做过排除决策并记录理由；D6 明写定深为被动仿形、无传感器无控制回路",
+      "does_not_prove": "D8 称实车无转向执行器，与台账 Hw-13 冲突且未标废，不能当现行结论引用",
+      "evidence_strength": "direct"
+    },
+    {
+      "figure_id": "f_actuator",
+      "source_id": "ledger",
+      "source_page": 46,
+      "source_label": "参数差异台账.md Hw-9 第46行 电推杆规格",
+      "direct_observation": "3 根电推杆 BST-YF-L，48V、行程 200mm、10mm/s、3000N，用于三行刀升降，被动进土",
+      "does_not_prove": "不含任何位置反馈能力；与 ch02:80 的 12V/100mm 冲突，按台账为准；且板上 ACS712 电流通道登记对象是行走电机回路，是否覆盖电推杆未跟线确认",
+      "evidence_strength": "direct"
+    },
+    {
+      "figure_id": "f_slide",
+      "source_id": "ledger",
+      "source_page": 50,
+      "source_label": "参数差异台账.md Hw-7/Hw-12 第44、50行；ch02:117 滑台参数",
+      "direct_observation": "中间刀滑台为 48V 直流伺服 + 300mm 直线导轨 + 8mm 导程滚珠丝杆，车上已有但未接线",
+      "does_not_prove": "未接线即无定位精度与响应实测，不能给出对行精度结论",
+      "evidence_strength": "direct"
+    },
+    {
+      "figure_id": "f_lift_bits",
+      "source_id": "firmware",
+      "source_page": 244,
+      "source_label": "retrofit.c 第12行与第244-258行 apply_outputs",
+      "direct_observation": "刀梁升降在固件层是纯二值开关，仅按 lift_bits 位写 PD4/PD5/PD6 高低电平",
+      "does_not_prove": "推不出刀梁实际位置与入土深度，也推不出提刀动作时间是否满足指标",
+      "evidence_strength": "direct"
+    },
+    {
+      "figure_id": "f_proto_tool",
+      "source_id": "protocol",
+      "source_page": 109,
+      "source_label": "common/protocol.py 第109-111行 pack_tool(offset_mm, lift)",
+      "direct_observation": "TOOL 帧只有横向偏移 mm 与升降位，协议里没有深度字段",
+      "does_not_prove": "不代表深度闭环不可实现，只代表当前接口不承载该量",
+      "evidence_strength": "direct"
+    },
+    {
+      "figure_id": "f_limits",
+      "source_id": "firmware",
+      "source_page": 275,
+      "source_label": "retrofit.c 第14行注释与第275-281行 stepper_update",
+      "direct_observation": "PD15/PD10/PD11 三个限位是滑台原点与左右方向闭锁，用途为防撞",
+      "does_not_prove": "不能用于定深；刀梁侧没有任何限位或行程测量",
+      "evidence_strength": "direct"
+    },
+    {
+      "figure_id": "f_agron",
+      "source_id": "thesis",
+      "source_page": 14,
+      "source_label": "ch02_draft.md 第14、18行；ch05:8",
+      "direct_observation": "汇报人 09-16 现场确认：行距 30~40 cm、坡地 0~15°、目标耕深 30 mm 误差 ±5 mm",
+      "does_not_prove": "与 ch02:14 登记的 30~60 cm、5~15° 冲突，按事实权威序以现场值为准，论文待改；株丛直径与杂草种名仍未实测",
+      "evidence_strength": "direct"
+    },
+    {
+      "figure_id": "f_labor",
+      "source_id": "thesis",
+      "source_page": 8,
+      "source_label": "ch01_draft.md 第8行 人工除草成本",
+      "direct_observation": "正文写人工 0.3~0.5 亩/(人·天)，除草占种植管理总成本 40% 以上",
+      "does_not_prove": "该处文献引用仍是待核占位符，不能作为定量论据对外主张",
+      "evidence_strength": "indirect"
+    },
+    {
+      "figure_id": "f_miou",
+      "source_id": "trainlog",
+      "source_page": 76,
+      "source_label": "network/train_metric_log.csv 第76行（epoch 76），共 202 行",
+      "direct_observation": "验证集逐轮指标里 mIoU 峰值 0.7459 出现在第 76 轮，dice 0.7762@78、mPA 0.8643@129、前景 IoU 0.6352@78",
+      "does_not_prove": "不证明田间导航线可用，也不证明作物边界像素误差满足对行要求；更不能由背景 IoU 高推导出可稳定导航",
+      "evidence_strength": "direct"
+    },
+    {
+      "figure_id": "f_frames",
+      "source_id": "frames",
+      "source_page": 1,
+      "source_label": "avi_frames/ 295 张 1920x1080 田间抽帧 + data/calib_params.npz",
+      "direct_observation": "存在三段田间视频的真实抽帧与相机内参（fx 790.5、fy 795.8、1920x1080）",
+      "does_not_prove": "不含农艺量测，也未做过独立标注的导航线真值评价",
+      "evidence_strength": "supplementary"
+    },
+    {
+      "figure_id": "f_board",
+      "source_id": "board",
+      "source_page": 1,
+      "source_label": "docs/大板实物标注.jpg（1080x1920，13 处编号标注）",
+      "direct_observation": "实物控制板含 XT60 48V 输入、48→24/48→12 DC-DC、STM32F407ZGT6、继电器与 T4/T5/T6 扩展座，丝印 V3.2",
+      "does_not_prove": "不反映刀架、电推杆与相机的装配关系，仓库中无整机照片记录",
+      "evidence_strength": "direct"
+    },
+    {
+      "figure_id": "f_ipm",
+      "source_id": "perception",
+      "source_page": 189,
+      "source_label": "tools/morph_process.py 第189-193行；camera_calib.py 第55-73行",
+      "direct_observation": "IPM 梯形与尺度目前是硬编码常量，单墙回退是 +200 像素粗偏移",
+      "does_not_prove": "不能声称已完成低机位重标定、参数热更新或基于标定行距的回退解算",
+      "evidence_strength": "direct"
+    },
+    {
+      "figure_id": "f_pid",
+      "source_id": "control",
+      "source_page": 27,
+      "source_label": "pc/control.py 第27行起 PID；pc/main.py 第209行调用",
+      "direct_observation": "中间刀控制是带条件积分抗饱和的位置式 PID，主入口把近场图像中心偏差直接送入，未减去刀具实际横向位置",
+      "does_not_prove": "纯函数复现（保持 20mm 图像偏差时 0.05s 输出 16.05mm、4s 20mm、34s 累积至 50mm 限幅）不证明整车会失稳",
+      "evidence_strength": "preliminary"
+    },
+    {
+      "figure_id": "f_drive",
+      "source_id": "navgeom",
+      "source_page": 134,
+      "source_label": "network/nav_control.py 第134-155行 Ackermann4WS；pc/control.py DifferentialDrive",
+      "direct_observation": "当前 AUTO 只发左右轮速并把转角清零锁直；几何类已改为前轮 Ackermann、后轮转角为 0 并有 5 条对称性测试",
+      "does_not_prove": "不能用差速 AUTO 的测试结果证明四轮转向自主控制已实现，也不能证明几何已在台架对上",
+      "evidence_strength": "preliminary"
+    },
+    {
+      "figure_id": "f_status",
+      "source_id": "gaps",
+      "source_page": 12,
+      "source_label": "缺口清单.md 顶部『总览：做完的/没做的』板；USER/build_log.txt",
+      "direct_observation": "固件已命令行重编译 0 错误、Code=44840、89 条测试通过；同时登记安全与控制权限类改动 0 项达到已台架",
+      "does_not_prove": "编译通过与测试数量都不构成台架或田间证据，两条硬禁令仍在生效中",
+      "evidence_strength": "direct"
+    },
+    {
+      "figure_id": "f_depth_doc",
+      "source_id": "thesis",
+      "source_page": 50,
+      "source_label": "ch04_draft.md 第50行 深度监测表述",
+      "direct_observation": "正文写通过限深板摆角传感器进行深度监测，但全仓库没有该传感器的任何硬件登记",
+      "does_not_prove": "该表述不能作为深度反馈已存在的证据；本次汇报不采用该说法",
+      "evidence_strength": "direct"
+    }
+  ],
+  "evidence_chains": [
+    {
+      "evidence_id": "e_labor",
+      "question": "为什么值得做芍药行间机械除草",
+      "figure_ids": [
+        "f_labor",
+        "f_agron"
+      ],
+      "interpretation": "人工基线成本高且化学途径在双子叶作物行内受限，约束来自农艺而非算力",
+      "slide_claim": "行间除草是芍药管理的劳力与成本瓶颈",
+      "caution": "成本数字的文献出处尚未核验，汇报时按背景陈述不作定量论据",
+      "evidence_strength": "indirect"
+    },
+    {
+      "evidence_id": "e_agron",
+      "question": "哪些农艺量真正约束了设计",
+      "figure_ids": [
+        "f_agron",
+        "f_frames"
+      ],
+      "interpretation": "可引用的约束只有行距、坡度与目标耕深；株丛直径、草种、作业次数都还没测过",
+      "slide_claim": "设计边界由行距 30~60 cm、坡地 5~15°、耕深 30mm±5mm 框定",
+      "caution": "三项均为设计目标值，未登记的项必须标待实测，不能补常识值",
+      "evidence_strength": "direct"
+    },
+    {
+      "evidence_id": "e_route",
+      "question": "整机用什么链路把图像变成动作",
+      "figure_ids": [
+        "f_ipm",
+        "f_drive"
+      ],
+      "interpretation": "四段链路：分割出作物墙，拟合导航线，解算横向偏差，分别交给底盘与中间刀执行",
+      "slide_claim": "技术路线是相机到刀具位移的四段链路",
+      "caution": "IPM 参数仍为硬编码，链路在真实秋季域上尚未闭环验证",
+      "evidence_strength": "preliminary"
+    },
+    {
+      "evidence_id": "e_arch",
+      "question": "整机怎样构成",
+      "figure_ids": [
+        "f_actuator",
+        "f_slide",
+        "f_board"
+      ],
+      "interpretation": "底盘跨 4 行一次清 3 带；3 把刀中左右 2 把侧刀固定在刀梁、中间 1 把装滑台可横移；3 根电推杆分别管三梁升降",
+      "slide_claim": "跨 4 行作业、3 条草带、2 侧刀加 1 中间刀，纯视觉无 RTK",
+      "caution": "整机装配照片缺失，本节结构关系以现场展示为准",
+      "evidence_strength": "direct"
+    },
+    {
+      "evidence_id": "e_twolevel",
+      "question": "为什么把纠偏拆成底盘与刀具两级",
+      "figure_ids": [
+        "f_slide",
+        "f_pid"
+      ],
+      "interpretation": "底盘惯量大响应慢，靠它做厘米级细对行不经济；小惯量的中间刀横移负责细对行",
+      "slide_claim": "底盘粗纠偏加刀具细对行比只纠底盘更可行",
+      "caution": "滑台未接线，刀具一级的实际带宽与精度尚无实测",
+      "evidence_strength": "proposed"
+    },
+    {
+      "evidence_id": "e_screen",
+      "question": "按什么尺子筛除草机构",
+      "figure_ids": [
+        "f_table23",
+        "f_decisions"
+      ],
+      "interpretation": "先用六个维度建立评价口径，再对八类机构逐条判定，其中 6 类被排除且各有理由",
+      "slide_claim": "八个候选机构经文献筛选后只剩两类合用",
+      "caution": "商品机型与中文核心期刊机具文献缺失，筛选覆盖面有限，需说明为针对性检索",
+      "evidence_strength": "direct"
+    },
+    {
+      "evidence_id": "e_pick",
+      "question": "最终进田间对比的是哪两把刀",
+      "figure_ids": [
+        "f_table23",
+        "f_actuator"
+      ],
+      "interpretation": "鸭掌铲为主选（铲刃切削、切根干净），弹齿作对比（峰值阻力低但切根深度一致性差，登记 250mm 五齿）",
+      "slide_claim": "入选两类：鸭掌铲主选、弹齿作对比",
+      "caution": "鸭掌铲幅宽尚未登记，与弹齿 250mm 对比条件不对等，须先补齐",
+      "evidence_strength": "direct"
+    },
+    {
+      "evidence_id": "e_seg",
+      "question": "分割为什么选这个模型，训练到什么程度",
+      "figure_ids": [
+        "f_miou"
+      ],
+      "interpretation": "端侧算力和实时性要求下选 DeepLabV3+ 配 MobileNetV2，任务只分前景与背景；202 轮训练峰值 mIoU 0.7459 在第 76 轮",
+      "slide_claim": "分割选 DeepLabV3+，验证集峰值 mIoU 0.7459@76 轮",
+      "caution": "该值是夏季域验证集结果，秋季域指标尚未产出；最终 checkpoint 与划分需冻结",
+      "evidence_strength": "direct"
+    },
+    {
+      "evidence_id": "e_seg_limit",
+      "question": "分割指标能支撑到哪一步",
+      "figure_ids": [
+        "f_miou",
+        "f_ipm"
+      ],
+      "interpretation": "背景 IoU 高只说明大片裸土分对，对刀具起作用的是近作物边界那几十像素",
+      "slide_claim": "分割分数不等于能导航，评价要分三层",
+      "caution": "导航线横向误差与失效分层的真值还未标，三层里只有第一层有数",
+      "evidence_strength": "direct"
+    },
+    {
+      "evidence_id": "e_navline",
+      "question": "导航线怎么提，三条线为什么不是一回事",
+      "figure_ids": [
+        "f_ipm",
+        "f_frames"
+      ],
+      "interpretation": "去畸变后 IPM 投影，双墙拟合出远场与近场中心线再解算横向偏差；作物行中心、通道中心、作业带中心可能因保护带与刀宽而不重合",
+      "slide_claim": "行墙提取分远近距离，三个目标线概念必须分开",
+      "caution": "单墙回退仍是粗偏移，低机位标定未做，秋季帧上的有效性未测",
+      "evidence_strength": "preliminary"
+    },
+    {
+      "evidence_id": "e_track",
+      "question": "轨迹跟踪为什么用现在的控制律",
+      "figure_ids": [
+        "f_drive"
+      ],
+      "interpretation": "当前 AUTO 只发左右轮速并对转向锁直，跟踪律取 PD(e, ė)，时延补偿按 ėτ 而不是前移量 vτ",
+      "slide_claim": "轨迹跟踪用 PD 加横向速率阻尼，时延补偿按 e+ėτ",
+      "caution": "未台架验证；阿克曼几何是实现细节不作创新点，不得称已实现四轮转向自主控制",
+      "evidence_strength": "preliminary"
+    },
+    {
+      "evidence_id": "e_toolctrl",
+      "question": "中间刀控制真正的问题在哪",
+      "figure_ids": [
+        "f_pid",
+        "f_proto_tool"
+      ],
+      "interpretation": "相机固连车体，滑台移动不改变图像偏差，所以真闭环误差必须是目标刀位减刀位实测 q，否则积分对象不是误差",
+      "slide_claim": "中间刀控制的关键不在参数而在误差定义",
+      "caution": "复现是纯函数结果，不证明整车行为；刀位反馈通路目前不存在",
+      "evidence_strength": "preliminary"
+    },
+    {
+      "evidence_id": "e_lift",
+      "question": "升降与横移分别是谁在做",
+      "figure_ids": [
+        "f_actuator",
+        "f_slide",
+        "f_board"
+      ],
+      "interpretation": "两套独立机构：电推杆管三梁升降（被动进土），伺服滑台管中间刀横移；控制板只是执行通路",
+      "slide_claim": "升降管三梁、横移管中间刀，是两套执行机构",
+      "caution": "电推杆接入方式仍待继电器板实物确认，滑台未接线",
+      "evidence_strength": "direct"
+    },
+    {
+      "evidence_id": "e_depth",
+      "question": "为什么现在做不到主动抬刀",
+      "figure_ids": [
+        "f_lift_bits",
+        "f_proto_tool",
+        "f_limits",
+        "f_actuator"
+      ],
+      "interpretation": "刀梁只有通电正反转，无位置与负载反馈；撞石是瞬时冲击而 10 mm/s 抬 50 mm 需 5 秒；挂草是缓变负载，理论上可判电流但采样通道覆盖范围未确认",
+      "slide_claim": "开放问题：刀上发生了什么，机器不知道",
+      "caution": "不得写成定深精度问题，也不得声称电流硬件已覆盖推杆回路",
+      "evidence_strength": "direct"
+    },
+    {
+      "evidence_id": "e_depthfix",
+      "question": "主动抬刀怎么解",
+      "figure_ids": [
+        "f_decisions",
+        "f_actuator",
+        "f_limits"
+      ],
+      "interpretation": "分两层：撞石用机械卸载（剪切销或弹簧避障，不依赖传感器），挂草用电机电流趋势（阈值须台架标定）；两者都仍受抬刀速度本身限制",
+      "slide_claim": "先机械保机，再电流辨草",
+      "caution": "机械卸载结构未设计；电流判据在未标定前不得称可用",
+      "evidence_strength": "proposed"
+    }
+  ],
+  "navigation": [
+    {
+      "label": "立题与约束",
+      "purpose": "说明问题从农艺约束来，不是从算力来"
+    },
+    {
+      "label": "除草机构选型",
+      "purpose": "给出评价维度、八类筛选与两类入选的推导链"
+    },
+    {
+      "label": "设计与控制原理",
+      "purpose": "整机组成与四个算法环节的选择理由"
+    },
+    {
+      "label": "进土深度问题",
+      "purpose": "把无反馈这一空白作为开放问题抛出并给候选解法"
+    },
+    {
+      "label": "小结与讨论",
+      "purpose": "收尾并列出请组会决定的问题"
+    }
+  ],
+  "slides": [
+    {
+      "slide_no": 1,
+      "slide_id": "s01",
+      "section": "立题与约束",
+      "page_role": "cover",
+      "mainline_or_backup": "mainline",
+      "title": "纯视觉芍药行间除草机器人",
+      "evidence_ids": [],
+      "figure_ids": []
+    },
+    {
+      "slide_no": 2,
+      "slide_id": "s02",
+      "section": "立题与约束",
+      "page_role": "background",
+      "mainline_or_backup": "mainline",
+      "title": "行间除草是芍药管理的劳力与成本瓶颈",
+      "evidence_ids": [
+        "e_labor"
+      ],
+      "figure_ids": [
+        "f_labor",
+        "f_agron"
+      ]
+    },
+    {
+      "slide_no": 3,
+      "slide_id": "s03",
+      "section": "立题与约束",
+      "page_role": "constraint",
+      "mainline_or_backup": "mainline",
+      "title": "农艺约束框定了样机的设计边界",
+      "evidence_ids": [
+        "e_agron"
+      ],
+      "figure_ids": [
+        "f_agron",
+        "f_frames"
+      ]
+    },
+    {
+      "slide_no": 4,
+      "slide_id": "s04",
+      "section": "除草机构选型",
+      "page_role": "method",
+      "mainline_or_backup": "mainline",
+      "title": "八类除草机构逐个筛，六类被排除",
+      "evidence_ids": [
+        "e_screen"
+      ],
+      "figure_ids": [
+        "f_table23",
+        "f_decisions"
+      ]
+    },
+    {
+      "slide_no": 5,
+      "slide_id": "s05",
+      "section": "除草机构选型",
+      "page_role": "result",
+      "mainline_or_backup": "mainline",
+      "title": "入选两类：鸭掌铲主选，弹齿作对比",
+      "evidence_ids": [
+        "e_pick"
+      ],
+      "figure_ids": [
+        "f_table23",
+        "f_actuator"
+      ]
+    },
+    {
+      "slide_no": 6,
+      "slide_id": "s06",
+      "section": "设计与控制原理",
+      "page_role": "design_strategy",
+      "mainline_or_backup": "mainline",
+      "title": "技术路线：单一相机到刀具位移的四段链路",
+      "evidence_ids": [
+        "e_route"
+      ],
+      "figure_ids": [
+        "f_ipm",
+        "f_drive"
+      ]
+    },
+    {
+      "slide_no": 7,
+      "slide_id": "s07",
+      "section": "设计与控制原理",
+      "page_role": "system_overview",
+      "mainline_or_backup": "mainline",
+      "title": "跨 4 行作业，3 条草带由 2 侧刀加 1 中间刀清除",
+      "evidence_ids": [
+        "e_arch"
+      ],
+      "figure_ids": [
+        "f_actuator",
+        "f_slide",
+        "f_board"
+      ]
+    },
+    {
+      "slide_no": 8,
+      "slide_id": "s08",
+      "section": "设计与控制原理",
+      "page_role": "design_strategy",
+      "mainline_or_backup": "mainline",
+      "title": "底盘粗纠偏加刀具细对行，比只纠底盘更可行",
+      "evidence_ids": [
+        "e_twolevel"
+      ],
+      "figure_ids": [
+        "f_slide",
+        "f_pid"
+      ]
+    },
+    {
+      "slide_no": 9,
+      "slide_id": "s09",
+      "section": "设计与控制原理",
+      "page_role": "method",
+      "mainline_or_backup": "mainline",
+      "title": "分割选 DeepLabV3+",
+      "evidence_ids": [
+        "e_seg"
+      ],
+      "figure_ids": [
+        "f_miou"
+      ]
+    },
+    {
+      "slide_no": 10,
+      "slide_id": "s10",
+      "section": "设计与控制原理",
+      "page_role": "limitation",
+      "mainline_or_backup": "mainline",
+      "title": "分割分数不等于能导航，评价要分三层",
+      "evidence_ids": [
+        "e_seg_limit"
+      ],
+      "figure_ids": [
+        "f_miou",
+        "f_ipm"
+      ]
+    },
+    {
+      "slide_no": 11,
+      "slide_id": "s11",
+      "section": "设计与控制原理",
+      "page_role": "method",
+      "mainline_or_backup": "mainline",
+      "title": "行墙提取分远近两场，三条目标线要分开",
+      "evidence_ids": [
+        "e_navline"
+      ],
+      "figure_ids": [
+        "f_ipm",
+        "f_frames"
+      ]
+    },
+    {
+      "slide_no": 12,
+      "slide_id": "s12",
+      "section": "设计与控制原理",
+      "page_role": "method",
+      "mainline_or_backup": "mainline",
+      "title": "轨迹跟踪用 PD 加横向速率阻尼",
+      "evidence_ids": [
+        "e_track"
+      ],
+      "figure_ids": [
+        "f_drive"
+      ]
+    },
+    {
+      "slide_no": 13,
+      "slide_id": "s13",
+      "section": "设计与控制原理",
+      "page_role": "method",
+      "mainline_or_backup": "mainline",
+      "title": "中间刀还不能叫闭环：刀到位了，相机看不出来",
+      "evidence_ids": [
+        "e_toolctrl"
+      ],
+      "figure_ids": [
+        "f_pid",
+        "f_proto_tool"
+      ]
+    },
+    {
+      "slide_no": 14,
+      "slide_id": "s14",
+      "section": "设计与控制原理",
+      "page_role": "design_strategy",
+      "mainline_or_backup": "mainline",
+      "title": "升降管三梁、横移管中间刀，两套机构",
+      "evidence_ids": [
+        "e_lift"
+      ],
+      "figure_ids": [
+        "f_actuator",
+        "f_slide",
+        "f_board"
+      ]
+    },
+    {
+      "slide_no": 15,
+      "slide_id": "s15",
+      "section": "进土深度问题",
+      "page_role": "open_problem",
+      "mainline_or_backup": "mainline",
+      "title": "开放问题：刀上发生了什么，机器不知道",
+      "evidence_ids": [
+        "e_depth"
+      ],
+      "figure_ids": [
+        "f_lift_bits",
+        "f_proto_tool",
+        "f_limits"
+      ]
+    },
+    {
+      "slide_no": 16,
+      "slide_id": "s16",
+      "section": "进土深度问题",
+      "page_role": "discussion",
+      "mainline_or_backup": "mainline",
+      "title": "分两层解：先机械保机，再电流辨草",
+      "evidence_ids": [
+        "e_depthfix"
+      ],
+      "figure_ids": [
+        "f_decisions",
+        "f_actuator"
+      ]
+    },
+    {
+      "slide_no": 17,
+      "slide_id": "s17",
+      "section": "小结与讨论",
+      "page_role": "closing",
+      "mainline_or_backup": "mainline",
+      "title": "请各位老师同学批评指正",
+      "evidence_ids": [],
+      "figure_ids": []
+    }
+  ]
+}
