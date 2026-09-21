@@ -33,6 +33,26 @@ STREAM_HOST = '192.168.127.10'  # TCP multipart MJPEG server = X5 (R3)
 STREAM_PORT = 5000
 ESTOP_LAT_LIMIT = 0.05      # m, |lateral| beyond -> estop (v0.4 §7.2)
 VISION_LOSS_S = 2.0         # s of unusable frames -> vision_loss event
+# E2-4 (review 2026-09-21): the live video read used to be a blocking
+# generator, so an open-but-silent stream parked the whole control loop in
+# recv() -- no STATUS polling, no GUI, and VISION_LOSS_S could never fire.
+# The loop now polls a bounded feed.  FRAME_MAX_AGE_S counts from the LOCAL
+# arrival of the last byte of a frame, not from anything the camera stamped
+# (this stream carries no capture timestamps), so it is a LOWER BOUND on
+# glass-to-PC latency -- keep it separate from the four B8 delay columns.
+FRAME_MAX_AGE_S = 0.5       # s: older than this, do not steer by the frame
+STREAM_POLL_S = 0.02        # s: how often the loop asks the feed for a beat
+
+
+# What perception "returns" on a beat with no fresh frame.  Its status is
+# intentionally NOT one of dual/left_only/right_only, so the existing
+# `usable` test goes False with no special-casing and the vision-loss
+# timer starts.  Re-running perception on the last buffered image would
+# make a frozen wall look like a healthy line, which is the failure this
+# branch exists to avoid.
+NO_FRAME_RESULT = {'status': 'no_frame', 'lateral_px': None,
+                   'confidence': 0.0, 'tool_offset_px': None,
+                   'nav_far': {}, 'nav_near': {}}
 
 
 class FrameSource:
@@ -44,6 +64,7 @@ class FrameSource:
         self.step = step
         self.stream_host = stream_host
         self.stream_port = stream_port
+        self.feed = None          # live only; set when _from_stream starts
         if not live:
             if os.path.isdir(source):
                 files = sorted(os.path.join(source, f) for f in os.listdir(source)
@@ -71,8 +92,24 @@ class FrameSource:
                 yield img
 
     def _from_stream(self):
-        from common.mjpeg import iter_frames
-        yield from iter_frames(self.stream_host, self.stream_port)
+        """One entry per control-loop beat; **None means no fresh frame**.
+
+        E2-4: deliberately not a pass-through of the socket.  Reading lives on
+        the StreamFeed thread, so a link that stays open but stops delivering
+        bytes yields None beats instead of freezing us here, and a frame older
+        than FRAME_MAX_AGE_S is dropped rather than steered by.  ``self.feed``
+        stays reachable so the HUD/CSV can report age and the counters.
+        """
+        from common.mjpeg import StreamFeed
+        self.feed = StreamFeed(self.stream_host, self.stream_port,
+                               recv_timeout=STREAM_POLL_S)
+        try:
+            while True:
+                frame, _age = self.feed.get(max_age_s=FRAME_MAX_AGE_S)
+                yield frame
+                time.sleep(STREAM_POLL_S)
+        finally:
+            self.feed.close()
 
     def frames(self):
         if self.live:
@@ -149,6 +186,7 @@ def main():
 
     csv_path = os.path.join(args.out, 'run_log.csv')
     last_good = None
+    last_vis = None   # last drawn overlay (E2-4)
     t_prev = time.time()
     t0_first = t_prev
     n = 0
@@ -157,18 +195,21 @@ def main():
         wr = csv.writer(fcsv)
         wr.writerow(['t', 'frame_id', 'state', 'status', 'lat_m', 'lat_comp_m',
                      'vL', 'vR', 'tool_mm', 'conf', 'latency_ms',
-                     'mcu_mode', 'batt_v', 'rx_good', 'rx_bad'])
-        for fid, frame in enumerate(FrameSource(
-                args.source, args.live, args.step,
-                args.stream_host, args.stream_port).frames()):
+                     'mcu_mode', 'batt_v', 'rx_good', 'rx_bad',
+                     'frame_age_s', 'recv_timeouts', 'link_drops'])
+        src = FrameSource(args.source, args.live, args.step,
+                          args.stream_host, args.stream_port)
+        for fid, frame in enumerate(src.frames()):
             t0 = time.time()
             dt = max(t0 - t_prev, 1e-3)
             t_prev = t0
             prev_state = sm.state   # captured BEFORE any state event (P0-4)
 
             drain_status(t0)
+            # E2-4: the feed snapshot exists on every beat, frame or not.
+            _st, _seq, _age = src.feed.snapshot() if src.feed else ({}, 0, None)
 
-            res = per.process(frame)
+            res = NO_FRAME_RESULT if frame is None else per.process(frame)
             latency = (time.time() - t0) * 1000.0
             comp.report(latency / 1000.0)
 
@@ -225,7 +266,17 @@ def main():
             t_rel = t0 - t0_first
             if not args.no_gui:
                 import cv2
-                vis = draw_overlay(res)
+                if frame is not None:
+                    last_vis = draw_overlay(res)
+                # E2-4: while the stream is silent we keep repainting the LAST
+                # overlay with a NO-FRAME banner rather than freezing the UI --
+                # the operator must still be able to press [M]/[E] on a beat
+                # with no vision.  Displaying it is not steering by it: `res`
+                # above is NO_FRAME_RESULT, so control never reads these pixels.
+                if last_vis is None:
+                    import numpy as np
+                    last_vis = np.zeros((720, 960, 3), 'uint8')
+                vis = last_vis.copy()
                 hud2 = 'STATE:%s  [A]uto [M]anual [E]stop [R]eset [Q]uit' % sm.state
                 if rx is not None:
                     st = rx.last
@@ -236,6 +287,13 @@ def main():
                         hud2 += '  bad:%d' % rx.bad
                     if rx.stale(t0):
                         hud2 += '  MCU:STALE'
+                if frame is None:
+                    hud2 += '  *** NO FRAME - vision lost ***'
+                if _age is not None:
+                    hud2 += '  age:%dms' % round(_age * 1000)
+                if _st.get('recv_timeouts') or _st.get('link_drops'):
+                    hud2 += '  silent:%d drop:%d' % (
+                        _st.get('recv_timeouts', 0), _st.get('link_drops', 0))
                 cv2.putText(vis, hud2,
                             (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
                 cv2.imshow('weeder', vis)
@@ -263,11 +321,14 @@ def main():
                          '%.1f' % latency,
                          rx.last['mode'] if rx and rx.last else '',
                          '%.2f' % rx.last['battery_v'] if rx and rx.last else '',
-                         rx.good if rx else '', rx.bad if rx else ''])
+                         rx.good if rx else '', rx.bad if rx else '',
+                         '%.3f' % _age if _age is not None else '',
+                         _st.get('recv_timeouts', ''), _st.get('link_drops', '')])
             n += 1
             if n % 20 == 0:
-                print('[%d] %s lat=%.3fm vL=%.2f vR=%.2f tool=%.1fmm %.0fms' % (
-                    fid, sm.state, lat_m, vl, vr, tool_mm, latency))
+                print('[%d] %s lat=%.3fm vL=%.2f vR=%.2f tool=%.1fmm %.0fms%s' % (
+                    fid, sm.state, lat_m, vl, vr, tool_mm, latency,
+                    '' if frame is not None else '  NO-FRAME(stream silent)'))
     print('done: %d frames -> %s' % (n, csv_path))
 
 

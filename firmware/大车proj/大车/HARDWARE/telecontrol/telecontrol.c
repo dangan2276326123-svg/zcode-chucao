@@ -139,7 +139,14 @@ void USART1_IRQHandler(void)
 		{
 			XOR=XOR^rec_sbus_data[i];
 		}                                                                               
-	if(rec_sbus_data[0]==0x0F&&rec_sbus_data[34]==XOR)//
+	if(UART1_Rec_Len==SBUS_DATA_LEN&&rec_sbus_data[0]==0x0F&&rec_sbus_data[34]==XOR)//
+	/* E2-3 (review 2026-09-21): require a FULL 35-byte frame before accepting it.
+	   The XOR loop reads bytes 1..33 and byte 34 regardless of how many bytes actually
+	   arrived, so a short IDLE (partial frame) decodes channels from bytes the
+	   PREVIOUS frame left in rec_sbus_data -- and because that stale tail was
+	 itself valid, header 0x0F + XOR can still pass while the channel words are
+	   a mix of two frames.  Length is part of the validity decision, same rationale
+	   as the H2.3 heartbeat gate above (ledger Hw-17). */
 		{
 		sbus_channel[0]  = (rec_sbus_data[1]<<8|rec_sbus_data[2])   ;
 		sbus_channel[1]  = (rec_sbus_data[3]<<8|rec_sbus_data[4])   ;

@@ -113,7 +113,7 @@
 | `calib_imgs/` | 标定棋盘格照片 `IMG_XXXX.jpg`（已 gitignore） |
 | `model_data/weights/` | 训练权重 `best_model.pth`（已 gitignore）。⚠️ 与只读仓 `chucao_prj/model_data/0.7428m/best_model.pth` **同大小不同 md5**（`32da179c…` vs `cdd22733…`），不是同一个 checkpoint，引用前必须点名 |
 | `results/smoke*` | 冒烟测试输出：标定/去畸变/推理样例图与 `run_log.csv` |
-| `tests/` | **11 个测试文件，`python -B -m pytest tests/ -q` = **120 passed（09-21 复审批次后实测）**。逐个：`test_protocol.py` 协议编解码/CRC 向量（**不含** C 对拍，那要台架 B2）；`test_control.py` 控制量与跨边界拆帧；`test_status_rx.py` STATUS 坏帧/新鲜度/MCU 重启重新同步；`test_nav_geometry.py` 前轮 Ackermann 几何（直行极限/后轮零角/共 ICC/刚体速度/镜像）；`test_mjpeg.py` TCP 流解析；`test_adaptive_walls.py` 自适应双墙；`test_perception_norm.py` 感知归一化；`test_data_tools.py` 资产安全 + 分组划分；`test_geometry_check.py` 空间口径判据（**只测事实与单位，不测物理结论**）；`test_ipm_io.py` 标定来源校验＋跑真实 solve() 的闭环；`test_pre_annotate.py` 预标注护栏（含"人工改过后重跑仍保留"） |
+| `tests/` | **11 个测试文件，`python -B -m pytest tests/ -q` = **131 passed（09-21 E2③④ 批次后实测）**。逐个：`test_protocol.py` 协议编解码/CRC 向量（**不含** C 对拍，那要台架 B2）；`test_control.py` 控制量与跨边界拆帧；`test_status_rx.py` STATUS 坏帧/新鲜度/MCU 重启重新同步；`test_nav_geometry.py` 前轮 Ackermann 几何（直行极限/后轮零角/共 ICC/刚体速度/镜像）；`test_mjpeg.py` TCP 流解析 + 有界读流 `StreamFeed`（含"connect 卡住也不拖住控制循环"）；`test_adaptive_walls.py` 自适应双墙；`test_perception_norm.py` 感知归一化；`test_data_tools.py` 资产安全 + 分组划分；`test_geometry_check.py` 空间口径判据（**只测事实与单位，不测物理结论**）；`test_ipm_io.py` 标定来源校验＋跑真实 solve() 的闭环；`test_pre_annotate.py` 预标注护栏（含"人工改过后重跑仍保留"） |
 | `docs/缺口清单.md` | **项目"欠账台账"**：顶部『📊 总览：做完的/没做的』板为进度权威，逐项含做法/验收/耗时/依赖 |
 | `docs/参数差异台账.md` | **硬件/参数事实的唯一权威**（Hw/Fw/Pc 项 + 改一笔记一笔）。当前到 Hw-19 |
 | `docs/决策依据说明.md` | 设计决策记录（D1–D8）。⚠️ D8"实车无转向执行器"已作废未标，见台账 Hw-13 |
@@ -207,7 +207,7 @@ python pc/main.py --live --pi-ip 192.168.127.10 --stream-host 192.168.127.10 --s
 ### 测试
 
 ```bash
-python -B -m pytest tests/ -q   # 09-21 复审批次后基线：120 passed
+python -B -m pytest tests/ -q   # 09-21 E2③④ 批次后基线：131 passed
 ```
 
 ## 数据流
