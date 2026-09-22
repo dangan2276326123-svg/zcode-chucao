@@ -66,6 +66,7 @@
 | `json2mask.py` | 标注 JSON → 训练用灰度 mask |
 | `morph_process.py` | 分割结果后处理 + **导航线拟合**（被 `pc/perception.py` 和 `network/local_single_station.py` 导入）：`extract_dual_walls` 从 IPM 鸟瞰掩膜提取左右垄墙 → `fit_centerline_lsq` 对双墙各拟合 x=a·y+b 取中点 → `fit_centerline_lsq_weighted` 裁剪最小二乘 + 按内点率加权融合（遮挡鲁棒，单墙退化时门控回退）→ 输出 lookahead 行的横向偏差 `center_x` |
 | `split_dataset.py` | **数据集划分（分组模式）**：按 视频/地块/日期 前缀整组划分，杜绝邻帧跨集合（H1.3）；冻结 `split_manifest.json`；硬性保证 train/val/test 各≥1 组，组数 <3 直接拒绝而非静默退回逐图；源目录先校验后清空，`--force` 才清目标 |
+| `check_doc_invariants.py` | **文档不变量检查器**：执行 AGENTS 审查清单第 2 条 b) 项的"全仓枚举圈号区间并打印命中数"。扫描范围按 09-22 定案**摘除审查清单第 2 条所在行块**（规则自己的反例举例不计入，否则它永远红）。退出码 0=干净／1=禁用语义命中／2=基线漂移需解释／3=有 md 读不进去（**读不到就不算零命中**，防止假通过）。数法按**出现次数**、不按行数，两者都印。 |
 | `geometry_check.py` | **整车空间口径判据（只报事实，不报结论）**：要 N 把刀各进一条等距草带，车宽至少 `(N−1)·s + 刀宽`。`track_span` 给"轮距等于几个行距／离整行距还差多少／几何上是否可能对得上行"，**不输出压苗结论**——旧版那句"车宽>行距即压在作物行上"是 09-21 复审撤回的过度推论（行距 38.2 时轮距 191 恰为 5 个行距，两轮正落在行间）；判压苗要另量胎宽（M14）与轮迹对行线偏差（M15）。`slide_reach_verdict` 按"总行程 = 2 × 单侧需求"判够不够（旧实现拿总行程跟单侧比，会把 30 cm 报成够）。未实测的量返回"不下结论"，不补默认值。配合 `docs/整车尺寸实测表_20260921.md` |
 | `pre_annotate.py` | **半自动预标注**（DeepLabV3+ → labelme JSON + 叠加目检图）：qoder 工作区版，缺依赖时打人话提示、输出默认锁在工作区内、打印权重 md5/mtime 与解释器路径。原脚本在只读仓 `chucao_prj/annotation_tools/`，不改它 |
 | `启动预标注.bat` | 预标注启动入口（写死可用解释器）。**故意只写 ASCII**：.bat 里的中文必须 GBK 编码，否则 cmd 显示乱码 |
@@ -113,7 +114,7 @@
 | `calib_imgs/` | 标定棋盘格照片 `IMG_XXXX.jpg`（已 gitignore） |
 | `model_data/weights/` | 训练权重 `best_model.pth`（已 gitignore）。⚠️ 与只读仓 `chucao_prj/model_data/0.7428m/best_model.pth` **同大小不同 md5**（`32da179c…` vs `cdd22733…`），不是同一个 checkpoint，引用前必须点名 |
 | `results/smoke*` | 冒烟测试输出：标定/去畸变/推理样例图与 `run_log.csv` |
-| `tests/` | **11 个测试文件，`python -B -m pytest tests/ -q` = **135 passed（09-21 收工实测）**。逐个：`test_protocol.py` 协议编解码/CRC 向量（**不含** C 对拍，那要台架 B2）；`test_control.py` 控制量与跨边界拆帧；`test_status_rx.py` STATUS 坏帧/新鲜度/MCU 重启重新同步；`test_nav_geometry.py` 前轮 Ackermann 几何（直行极限/后轮零角/共 ICC/刚体速度/镜像）；`test_mjpeg.py` TCP 流解析 + 有界读流 `StreamFeed`（含"connect 卡住也不拖住控制循环"）；`test_adaptive_walls.py` 自适应双墙；`test_perception_norm.py` 感知归一化；`test_data_tools.py` 资产安全 + 分组划分（含"文件名没带批次号 → 整批塌成一组"的命名陷阱）；`test_geometry_check.py` 空间口径判据（**只测事实与单位，不测物理结论**）；`test_ipm_io.py` 标定来源校验＋跑真实 solve() 的闭环；`test_pre_annotate.py` 预标注护栏（含"人工改过后重跑仍保留"） |
+| `tests/` | **11 个测试文件，`python -B -m pytest tests/ -q` = **142 passed（09-22 实测）**。逐个：`test_protocol.py` 协议编解码/CRC 向量（**不含** C 对拍，那要台架 B2）；`test_control.py` 控制量与跨边界拆帧；`test_status_rx.py` STATUS 坏帧/新鲜度/MCU 重启重新同步；`test_nav_geometry.py` 前轮 Ackermann 几何（直行极限/后轮零角/共 ICC/刚体速度/镜像）；`test_mjpeg.py` TCP 流解析 + 有界读流 `StreamFeed`（含"connect 卡住也不拖住控制循环"）；`test_adaptive_walls.py` 自适应双墙；`test_perception_norm.py` 感知归一化；`test_data_tools.py` 资产安全 + 分组划分（含"文件名没带批次号 → 整批塌成一组"的命名陷阱）；`test_geometry_check.py` 空间口径判据（**只测事实与单位，不测物理结论**）；`test_ipm_io.py` 标定来源校验＋跑真实 solve() 的闭环；`test_pre_annotate.py` 预标注护栏（含"人工改过后重跑仍保留"）；`test_doc_invariants.py` 文档不变量检查器本身（钉住两条容易做错的语义：规则自己举的反例不计入扫描、基线按出现次数而非行数） |
 | `docs/缺口清单.md` | **项目"欠账台账"**：顶部『📊 总览：做完的/没做的』板为进度权威，逐项含做法/验收/耗时/依赖 |
 | `docs/参数差异台账.md` | **硬件/参数事实的唯一权威**（Hw/Fw/Pc 项 + 改一笔记一笔）。当前到 Hw-19 |
 | `docs/决策依据说明.md` | 设计决策记录（D1–D8）。⚠️ D8"实车无转向执行器"已作废未标，见台账 Hw-13 |
@@ -210,7 +211,8 @@ python pc/main.py --live --pi-ip 192.168.127.10 --stream-host 192.168.127.10 --s
 ### 测试
 
 ```bash
-python -B -m pytest tests/ -q   # 09-21 收工基线：135 passed
+python -B -m pytest tests/ -q        # 09-22 基线：142 passed
+python -B tools/check_doc_invariants.py   # 圈编号/交叉引用全仓枚举；exit 0 才算干净
 ```
 
 ## 数据流
