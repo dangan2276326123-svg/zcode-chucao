@@ -62,6 +62,7 @@
 
 | 文件 | 说明 |
 |---|---|
+| `bench_status.py` | **B1/B2 台架验收记录器**：收 MCU 的 STATUS 帧（UDP 9100，复用 `pc/status_rx.StatusReceiver`，与生产同一套新鲜度/乱序/重启重同步判据），按绝对时间戳把每帧、每次**模式跳变**、每段**静默 gap**（成对 gap_start/gap_end ＋ 时长）和**你敲的场景标记**写进同一张 CSV。用途是把"失联几秒停车、夺权后刀具动不动"这类几秒内的瞬时行为变成可回看的证据。⚠️ 它**不测**横向偏差的米制数值（感知侧占位几何未接线）；CSV 里的 `current_a`/`batt_v` 两列固件是占位值（`retrofit.c:226` 写死 48.0f），只能看趋势不能当实测。X5 侧 `vehicle/config.yaml` 的 `pc_ip` 必须指到本机，否则收不到帧——那不是 MCU 的错。 |
 | `check_dataset.py` | 数据集完整性检查（图/mask 对齐、类别统计） |
 | `json2mask.py` | 标注 JSON → 训练用灰度 mask |
 | `morph_process.py` | 分割结果后处理 + **导航线拟合**（被 `pc/perception.py` 和 `network/local_single_station.py` 导入）：`extract_dual_walls` 从 IPM 鸟瞰掩膜提取左右垄墙 → `fit_centerline_lsq` 对双墙各拟合 x=a·y+b 取中点 → `fit_centerline_lsq_weighted` 裁剪最小二乘 + 按内点率加权融合（遮挡鲁棒，单墙退化时门控回退）→ 输出 lookahead 行的横向偏差 `center_x` |
@@ -114,7 +115,7 @@
 | `calib_imgs/` | 标定棋盘格照片 `IMG_XXXX.jpg`（已 gitignore） |
 | `model_data/weights/` | 训练权重 `best_model.pth`（已 gitignore）。⚠️ 与只读仓 `chucao_prj/model_data/0.7428m/best_model.pth` **同大小不同 md5**（`32da179c…` vs `cdd22733…`），不是同一个 checkpoint，引用前必须点名 |
 | `results/smoke*` | 冒烟测试输出：标定/去畸变/推理样例图与 `run_log.csv` |
-| `tests/` | **11 个测试文件，`python -B -m pytest tests/ -q` = **142 passed（09-22 实测）**。逐个：`test_protocol.py` 协议编解码/CRC 向量（**不含** C 对拍，那要台架 B2）；`test_control.py` 控制量与跨边界拆帧；`test_status_rx.py` STATUS 坏帧/新鲜度/MCU 重启重新同步；`test_nav_geometry.py` 前轮 Ackermann 几何（直行极限/后轮零角/共 ICC/刚体速度/镜像）；`test_mjpeg.py` TCP 流解析 + 有界读流 `StreamFeed`（含"connect 卡住也不拖住控制循环"）；`test_adaptive_walls.py` 自适应双墙；`test_perception_norm.py` 感知归一化；`test_data_tools.py` 资产安全 + 分组划分（含"文件名没带批次号 → 整批塌成一组"的命名陷阱）；`test_geometry_check.py` 空间口径判据（**只测事实与单位，不测物理结论**）；`test_ipm_io.py` 标定来源校验＋跑真实 solve() 的闭环；`test_pre_annotate.py` 预标注护栏（含"人工改过后重跑仍保留"）；`test_doc_invariants.py` 文档不变量检查器本身（钉住两条容易做错的语义：规则自己举的反例不计入扫描、基线按出现次数而非行数） |
+| `tests/` | **11 个测试文件，`python -B -m pytest tests/ -q` = **148 passed（09-22 实测）**。逐个：`test_protocol.py` 协议编解码/CRC 向量（**不含** C 对拍，那要台架 B2）；`test_control.py` 控制量与跨边界拆帧；`test_status_rx.py` STATUS 坏帧/新鲜度/MCU 重启重新同步；`test_nav_geometry.py` 前轮 Ackermann 几何（直行极限/后轮零角/共 ICC/刚体速度/镜像）；`test_mjpeg.py` TCP 流解析 + 有界读流 `StreamFeed`（含"connect 卡住也不拖住控制循环"）；`test_adaptive_walls.py` 自适应双墙；`test_perception_norm.py` 感知归一化；`test_data_tools.py` 资产安全 + 分组划分（含"文件名没带批次号 → 整批塌成一组"的命名陷阱）；`test_geometry_check.py` 空间口径判据（**只测事实与单位，不测物理结论**）；`test_ipm_io.py` 标定来源校验＋跑真实 solve() 的闭环；`test_pre_annotate.py` 预标注护栏（含"人工改过后重跑仍保留"）；`test_doc_invariants.py` 文档不变量检查器本身（钉住两条容易做错的语义：规则自己举的反例不计入扫描、基线按出现次数而非行数） |
 | `docs/缺口清单.md` | **项目"欠账台账"**：顶部『📊 总览：做完的/没做的』板为进度权威，逐项含做法/验收/耗时/依赖 |
 | `docs/参数差异台账.md` | **硬件/参数事实的唯一权威**（Hw/Fw/Pc 项 + 改一笔记一笔）。当前到 Hw-19 |
 | `docs/决策依据说明.md` | 设计决策记录（D1–D8）。⚠️ D8"实车无转向执行器"已作废未标，见台账 Hw-13 |
@@ -211,7 +212,7 @@ python pc/main.py --live --pi-ip 192.168.127.10 --stream-host 192.168.127.10 --s
 ### 测试
 
 ```bash
-python -B -m pytest tests/ -q        # 09-22 基线：142 passed
+python -B -m pytest tests/ -q        # 09-22 基线：148 passed
 python -B tools/check_doc_invariants.py   # 圈编号/交叉引用全仓枚举；exit 0 才算干净
 ```
 
