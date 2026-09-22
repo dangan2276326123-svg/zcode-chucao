@@ -18,6 +18,8 @@
 用法（PC 侧，接好 X5/网桥后）：
     python -B tools/bench_status.py                 # 默认 0.0.0.0:9100
     python -B tools/bench_status.py --out results/bench/S1_0922
+一次只能有一个收帧的人：`pc/main.py --live` 也绑 9100，两个同时开必然有一个
+收不到（本工具会直接拒启并说明谁占着）。要做闭环回放就别开它，要取证就别开 main。
 ⚠️ X5 侧 `vehicle/config.yaml` 的 `pc_ip` 必须指向你这台 PC 的地址——
    网桥阶段要改（默认值 `192.168.1.2` 是历史遗留，见 X5 清单第 89 行）。
 """
@@ -156,8 +158,10 @@ def main():
         # 09-22 台架预演真实踩过：上一次没关干净的记录进程还占着端口，
         # 这一句裸 traceback 会让人在车边上分不清是没接线还是没关干净。
         sock.close()
-        sys.exit('端口 %d 已被另一个进程占用（%s）：先关掉还在跑的另一个记录进程，'
-                 '或换一个 --port。' % (a.port, exc))
+        sys.exit('端口 %d 已被另一个进程占用（%s）。同一个端口只能有一个收帧的人，'
+                 '最常见的是还开着的 `python pc/main.py --live`（它也绑 9100，'
+                 '见 pc/status_rx.py:19），或上一次没关干净的记录进程。'
+                 '先关掉它，或换一个 --port。' % (a.port, exc))
     sock.settimeout(0.5)
 
     # 绑定成功之后才建日志：先建再绑的话，被拒的那一次会在盘上留下一个空 CSV，
