@@ -29,7 +29,9 @@ def test_real_repo_is_clean(tmp_path):
     assert not unreadable, unreadable
     for form in cdi.FORBIDDEN:
         assert counts[form] == [], (form, counts[form])
-    code, msgs = cdi.verdict(counts, 7)
+    # 基线 6：09-22 由 7 降为 6，因合并缺口清单总览里一处重复说明（有理由的减少）。
+    # 若有人把它改回 7 或改成任意数来让检查变绿，这条测试与工具 --baseline 帮助文本一起拦。
+    code, msgs = cdi.verdict(counts, 6)
     assert code == 0, msgs
 
 

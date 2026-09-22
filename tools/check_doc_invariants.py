@@ -7,7 +7,7 @@
 就得补一条豁免。摘掉举例之后，所有不变量都是绝对的。
 
 判读（写死在第 2 条里）：
-    ①–⑧  命中 7 处 = 基线
+    ①–⑧  命中 6 处 = 基线（09-22 起；此前为 7，见下方漂移记录）
     ⚠️ "处"按**出现次数**计，不是按行数。当前 7 次分布在 6 行上
     （v1.0 第 53 行同时写着判据与括注，出现两次）。两种数法差 1，
     所以本工具两个数都印出来：按行数是 6，那**不是漂移**。
@@ -126,8 +126,10 @@ def verdict(counts, baseline_expect):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--root', default=ROOT_DEFAULT)
-    ap.add_argument('--baseline', type=int, default=7,
-                    help='①–⑧ 的期望命中数（AGENTS 第 2 条写死的基线）')
+    ap.add_argument('--baseline', type=int, default=6,
+                    help='①–⑧ 的期望命中数。09-22 由 7 改为 6：重写缺口清单总览时'
+                         '合并掉一处重复说明（同一件事两处各说一遍正是那批要清的对象），'
+                         '属合法减少、非漏写。**改基线必须附理由**，为凑绿而改是本检查禁止的行为。')
     a = ap.parse_args()
     if not os.path.isdir(a.root):
         raise SystemExit('目录不存在: %s' % a.root)
