@@ -1,6 +1,12 @@
 #include "car_control.h"
 #include "retrofit.h"
 #include "pwm.h"
+/* Hw-23 (09-23 现场实测): 本车前轴行走电机方向与厂商假设镜像。
+   补偿 = 四个分支里把前轴两轮的方向引脚极性取反。
+   回滚 = 把 1 改成 0 重编译。霍尔若在电机轴侧,速度环会正反馈
+   (轮子抖/啸叫),那种情况停测并改第二版(连 setpoint 一起翻)。 */
+#define FRONT_AXLE_DIR_SWAP 1
+
 #include "usart.h"
 #include "stdio.h"
 #include "delay.h"
@@ -91,7 +97,11 @@ void Out_Pwm(void)
 //	if(control_flag[1]>=0.0)
 	{
 		Roll_LF_En=1;Roll_LR_En=1;Roll_RF_En=1;Roll_RR_En=1;
+#if FRONT_AXLE_DIR_SWAP
+		Roll_LF_Dr=0;Roll_LR_Dr=1;Roll_RF_Dr=1;Roll_RR_Dr=0;
+#else
 		Roll_LF_Dr=1;Roll_LR_Dr=1;Roll_RF_Dr=0;Roll_RR_Dr=0;
+#endif
 		Roll_LF_BK=1;Roll_LR_BK=1;Roll_RF_BK=1;Roll_RR_BK=1;
 		
 		TIM8->CCR1=167*(veloc[0]+pid_realise(veloc[0],freq_time[2]));//左前
@@ -104,7 +114,11 @@ void Out_Pwm(void)
 	
 	{
 		Roll_LF_En=1;Roll_LR_En=1;Roll_RF_En=1;Roll_RR_En=1;
+#if FRONT_AXLE_DIR_SWAP
+		Roll_LF_Dr=1;Roll_LR_Dr=0;Roll_RF_Dr=0;Roll_RR_Dr=1;
+#else
 		Roll_LF_Dr=0;Roll_LR_Dr=0;Roll_RF_Dr=1;Roll_RR_Dr=1;
+#endif
 		Roll_LF_BK=1;Roll_LR_BK=1;Roll_RF_BK=1;Roll_RR_BK=1;
 		
 		veloc[0]=-veloc[0];veloc[1]=-veloc[1];veloc[2]=-veloc[2];veloc[3]=-veloc[3];
@@ -118,13 +132,21 @@ void Out_Pwm(void)
 		if(veloc[0]>=0&&veloc[1]<0&&veloc[2]>=0&&veloc[3]<0)//左前 右前 左后 右后
 		{
 				Roll_LF_En=1;Roll_LR_En=1;Roll_RF_En=1;Roll_RR_En=1;
+#if FRONT_AXLE_DIR_SWAP
+				Roll_LF_Dr=0;Roll_LR_Dr=1;Roll_RF_Dr=0;Roll_RR_Dr=1;
+#else
 				Roll_LF_Dr=1;Roll_LR_Dr=1;Roll_RF_Dr=1;Roll_RR_Dr=1;
+#endif
 				veloc[0]=veloc[0];veloc[1]=-veloc[1];veloc[2]=veloc[2];veloc[3]=-veloc[3];
 		}
 		if(veloc[0]<0&&veloc[1]>=0&&veloc[2]<0&&veloc[3]>=0)//左前 右前 左后 右后
 		{
 				Roll_LF_En=1;Roll_LR_En=1;Roll_RF_En=1;Roll_RR_En=1;
+#if FRONT_AXLE_DIR_SWAP
+				Roll_LF_Dr=1;Roll_LR_Dr=0;Roll_RF_Dr=1;Roll_RR_Dr=0;
+#else
 				Roll_LF_Dr=0;Roll_LR_Dr=0;Roll_RF_Dr=0;Roll_RR_Dr=0;
+#endif
 				veloc[0]=-veloc[0];veloc[1]=veloc[1];veloc[2]=-veloc[2];veloc[3]=veloc[3];
 		}	
 			Roll_LF_BK=1;Roll_LR_BK=1;Roll_RF_BK=1;Roll_RR_BK=1;
