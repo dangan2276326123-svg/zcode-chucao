@@ -20,8 +20,9 @@
     python -B tools/bench_status.py --out results/bench/S1_0922
 一次只能有一个收帧的人：`pc/main.py --live` 也绑 9100，两个同时开必然有一个
 收不到（本工具会直接拒启并说明谁占着）。要做闭环回放就别开它，要取证就别开 main。
-⚠️ X5 侧 `vehicle/config.yaml` 的 `pc_ip` 必须指向你这台 PC 的地址——
-   网桥阶段要改（默认值 `192.168.1.2` 是历史遗留，见 X5 清单第 89 行）。
+⚠️ X5 侧 `vehicle/config.yaml` 的 `pc_ip` 必须指向你这台 PC 的地址：
+   网线直连与走 CPE 网桥**是同一个值**（透明网桥、同网段，PC 两端都是 192.168.127.100），
+   换桥不用改。代码出厂默认 `192.168.1.2` 是历史遗留，config.yaml 没读到时才会用到它。
 """
 import argparse
 import csv
