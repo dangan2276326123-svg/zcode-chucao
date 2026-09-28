@@ -50,13 +50,14 @@
 | `status_rx.py` | MCU STATUS 接收（live 模式，UDP 9100）：坏帧捕获计数绝不裸抛（D7 约束），滚动 1 秒 ≥5 坏帧报警（多半是固件/Python 协议字段失同步）；纯逻辑类，socket 留在 main |
 | `ipm_io.py` | **IPM 外参加载器（带来源校验）**：拒绝无来源字段、`points_source != field`、源图近乎纯色/全黑、重投影超 2 cm、点数 <4、**车辆档案不匹配**的标定文件。存在的原因：仓库里那份 `results/smoke_ipm/ipm_params.json` 看着像标定，其实源图全黑（mean=0/std=0），只是求解器的冒烟测试 |
 
-### `vehicle/` — 车端（树莓派）
+### `vehicle/` — 车端（现在是 RDK X5，目录名与部分注释沿用"树莓派"，未全量改名）
 
 | 文件 | 说明 |
 |---|---|
-| `stream_pi.py` | 树莓派上抓取相机图像并回传给上位机 |
+| `start_bridge.sh` | **X5 侧一条命令起桥**（09-28 加）：先 `pkill -f "cat /dev/ttyS"` 把抢串口的人清掉，再 `sudo python3 bridge.py`。用法 `sh ~/qoder/vehicle/start_bridge.sh`。**必须 LF 换行**——`.gitattributes` 里钉了 `*.sh text eol=lf`，因为本机 `core.autocrlf=true`，带 CRLF 的 shebang 到了 X5 会以 `bad interpreter: /bin/sh^M` 失败，那种在车边上会被误读成串口有问题 |
 | `bridge.py` | PC ↔ 下位机桥接：把上位机控制量经串口转给 STM32，回传状态 |
-| `config.yaml` | 车端配置（PI_IP、串口号等） |
+| `stream_pi.py` | 树莓派上抓取相机图像并回传给上位机 |
+| `config.yaml` | 车端配置，字段是 `serial_dev` / `baud` / `udp_port` / `pc_ip` / `pc_port` / `stream.{port,width,height,fps}` / `watchdog_ms`（可选 `allowed_sources`）。**没有 `PI_IP` 这个字段**，旧说法作废 |
 
 ### `tools/` — 数据处理脚本
 

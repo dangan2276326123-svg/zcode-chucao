@@ -163,3 +163,25 @@ def test_true_silence_does_not_claim_rejected_traffic(tmp_path):
     assert '全被拒收' not in starts[0]['note']
     assert starts[0]['note'].startswith('STATUS 静默')
     log.close()
+
+
+def test_local_has_ip_does_not_confuse_absent_with_present():
+    """pc_ip 自检的实现必须能分清"有"和"没有"——它替代的是那句"请先去确认 pc_ip"。"""
+    assert bs.local_has_ip('127.0.0.1') is True
+    assert bs.local_has_ip('240.0.0.1') is False       # 不属于本机，bind 应失败
+
+
+def test_verdict_turns_counters_into_a_decision():
+    """车边上不该用心算：4 个分支各自给一句能照着做的话。"""
+    # 0 行：先查发送端，不许写成"接线不通"
+    v0 = bs.verdict(0, 0, 0, 0, 0, 60.0)[0]
+    assert '一行都没收到' in v0 and 'bridge' in v0
+    # 有重同步：直接判"板子在复位"，并指到 Hw-26/Hw-27
+    v1 = bs.verdict(111, 0, 305, 6, 111, 20.0)
+    assert any('板子在复位' in l for l in v1) and any('Hw-26' in l for l in v1)
+    # 帧率不足但没重同步：说明中间有静默段
+    v2 = bs.verdict(200, 0, 0, 0, 240, 60.0)          # 3.3 帧/秒
+    assert any('帧率低于' in l for l in v2)
+    # 健康：才允许做场景实验
+    v3 = bs.verdict(1200, 0, 0, 0, 1200, 60.0)
+    assert any('链路稳定' in l for l in v3)

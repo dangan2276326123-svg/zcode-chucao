@@ -18,6 +18,14 @@
 用法（PC 侧，接好 X5/网桥后）：
     python -B tools/bench_status.py                 # 默认 0.0.0.0:9100
     python -B tools/bench_status.py --out results/bench/S1_0922
+X5 侧配套一条命令：`sh ~/qoder/vehicle/start_bridge.sh`（清掉抢串口的 cat + sudo 起桥）。
+
+开机不用你自查的两件事（09-28 加，都是当天在现场真踩过才写进工具的）：
+  · 启动时自动核对"本机是否真的有 `vehicle/config.yaml` 里那个 pc_ip"——不是就直接说出
+    该怎么改，不再让你拿 `ipconfig` 的输出自己猜；
+  · Ctrl-C 后的小结直接给一句**判定**（0 行→先查发送端而不是拆线；出现重启重同步→板子在
+    复位、这轮观察全部不作数；帧率不足→去看 gap 行；否则才说"可以做场景实验"）。
+
 一次只能有一个收帧的人：`pc/main.py --live` 也绑 9100，两个同时开必然有一个
 收不到（本工具会直接拒启并说明谁占着）。要做闭环回放就别开它，要取证就别开 main。
 ⚠️ X5 侧 `vehicle/config.yaml` 的 `pc_ip` 必须指向你这台 PC 的地址：
@@ -33,6 +41,7 @@ import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 try:                                   # Windows cp936 控制台：中文/符号不许把记录进程打死
     sys.stdout.reconfigure(errors='replace')
 except AttributeError:                 # pragma: no cover - py<3.7
@@ -47,6 +56,62 @@ MODE_NAME = {0: 'MANUAL', 1: 'AUTO', 2: 'ESTOP'}
 # 限位位定义来自固件 read_limits()：PD15 原点 / PD10 左 / PD11 右，低有效。
 LIMIT_NAME = [(0x01, 'origin'), (0x02, 'left'), (0x04, 'right')]
 GAP_NOTICE_S = 1.0            # 静默超过这个数就记一条 gap（与 STALE_S 同量级）
+
+
+def local_has_ip(addr):
+    """这台机器上到底有没有这个地址。
+
+    用 bind 试探，不去解析 `ipconfig`：跨 Windows/Linux 都能用，而且不依赖外部命令的
+    输出格式——格式一改，解析式检查会**静默失效**（变成"永远说没有"或"永远说有"）。
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.bind((addr, 0))
+        return True
+    except OSError:
+        return False
+    finally:
+        probe.close()
+
+
+def configured_pc_ip(root=None):
+    """取 `vehicle/config.yaml` 里的 `pc_ip`。读不到（没装 pyyaml、文件不在）就返回
+    None，让这项自检降级为"不做"，而不是拖着一个好端端的记录器报错退出。"""
+    path = os.path.join(root or _ROOT, 'vehicle', 'config.yaml')
+    try:
+        import yaml
+        with open(path, encoding='utf-8') as f:
+            return (yaml.safe_load(f) or {}).get('pc_ip')
+    except Exception:
+        return None
+
+
+def verdict(good, bad, out_of_order, resynced, rows, seconds):
+    """把小结那几个计数器直接换成判据。
+
+    纯函数 + 单测，理由是现场教训：09-28 那份小结里 `重启重同步 6` 已经写得很明白，
+    但人要先把"6"翻译成"板子在复位"才知道不能往下做——今天差点就在复位循环上继续测
+    场景了。判据该由工具给，不该留给车边上的人心算。
+    """
+    if rows == 0:
+        return ['判定：一行都没收到。**这不是"接线不通"的证据**，按顺序查发送端：'
+                'X5 上 bridge 在不在跑（`sh ~/qoder/vehicle/start_bridge.sh` 一条命令带过'
+                '清 cat + sudo）→ 本机有没有 config.yaml 里那个 pc_ip → 防火墙。']
+    rate = good / seconds if seconds else 0.0
+    lines = ['判定：%.0f 秒里好帧 %d（约 %.1f 帧/秒，固件设计是 20Hz），坏帧 %d，'
+              '旧序号拒收 %d，重启重同步 %d。' % (seconds, good, rate, bad,
+                                                  out_of_order, resynced)]
+    if resynced:
+        lines.append('  ✗ 出现过 %d 次"重启重同步" ⇒ **板子在复位**（台账 Hw-26 的形状就是'
+                     '每轮 2.95 秒）。这段时间里任何模式/动作/方向的观察都不作数；'
+                     '第一件事：拔掉遥控接收机供电再看（Hw-27）。' % resynced)
+    elif rate < 18.0:
+        lines.append('  ✗ 帧率低于 18/s ⇒ 中间有静默段，去 CSV 看 gap_start/gap_end；'
+                     'gap 行的 note 会写明"这期间到达的 N 个报文全被拒收"——那一句区分'
+                     '"线上真没人发"和"发的人在重启"。')
+    else:
+        lines.append('  ✓ 链路稳定 ⇒ 可以做场景实验（④/④a/④b、模式跳变、反向探针）。')
+    return lines
 
 
 def classify(prev_mode, mode):
@@ -215,7 +280,16 @@ def main():
 
     print('STATUS 记录中 → %s' % csv_path)
     print('每一行字 + 回车 = 打一条场景标记；Ctrl-C 结束并打印小结。')
-    print('（若一直看不到帧：先确认 X5 config.yaml 的 pc_ip 指向本机，再查防火墙）')
+    # 原来这里只是一句"请先去确认 pc_ip"的提示，等于把判断推给人做。09-28 改成自己查：
+    # X5 是按 config.yaml 里的 pc_ip **单向投递**的，本机不是那个地址就一帧都收不到，
+    # 而这在 CSV 里和"接线不通"长得一模一样——今天已经为此白拆过一次线。
+    _ip = configured_pc_ip()
+    if _ip and not local_has_ip(_ip):
+        print('注意：X5 会把 STATUS 投递到 %s，但这台机器上**没有**这个地址（bind 不上）。'
+              '现在收不到帧不是接线的锅：要么把本机网卡设成 %s/24，要么改 X5 上 '
+              'vehicle/config.yaml 的 pc_ip 后重启 bridge。' % (_ip, _ip))
+    elif _ip:
+        print('本机地址核对通过：%s 在这台机器上（与 X5 config.yaml 的 pc_ip 一致）。' % _ip)
     print('注意：I=电流、U=电压两列固件里是 adc_current_a() 与写死的 48.0f（retrofit.c:226），'
           '只能当占位，不是实测。')
     n = 0
@@ -261,6 +335,9 @@ def main():
         print('\n=== 小结 ===')
         print('  行数 %d  好帧 %d  坏帧 %d  乱序 %d  重启重同步 %d'
               % (log.rows, rx.good, rx.bad, rx.out_of_order, rx.resynced))
+        for line in verdict(rx.good, rx.bad, rx.out_of_order, rx.resynced,
+                            log.rows, time.time() - log.t0):
+            print(line)
         print('  证据文件：%s' % csv_path)
         print('  下一步：把这份 CSV 的路径写进缺口清单 ② 板对应行的"证据"栏，'
               '别只写"已做"。')

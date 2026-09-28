@@ -1,0 +1,7 @@
+# 只钉一条，作用域也只用在这一类文件上（09-28）：
+# 给 X5 / Linux 跑的 shell 脚本必须是 LF 换行。
+# 本机 core.autocrlf=true，检出时默认会把文本换成 CRLF；那样 scp 到 X5 之后，
+# shebang 行尾带 \r，脚本会以 "bad interpreter: /bin/sh^M" 失败——那种在车边上
+# 最难查、也最容易被误读成"板子/串口有问题"的故障。
+# 不写 `* text=auto`：那会把整个仓库的行尾重排，混进一大堆与本次无关的改动。
+*.sh text eol=lf
