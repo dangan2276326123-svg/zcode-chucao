@@ -105,14 +105,19 @@ class BenchLog:
     def note(self, text):
         return self._row('note', note=text)
 
-    def check_gap(self, now=None):
-        """静默检测： STATUS 停发 = 链路断或 MCU 挂，是 ④⑤⑦⑧ 场景的主证据。"""
+    def check_gap(self, now=None, during=''):
+        """静默检测： STATUS 停发 = 链路断或 MCU 挂，是 ④⑤⑦⑧ 场景的主证据。
+
+        `during` 是调用方给的一句旁证（"这期间还有报文到达但全被拒收"），它把
+        "线上真的没人发" 与 "发的人在重启" 这两种在 CSV 里长得一模一样的静默分开。
+        """
         now = now if now is not None else time.time()
         if self.last_rx is None:
             return False
         if now - self.last_rx > GAP_NOTICE_S and self.gap_open_at is None:
             self.gap_open_at = self.last_rx
-            self._row('gap_start', note='STATUS 静默 >%.1f s' % GAP_NOTICE_S)
+            self._row('gap_start',
+                      note='STATUS 静默 >%.1f s%s' % (GAP_NOTICE_S, during))
             return True
         return False
 
@@ -135,6 +140,39 @@ def _note_listener(log, stop):
                 print('  [标记 @%.3f] %s' % (t - log.t0, line))
     except (EOFError, OSError):
         pass
+
+
+def _during_note(ctr):
+    """静默行上那句旁证：把"线上真的没人发"和"有人在发但全被拒收"分开写。"""
+    if not ctr['rejected']:
+        return ''
+    return ('，这期间到达的 %d 个报文全被拒收（序号回退或坏帧）'
+            '⇒ 链路并没有真的静默，是发送端在重启或协议错位' % ctr['rejected'])
+
+
+def pump_once(data, addr, rx, log, ctr, now=None):
+    """处理一次 recvfrom 的结果，返回 (kind, status_dict)；没东西可打印时 (None, None)。
+
+    **check_gap 每轮都要调，与这一帧有没有被接受无关。** 09-28 台架实测出这个静默
+    缺陷：原来只在 `except socket.timeout` 分支里调它，于是"报文一直到达、但全部被
+    StatusReceiver 拒收"这一路（MCU 重启后序号回退正好就是这个样子）永远进不了
+    timeout 分支。证据就是当天那份 CSV：kind 只有 `first` 1 行 + `frame` 110 行，
+    **gap_start / gap_end 一行都没有**，而屏幕时间戳明摆着有六段 2.95 秒空窗。
+    ④⑤⑦⑧ 的场景证据本质就是"从断到停的那几秒"，这个盲点正对着它们，所以修在
+    调用点上而不是只改注释：现在无论这一帧被接受、被拒收、还是根本没到达，
+    静默判定都走一遍。
+    """
+    kind = st_out = None
+    if data is not None:
+        st = rx.handle(data)
+        if st is None:
+            ctr['rejected'] += 1
+        else:
+            ctr['rejected'] = 0
+            kind = log.frame(st, peer=addr[0])
+            st_out = st
+    log.check_gap(now=now, during=_during_note(ctr))
+    return kind, st_out
 
 
 def main():
@@ -182,18 +220,23 @@ def main():
           '只能当占位，不是实测。')
     n = 0
     last_hint = 0.0
+    ctr = {'rejected': 0}
     try:
         while True:
             try:
                 data, addr = sock.recvfrom(2048)
             except socket.timeout:
-                log.check_gap()
+                data, addr = None, None
+            # 静默判定跟"这一帧有没有被接受"无关，统一放进 pump_once（为什么必须这样，
+            # 那里的注释写着——这是 09-28 那份 CSV 里 gap 一行都没有的根因）。
+            kind, st = pump_once(data, addr, rx, log, ctr)
+            if st is None:
                 # 09-28 在车边上连撞两次同一个歧义：0 帧时，"线没通"和"X5 上根本
                 # 没人发"长得一模一样——bridge.py 是 UDP 的唯一发送方，它没跑、或者
                 # 有人用 `sudo cat /dev/ttyS1` 跟它抢同一个串口（两个读者会把帧撕成
                 # 半截，谁都解不出来），这边看到的都是同样的空 CSV。所以静默满 5 秒
                 # 就点名最可能的那一个，而不是让人去怀疑接线。
-                if n == 0 and time.time() - log.t0 >= 5 and \
+                if data is None and n == 0 and time.time() - log.t0 >= 5 and \
                         time.time() - last_hint >= 10:
                     last_hint = time.time()
                     print('  [%.0fs] 还是 0 帧。先查发送端，别拆线：X5 上 '
@@ -201,10 +244,6 @@ def main():
                           '`pgrep -af "cat /dev/ttyS"` 看有没有 cat 在抢串口'
                           '（两者不能同读一个 ttyS1）。' % (time.time() - log.t0))
                 continue
-            st = rx.handle(data)
-            if st is None:
-                continue
-            kind = log.frame(st, peer=addr[0])
             n += 1
             tag = {'first': '首帧', 'mode_change': '>>> 模式跳变', 'frame': ''}[kind]
             lim = ''.join('+' + name for bit, name in LIMIT_NAME if st['limits'] & bit)

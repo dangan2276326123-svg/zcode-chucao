@@ -10,6 +10,7 @@
    gap_start / gap_end 不成对，回来就对不上时间轴。
 """
 import os
+import time
 
 from common import protocol as P
 from pc.status_rx import StatusReceiver
@@ -118,3 +119,47 @@ def test_gap_left_open_at_close_is_still_marked(tmp_path):
     kinds = [r['kind'] for r in _rows(log)]
     assert kinds == ['gap_end']
     assert '仍未收到新帧' in _rows(log)[0]['note']
+
+
+def test_pump_once_checks_gap_even_when_every_frame_is_rejected(tmp_path):
+    """09-28 实测盲点的回归测试。
+
+    那天大板每 2.95 秒重启一次（台账 Hw-26），重启后序号从 0 重来，这些帧在
+    StatusReceiver 里**全部算旧的、被拒收**，所以主循环一路走 `st is None` 分支，
+    永远进不了 `except socket.timeout` —— 而旧代码只在 timeout 分支里调 check_gap。
+    结果：屏幕上明明有六段 2.95 秒空窗，CSV 里 gap_start/gap_end **一行都没有**
+    （那份文件的 kind 只有 first 1 行 + frame 110 行）。④⑤⑦⑧ 的场景证据本质就是
+    "从断到停的那几秒"，这个盲点正对着它，所以钉在这里：静默判定必须在每一轮都做，
+    与这一帧有没有被接受无关。
+    """
+    log, rx = _mklog(tmp_path), StatusReceiver()
+    ctr = {'rejected': 0}
+    base = time.time()
+    peer = ('192.168.127.10', 5555)
+    kind, st = bs.pump_once(_status_frame(seq=500), peer, rx, log, ctr, now=base)
+    assert kind == 'first' and st is not None
+    for i, seq in enumerate((0, 1, 2)):                 # "重启"后的旧序号
+        k2, s2 = bs.pump_once(_status_frame(seq=seq), peer, rx, log, ctr,
+                              now=base + 0.5 + 0.4 * i)
+        assert s2 is None, '序号回退的帧应当被拒收（这是前提，不是缺陷）'
+    rows = _rows(log)
+    starts = [r for r in rows if r['kind'] == 'gap_start']
+    assert len(starts) == 1, '到达但全被拒收的这段时间也必须记一条静默'
+    assert '全被拒收' in starts[0]['note'], '要写明链路并没有真的没人发'
+    assert ctr['rejected'] == 3
+    log.close()
+
+
+def test_true_silence_does_not_claim_rejected_traffic(tmp_path):
+    """反例：真的一个报文都没有时，那句"全被拒收"不许出现，否则会把断线读成重启。"""
+    log, rx = _mklog(tmp_path), StatusReceiver()
+    ctr = {'rejected': 0}
+    base = time.time()
+    bs.pump_once(_status_frame(seq=7), ('192.168.127.10', 1), rx, log, ctr,
+                 now=base)
+    bs.pump_once(None, None, rx, log, ctr, now=base + 1.5)
+    starts = [r for r in _rows(log) if r['kind'] == 'gap_start']
+    assert len(starts) == 1
+    assert '全被拒收' not in starts[0]['note']
+    assert starts[0]['note'].startswith('STATUS 静默')
+    log.close()
