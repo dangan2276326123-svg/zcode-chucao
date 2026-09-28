@@ -181,12 +181,25 @@ def main():
     print('注意：I=电流、U=电压两列固件里是 adc_current_a() 与写死的 48.0f（retrofit.c:226），'
           '只能当占位，不是实测。')
     n = 0
+    last_hint = 0.0
     try:
         while True:
             try:
                 data, addr = sock.recvfrom(2048)
             except socket.timeout:
                 log.check_gap()
+                # 09-28 在车边上连撞两次同一个歧义：0 帧时，"线没通"和"X5 上根本
+                # 没人发"长得一模一样——bridge.py 是 UDP 的唯一发送方，它没跑、或者
+                # 有人用 `sudo cat /dev/ttyS1` 跟它抢同一个串口（两个读者会把帧撕成
+                # 半截，谁都解不出来），这边看到的都是同样的空 CSV。所以静默满 5 秒
+                # 就点名最可能的那一个，而不是让人去怀疑接线。
+                if n == 0 and time.time() - log.t0 >= 5 and \
+                        time.time() - last_hint >= 10:
+                    last_hint = time.time()
+                    print('  [%.0fs] 还是 0 帧。先查发送端，别拆线：X5 上 '
+                          '`pgrep -af bridge` 看 bridge.py 在不在跑，'
+                          '`pgrep -af "cat /dev/ttyS"` 看有没有 cat 在抢串口'
+                          '（两者不能同读一个 ttyS1）。' % (time.time() - log.t0))
                 continue
             st = rx.handle(data)
             if st is None:
