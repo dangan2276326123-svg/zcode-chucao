@@ -6,16 +6,18 @@
 #include "telecontrol.h"
 //#include "lcd.h"
 #include "retrofit.h"
-/* Hw-23/Hw-24 (09-24): 本车左后轮方向与其余三轮相反（作者两次现场确认，
-   纵向横向都反）。真正的方向开关在这里: pwm_veloc() 用速度符号驱动
-   led.c:398 replay_switch() 继电器换向, 幅值走 TIM1 CCR。
-   注意 car_control.c 的 Out_Pwm()/Roll_*_Dr 是死代码(全工程无调用点,
-   linker 已丢弃该 object), 前两次补丁打在那里, 所以"改了没变化"。
-   回滚 = 置 0 重编译。 */
-/* 09-28 退回 0：作者澄清后确认现象是"纵向指令0°整车朝左平移、横向指令90°
-   整车前后走" = 转向零位差 90°，与行走电机符号无关。这处未验证的翻转留着会
-   让下一步观察（轮面朝向 / 转向零位标定）多出一个 180° 干扰，故置 0。 */
-#define REAR_LEFT_DIR_SWAP 0
+/* Hw-24/Hw-25 (09-28): 本车四个行走轮的方向极性开关，逐轮独立、可单独回滚。
+   现场结论(作者 09-28): 右后轮**无行走电机**(从动) => 三个驱动轮里 左前+右前 反,
+   左后 正; 两反一正会让整车朝反向平移(所以先前"两反必拧"的推断作废)。
+   相机装在除草刀上方、朝前 => **验收标准是"车朝刀侧/相机朝向走"**, 不是轮子顺眼。
+   注: 真正的方向开关在这里 -> pwm.c:188 pwm_veloc() 用速度符号驱动
+   led.c:398 replay_switch(ch,0/1) 继电器换向; car_control.c 的 Out_Pwm/Roll_*_Dr
+   是上一代硬件遗留的死代码(全工程无调用点, linker 已丢弃), 不要往那儿改。
+   搬去样机(2.15 m)后必须重测, 不得继承 (v1.0 4.1 执行方向逐台确认)。 */
+#define DIR_SWAP_LF 1   /* 左前 */
+#define DIR_SWAP_RF 1   /* 右前 */
+#define DIR_SWAP_LR 0   /* 左后 */
+#define DIR_SWAP_RR 0   /* 右后: 本车从动，无行走电机 */
 #include "path_plan.h"
 #include "math.h"
 #include "car_control.h"
@@ -559,20 +561,16 @@ while(1)
 		veloc[0] = veloc[1] = veloc[2] = veloc[3] = 0.0;
 	}
 //左前
-			pwm_veloc(0,veloc[0]);  //速度控制
+			pwm_veloc(0, DIR_SWAP_LF ? -veloc[0] : veloc[0]);  //速度控制
 			
 //左后	
-			#if REAR_LEFT_DIR_SWAP
-			pwm_veloc(2,-veloc[2]);   /* 09-24 本车左后轮与其余三轮反向 */
-#else
-			pwm_veloc(2,veloc[2]);
-#endif   //速度控制
+			pwm_veloc(2, DIR_SWAP_LR ? -veloc[2] : veloc[2]);   //速度控制
 
 //右前	
-			pwm_veloc(1,veloc[1]);	//速度控制
+			pwm_veloc(1, DIR_SWAP_RF ? -veloc[1] : veloc[1]);	//速度控制
 
 ////右后	
-			pwm_veloc(3,veloc[3]);   //速度控制
+			pwm_veloc(3, DIR_SWAP_RR ? -veloc[3] : veloc[3]);   //速度控制
 	 
 
 
