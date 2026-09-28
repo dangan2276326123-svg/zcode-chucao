@@ -7,11 +7,25 @@
 记录器同时开。
 
 判据（现场最常用的两条）：
-  nav  ->  大板 `retrofit.c:102` 会无条件把 mode 置 AUTO，所以 STATUS 里
-           mode 从 MANUAL 跳成 AUTO 就说明"字进了单片机"。
+  nav  ->  `retrofit.c:102` 把 mode 置 AUTO，所以 STATUS 里 mode 从 MANUAL 跳成 AUTO
+           就说明"字进了单片机"。
+           **但不是"无条件"**：`retrofit.c:93` 那行是 `if (len < 9 || estop_latched) return;`
+           —— payload 长度够（NAV 是 9 字节）且**没有 ESTOP 锁存**时才生效。
            ⚠ 这是 F1 那个权限洞，我们暂时**拿缺陷当探针**用；E3 补完五条件之后
            这条判据会失效（届时 NAV 不再单独决定进 AUTO），要改用别的探针。
   beat ->  若当前在 AUTO，`retrofit.c:70-73` 会把 mode 放回 MANUAL。
+
+**用法上必须连续发，别单发一条**（09-28 现场踩过，写在这是为了防止再踩）：
+`vehicle/bridge.py:206` 传的是 `auto_on=True`，而 `decide_forward` 的条件是"PC 发过真帧后
+60 秒内一旦 500ms 没有下一条就自己往串口注一条 ESTOP"。所以单发一条 NAV 的后果是
+0.5 秒后板子被注入 ESTOP → `estop_latched=1` → 之后所有 NAV 都被 `:93` 忽略。
+而 `retrofit_clear_estop()`（`retrofit.c:124`）**全工程没有调用点**（台账 Fw-14），
+锁存只能靠**板子断电**清。正确姿势：
+
+    python -B tools/link_probe.py nav 0 0 --every 0.2 --count 30 --host <X5>
+
+这样 NAV 每 0.2 秒一条、空窗永远不到 500ms，注入不会触发；数发完停手时反过来**应该**
+看到 mode 自己跳成 ESTOP——那正是失联注入这条安全路径在动的证据。
 
 为什么本工具没有新测试：它不含新逻辑——帧构造全部走 `common/protocol.py` 的
 `pack_*`（已被 `tests/test_protocol.py` 覆盖），剩下的只有 argparse 分支和一次
