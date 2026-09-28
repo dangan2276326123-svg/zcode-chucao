@@ -12,7 +12,10 @@
    注意 car_control.c 的 Out_Pwm()/Roll_*_Dr 是死代码(全工程无调用点,
    linker 已丢弃该 object), 前两次补丁打在那里, 所以"改了没变化"。
    回滚 = 置 0 重编译。 */
-#define REAR_LEFT_DIR_SWAP 1
+/* 09-28 退回 0：作者澄清后确认现象是"纵向指令0°整车朝左平移、横向指令90°
+   整车前后走" = 转向零位差 90°，与行走电机符号无关。这处未验证的翻转留着会
+   让下一步观察（轮面朝向 / 转向零位标定）多出一个 180° 干扰，故置 0。 */
+#define REAR_LEFT_DIR_SWAP 0
 #include "path_plan.h"
 #include "math.h"
 #include "car_control.h"
