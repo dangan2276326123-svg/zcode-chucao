@@ -6,6 +6,13 @@
 #include "telecontrol.h"
 //#include "lcd.h"
 #include "retrofit.h"
+/* Hw-23/Hw-24 (09-24): 本车左后轮方向与其余三轮相反（作者两次现场确认，
+   纵向横向都反）。真正的方向开关在这里: pwm_veloc() 用速度符号驱动
+   led.c:398 replay_switch() 继电器换向, 幅值走 TIM1 CCR。
+   注意 car_control.c 的 Out_Pwm()/Roll_*_Dr 是死代码(全工程无调用点,
+   linker 已丢弃该 object), 前两次补丁打在那里, 所以"改了没变化"。
+   回滚 = 置 0 重编译。 */
+#define REAR_LEFT_DIR_SWAP 1
 #include "path_plan.h"
 #include "math.h"
 #include "car_control.h"
@@ -24,10 +31,10 @@
 // 组别问题（左右一组，前后一组，必须按照顺序来，不再改变）
 
 //车辆参数  轮轴 和轮距离
-double B=1530.0; //车宽 mm
-double L=2550.0;  //车长 mm
-double B_Horizontal=2780.0; //车宽 mm
-double L_Horizontal=1390.0;  //车长 mm
+double B=1648.0; //车宽 mm
+double L=3010.0;  //车长 mm
+double B_Horizontal=3250.0; //车宽 mm
+double L_Horizontal=1620.0;  //车长 mm
 
 
 double veloc_limit_low =1.24;  //对应的满p波 尽量与实际相符  满p波与最高速的比例关系    这个是默认中速 还有高低速
@@ -552,7 +559,11 @@ while(1)
 			pwm_veloc(0,veloc[0]);  //速度控制
 			
 //左后	
-			pwm_veloc(2,veloc[2]);   //速度控制
+			#if REAR_LEFT_DIR_SWAP
+			pwm_veloc(2,-veloc[2]);   /* 09-24 本车左后轮与其余三轮反向 */
+#else
+			pwm_veloc(2,veloc[2]);
+#endif   //速度控制
 
 //右前	
 			pwm_veloc(1,veloc[1]);	//速度控制
