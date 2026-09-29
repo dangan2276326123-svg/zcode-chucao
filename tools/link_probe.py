@@ -27,9 +27,22 @@
 这样 NAV 每 0.2 秒一条、空窗永远不到 500ms，注入不会触发；数发完停手时反过来**应该**
 看到 mode 自己跳成 ESTOP——那正是失联注入这条安全路径在动的证据。
 
-为什么本工具没有新测试：它不含新逻辑——帧构造全部走 `common/protocol.py` 的
-`pack_*`（已被 `tests/test_protocol.py` 覆盖），剩下的只有 argparse 分支和一次
-`socket.sendto`。写测试只会钉住参数名，钉不住任何行为。
+两种接法（09-28 加第二种，用来把"是板子收不进"和"是 X5 发不出"分开）：
+
+    # A) 走 X5 + bridge（默认）
+    python -B tools/link_probe.py nav 0 0 --every 0.2 --count 30 --host 192.168.127.10
+    # B) 走 USB-TTL 直连大板：给了 --serial 就不发 UDP，并且**自己一边发一边读 STATUS**，
+    #    不需要第二个窗口当显示器。接法：USB-TTL RXD ↔ 大板 PC6，TXD ↔ 大板 PC7，共地必接。
+    python -B tools/link_probe.py nav 0 0 --every 0.2 --count 30 --serial COM6 --watch 10
+
+    ⚠️ 用 B 的时候**先把 X5 的 TX（Pin8）从那根网络上摘掉**：否则是 X5 与 USB-TTL 两个
+    输出对顶同一根线，测出来什么都不能解释。3.3V 电平的 USB-TTL，别接 VCC 脚。
+
+测试：UDP 那条路确实不含新逻辑（帧构造全走 `common/protocol.py` 的 `pack_*`，已被
+`tests/test_protocol.py` 覆盖；剩下的只有 argparse 分支和一次 `socket.sendto`）。
+但 `--serial` 那条有：`_read_status` 要自己拼帧、判模式序列，所以它配了
+`tests/test_link_probe.py`（不需要硬件：假串口按脚本喂字节，钉"跨读边界拼帧"、
+"模式跳变序列而不是最后一帧"、"序号回退的帧不计为好帧"三条）。
 """
 import argparse
 import os
@@ -45,6 +58,9 @@ except AttributeError:
 
 from common import protocol as P          # noqa: E402
 
+# 与固件 retrofit.h:11-13 一致；不在这三个值里的原样打印数字，不替它编名字。
+MODE_NAME = {0: 'MANUAL', 1: 'AUTO', 2: 'ESTOP'}
+
 
 def build(kind, args, seq):
     """把命令行选择变成一条完整协议帧。未知 kind 必须抛，不能静默发空包。"""
@@ -58,6 +74,82 @@ def build(kind, args, seq):
     raise ValueError('未知指令 %r：只有 nav / tool / beat / estop' % kind)
 
 
+def _read_status(ser, stop, out):
+    """后台读串口上的 STATUS，模式一跳就记下来。
+
+    帧的切分复用 `vehicle.bridge.poll_serial_frames`（跨读边界不丢帧，那条有单测），
+    新鲜度/乱序/重启重同步复用 `pc.status_rx.StatusReceiver`——**不另写一套解析**，
+    否则"探针说通了、记录器说没通"这种分歧就没法解释。
+    """
+    from vehicle.bridge import poll_serial_frames
+    from pc.status_rx import StatusReceiver
+    rx = StatusReceiver()
+    buf = b''
+    prev = None
+    while not stop.is_set():
+        chunk = ser.read(64)
+        if not chunk:
+            time.sleep(0.005)
+            continue
+        frames, buf = poll_serial_frames(buf, chunk)
+        for raw in frames:
+            st = rx.handle(raw)
+            if st is None:
+                continue
+            out['good'] += 1
+            if st['mode'] != prev:
+                out['changes'].append((round(time.time() - out['t0'], 2),
+                                       prev, st['mode']))
+                prev = st['mode']
+
+
+def _run_serial(a, frame_iter):
+    """--serial：USB-TTL 直连大板时用它。发一条的同时还在读，所以不需要第二个显示器。"""
+    import threading
+    try:
+        import serial
+    except ImportError:
+        sys.exit('需要 pyserial：pip install pyserial')
+    try:
+        ser = serial.Serial(a.serial, a.baud, timeout=0.05)
+    except Exception as exc:
+        sys.exit('打不开 %s（%s）。确认 COM 号、有没有被别的程序占用、以及是否 115200。'
+                 % (a.serial, exc))
+    out = {'good': 0, 'changes': [], 't0': time.time()}
+    stop = threading.Event()
+    th = threading.Thread(target=_read_status, args=(ser, stop, out), daemon=True)
+    th.start()
+    n = 0
+    try:
+        time.sleep(0.6)                       # 先确认能听见板子说话，再开始发
+        if out['good'] == 0:
+            print('注意：前 0.6 秒一个 STATUS 都没读到。先别怪发送——'
+                  'USB-TTL 的 RXD 有没有接到板子的 PC6、共地接了没、波特率对不对。')
+        for frame in frame_iter:
+            ser.write(frame)
+            n += 1
+            print('#%-5d -> %s  %d B  %s' % (n, a.serial, len(frame), frame.hex(' ')))
+    finally:
+        end = time.time() + max(0.0, a.watch)
+        while time.time() < end and not stop.is_set():
+            time.sleep(0.05)
+        stop.set()
+        th.join(timeout=1.0)
+        ser.close()
+    print('\n读了 %d 帧 STATUS；模式跳变 %d 次：' % (out['good'], len(out['changes'])))
+    for t, frm, to in out['changes']:
+        print('  %6.2fs  %s -> %s' % (t, MODE_NAME.get(frm, '-'), MODE_NAME.get(to, to)))
+    if any(to == 1 for _, _, to in out['changes']):
+        print('判定：mode 跳过 AUTO ⇒ **大板的 PC7（USART6 RX）收得进**，'
+              '问题在 X5 那一侧或它到 PC7 的那根线，不在这块板。')
+    elif out['good'] == 0:
+        print('判定：一帧都没读到 ⇒ 这条测试本身没成立（收的方向就没通），不能得出发送结论。')
+    else:
+        print('判定：一直在 MANUAL ⇒ 大板没听到我们发的东西。查三件：'
+              'USB-TTL 的 TXD 是否真的落在 PC7 网络上（T6 上的 A_4/B_4 不是 PC7，'
+              '见台账 Hw-1 的 09-28 重写）、共地有没有接、有没有第二个驱动源在同一根线上。')
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('kind', choices=['nav', 'tool', 'beat', 'estop'])
@@ -67,6 +159,11 @@ def main():
     ap.add_argument('--every', type=float, default=0.0,
                     help='>0 则周期发送（秒），用于模拟"PC 一直在发"')
     ap.add_argument('--count', type=int, default=0, help='周期发送的条数上限，0=不限')
+    ap.add_argument('--serial', default=None,
+                    help='给了就走 USB-TTL 直连（如 COM6 或 /dev/ttyUSB0），不发 UDP')
+    ap.add_argument('--baud', type=int, default=115200)
+    ap.add_argument('--watch', type=float, default=8.0,
+                    help='--serial 时：发完之后再读多少秒，等 mode 跳变')
     a = ap.parse_args()
 
     if a.kind == 'nav' and len(a.args) != 2:
@@ -76,20 +173,29 @@ def main():
     if a.kind == 'nav' and max(abs(float(x)) for x in a.args) > 0.20:
         sys.exit('探针限速 0.20 m/s，别拿它当行车工具——要跑闭环请用 pc/main.py')
 
+    def frames():
+        i = 0
+        while True:
+            yield build(a.kind, a.args, i & 0xFFFF)
+            i += 1
+            if not a.every:
+                break
+            if a.count and i >= a.count:
+                break
+            time.sleep(a.every)
+
+    if a.serial:
+        _run_serial(a, frames())
+        return
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)   # 不 bind：可与记录器共存
     n = 0
     try:
-        while True:
-            frame = build(a.kind, a.args, n & 0xFFFF)
+        for frame in frames():
             sock.sendto(frame, (a.host, a.port))
             n += 1
             print('#%-5d -> %s:%d  %d B  %s' % (n, a.host, a.port, len(frame),
                                                 frame.hex(' ')))
-            if not a.every:
-                break
-            if a.count and n >= a.count:
-                break
-            time.sleep(a.every)
     except KeyboardInterrupt:
         print('中断')
     finally:
