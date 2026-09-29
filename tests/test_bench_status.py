@@ -185,3 +185,16 @@ def test_verdict_turns_counters_into_a_decision():
     # 健康：才允许做场景实验
     v3 = bs.verdict(1200, 0, 0, 0, 1200, 60.0)
     assert any('链路稳定' in l for l in v3)
+
+
+def test_verdict_rates_over_the_frame_stream_not_the_wall_clock():
+    """09-29 现场：启动后 49 秒才有第一帧，之后 135 秒是标准 20Hz。
+    按"总时长"算出 14.6 帧/秒，于是判定叫我们去看根本不存在的 gap 行——分母用错，
+    判据自己打自己脸，还把注意力从"链路其实是好的"引开。钉住分母。"""
+    v = bs.verdict(2703, 0, 0, 0, 2703, 185.0, active=135.1)
+    assert any('20.0 帧/秒' in l for l in v), v
+    assert any('落在帧流之外' in l for l in v), v
+    assert not any('帧率低于' in l for l in v), '不许再把窗口外的沉默说成静默段'
+    # 没传 active 时退回旧行为（总时长），不能因为加了参数就静默改判据
+    v0 = bs.verdict(2703, 0, 0, 0, 2703, 185.0)
+    assert any('14.6 帧/秒' in l for l in v0), v0

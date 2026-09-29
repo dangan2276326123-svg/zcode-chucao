@@ -86,7 +86,7 @@ def configured_pc_ip(root=None):
         return None
 
 
-def verdict(good, bad, out_of_order, resynced, rows, seconds):
+def verdict(good, bad, out_of_order, resynced, rows, seconds, active=None):
     """把小结那几个计数器直接换成判据。
 
     纯函数 + 单测，理由是现场教训：09-28 那份小结里 `重启重同步 6` 已经写得很明白，
@@ -97,10 +97,19 @@ def verdict(good, bad, out_of_order, resynced, rows, seconds):
         return ['判定：一行都没收到。**这不是"接线不通"的证据**，按顺序查发送端：'
                 'X5 上 bridge 在不在跑（`sh ~/qoder/vehicle/start_bridge.sh` 一条命令带过'
                 '清 cat + sudo）→ 本机有没有 config.yaml 里那个 pc_ip → 防火墙。']
-    rate = good / seconds if seconds else 0.0
-    lines = ['判定：%.0f 秒里好帧 %d（约 %.1f 帧/秒，固件设计是 20Hz），坏帧 %d，'
-              '旧序号拒收 %d，重启重同步 %d。' % (seconds, good, rate, bad,
-                                                  out_of_order, resynced)]
+    # 分母必须是**帧流实际覆盖的那段**，不是"从启动到 Ctrl-C"。09-29 现场翻车实例：
+    # 启动后 49 秒 bridge 还没起来，之后 135 秒是一条不漏的 20.00 帧/秒，按总时长算出来
+    # 只有 14.6 帧/秒，于是本函数指着 CSV 说"去看 gap 行"——CSV 里根本没有 gap 行，
+    # 自相矛盾，还把注意力从"链路其实是好的"引开。
+    window = active if (active and active > 0) else seconds
+    rate = good / window if window else 0.0
+    lines = ['判定：帧流覆盖 %.0f 秒，好帧 %d（约 %.1f 帧/秒，固件设计是 20Hz），坏帧 %d，'
+             '旧序号拒收 %d，重启重同步 %d。'
+             % (window, good, rate, bad, out_of_order, resynced)]
+    if active and seconds - active > 3.0:
+        lines.append('  注：另有 %.0f 秒落在帧流之外（开机到首帧、或末帧到结束），已从帧率里'
+                     '剔除。那段时间记录器根本没在读：bridge 还没起来、X5 没通，或者窗口被'
+                     '鼠标选中冻住（快速编辑模式）。它不是链路质量证据。' % (seconds - active))
     if resynced:
         lines.append('  ✗ 出现过 %d 次"重启重同步" ⇒ **板子在复位**（台账 Hw-26 的形状就是'
                      '每轮 2.95 秒）。这段时间里任何模式/动作/方向的观察都不作数；'
@@ -135,6 +144,7 @@ class BenchLog:
                          'current_a', 'batt_v', 'limits', 'note', 'peer'])
         self.prev_mode = None
         self.last_rx = None
+        self.first_rx = None      # 第一帧到达时刻：帧率只该按"帧流覆盖的那段"算
         self.gap_open_at = None
         self.rows = 0
 
@@ -165,6 +175,8 @@ class BenchLog:
             self._row('gap_end', note='静默 %.2f s' % (now - self.gap_open_at))
             self.gap_open_at = None
         self.last_rx = self._row(kind, st, peer=peer)
+        if self.first_rx is None:
+            self.first_rx = now
         return kind
 
     def note(self, text):
@@ -335,8 +347,9 @@ def main():
         print('\n=== 小结 ===')
         print('  行数 %d  好帧 %d  坏帧 %d  乱序 %d  重启重同步 %d'
               % (log.rows, rx.good, rx.bad, rx.out_of_order, rx.resynced))
+        _active = (log.last_rx - log.first_rx) if log.first_rx else None
         for line in verdict(rx.good, rx.bad, rx.out_of_order, rx.resynced,
-                            log.rows, time.time() - log.t0):
+                            log.rows, time.time() - log.t0, active=_active):
             print(line)
         print('  证据文件：%s' % csv_path)
         print('  下一步：把这份 CSV 的路径写进缺口清单 ② 板对应行的"证据"栏，'
