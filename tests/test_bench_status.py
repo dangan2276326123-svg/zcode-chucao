@@ -178,13 +178,25 @@ def test_verdict_turns_counters_into_a_decision():
     assert '一行都没收到' in v0 and 'bridge' in v0
     # 有重同步：直接判"板子在复位"，并指到 Hw-26/Hw-27
     v1 = bs.verdict(111, 0, 305, 6, 111, 20.0)
-    assert any('板子在复位' in l for l in v1) and any('Hw-26' in l for l in v1)
+    assert any('序号反复回退' in l for l in v1) and any('Hw-26' in l for l in v1)
     # 帧率不足但没重同步：说明中间有静默段
     v2 = bs.verdict(200, 0, 0, 0, 240, 60.0)          # 3.3 帧/秒
-    assert any('帧率低于' in l for l in v2)
+    assert any('断流' in l for l in v2)
     # 健康：才允许做场景实验
     v3 = bs.verdict(1200, 0, 0, 0, 1200, 60.0)
     assert any('链路稳定' in l for l in v3)
+
+
+def test_verdict_does_not_pass_dirty_counters_or_trailing_loss():
+    """09-30 复审给的两个反例，原样钉成回归（当时两者都输出"链路稳定"）。"""
+    # 反例一：10 秒 201 帧，之后 60 秒什么都没有 —— 结尾断流必须算进结论
+    v = bs.verdict(201, 0, 0, 0, 201, 70.0, active=10.0)
+    assert not any('链路稳定' in l for l in v), v
+    assert any('断流' in l for l in v), v
+    # 反例二：好帧够，但坏帧/旧序号一大堆 —— 计数不为零就不许放行
+    v2 = bs.verdict(201, 1000, 200, 0, 1401, 10.0, active=10.0)
+    assert not any('链路稳定' in l for l in v2), v2
+    assert any('坏帧 1000' in l for l in v2), v2
 
 
 def test_verdict_rates_over_the_frame_stream_not_the_wall_clock():
@@ -194,7 +206,8 @@ def test_verdict_rates_over_the_frame_stream_not_the_wall_clock():
     v = bs.verdict(2703, 0, 0, 0, 2703, 185.0, active=135.1)
     assert any('20.0 帧/秒' in l for l in v), v
     assert any('落在帧流之外' in l for l in v), v
-    assert not any('帧率低于' in l for l in v), '不许再把窗口外的沉默说成静默段'
+    # 09-30 修正：窗口外的沉默**不再被豁免**，它照样是断流，只是不污染平均速率
+    assert any('断流' in l for l in v), '开机等待可以剔除，结尾/开头的长断流必须仍然报警'
     # 没传 active 时退回旧行为（总时长），不能因为加了参数就静默改判据
     v0 = bs.verdict(2703, 0, 0, 0, 2703, 185.0)
     assert any('14.6 帧/秒' in l for l in v0), v0

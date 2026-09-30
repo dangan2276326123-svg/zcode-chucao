@@ -60,6 +60,10 @@ from common import protocol as P          # noqa: E402
 
 # 与固件 retrofit.h:11-13 一致；不在这三个值里的原样打印数字，不替它编名字。
 MODE_NAME = {0: 'MANUAL', 1: 'AUTO', 2: 'ESTOP'}
+# 每种命令应当把 mode 推到哪一态（依据 retrofit.c:93/:102/:110/:121 与 :70-73）。
+# 心跳的"预期"是"从 AUTO 回 MANUAL"，所以只在发过 NAV 之后才有意义——单独发心跳
+# 观察不到转移属正常，不算失败。
+EXPECTED = {'nav': 1, 'estop': 2, 'tool': None, 'beat': 0}
 
 
 def build(kind, args, seq):
@@ -97,6 +101,8 @@ def _read_status(ser, stop, out):
             if st is None:
                 continue
             out['good'] += 1
+            if 'baseline' not in out:
+                out['baseline'] = st['mode']   # 发送开始前采到的 mode，判"是不是本次发送引起的"靠它
             if st['mode'] != prev:
                 out['changes'].append((round(time.time() - out['t0'], 2),
                                        prev, st['mode']))
@@ -115,7 +121,7 @@ def _run_serial(a, frame_iter):
     except Exception as exc:
         sys.exit('打不开 %s（%s）。确认 COM 号、有没有被别的程序占用、以及是否 115200。'
                  % (a.serial, exc))
-    out = {'good': 0, 'changes': [], 't0': time.time()}
+    out = {'good': 0, 'changes': [], 't0': time.time()}   # baseline 由读线程填
     stop = threading.Event()
     th = threading.Thread(target=_read_status, args=(ser, stop, out), daemon=True)
     th.start()
@@ -139,15 +145,29 @@ def _run_serial(a, frame_iter):
     print('\n读了 %d 帧 STATUS；模式跳变 %d 次：' % (out['good'], len(out['changes'])))
     for t, frm, to in out['changes']:
         print('  %6.2fs  %s -> %s' % (t, MODE_NAME.get(frm, '-'), MODE_NAME.get(to, to)))
-    if any(to == 1 for _, _, to in out['changes']):
-        print('判定：mode 跳过 AUTO ⇒ **大板的 PC7（USART6 RX）收得进**，'
-              '问题在 X5 那一侧或它到 PC7 的那根线，不在这块板。')
-    elif out['good'] == 0:
-        print('判定：一帧都没读到 ⇒ 这条测试本身没成立（收的方向就没通），不能得出发送结论。')
+    # 09-30 复审（codex 新发现三）打中的正是这里：原来不管发什么都只问"有没有出现过 AUTO"，
+    # 于是发 ESTOP（MANUAL→ESTOP 是预期响应）会被判成"一直在 MANUAL，去查接线"，
+    # 而发送前本来就是 AUTO 时又会误判"收得进"。现在：先取**发送前基线**，再按命令要的预期
+    # 转移来判，并且明确区分"没观察到变化"与"证据不足"。
+    base = out.get('baseline')
+    expect = EXPECTED.get(a.kind)
+    print('发送前基线 mode=%s；本次发的是 %s，预期转移=%s'
+          % (MODE_NAME.get(base, base if base is not None else '未采到'),
+             a.kind, MODE_NAME.get(expect, '—')))
+    seen = {to for _, _, to in out['changes']}
+    if out['good'] == 0:
+        print('判定：一帧 STATUS 都没读到 ⇒ 这条测试本身不成立（收的方向就没通），'
+              '不能对发送方向下任何结论。')
+    elif expect is not None and expect in seen and base != expect:
+        print('判定：观察到 %s -> %s ⇒ **大板收进了我们发的帧**。'
+              % (MODE_NAME.get(base, base), MODE_NAME.get(expect, expect)))
+    elif expect in seen:
+        print('判定：看到过 %s，但它与发送前基线相同 ⇒ **不能证明是本次发送引起的**，'
+              '重测前先确认基线。' % MODE_NAME.get(expect, expect))
     else:
-        print('判定：一直在 MANUAL ⇒ 大板没听到我们发的东西。查三件：'
-              'USB-TTL 的 TXD 是否真的落在 PC7 网络上（T6 上的 A_4/B_4 不是 PC7，'
-              '见台账 Hw-1 的 09-28 重写）、共地有没有接、有没有第二个驱动源在同一根线上。')
+        print('判定：未观察到预期转移（实际看到 %s）。可能是没收到，也可能是'
+              'ESTOP 锁存把 NAV/TOOL 正常拒绝了（Fw-14）——两者结论完全不同，'
+              '先断电清锁存再测。' % (sorted({MODE_NAME.get(x, str(x)) for _, _, x in out['changes']}) or '无变化'))
 
 
 def main():
