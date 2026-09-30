@@ -132,6 +132,17 @@ def verdict(good, bad, out_of_order, resynced, rows, seconds, active=None):
     return lines
 
 
+def unique_path(path):
+    """已存在就往后加 _2/_3……返回一个**还不存在**的路径（配合 BenchLog 的 'x' 打开）。"""
+    if not os.path.exists(path):
+        return path
+    stem, ext = os.path.splitext(path)
+    n = 2
+    while os.path.exists('%s_%d%s' % (stem, n, ext)):
+        n += 1
+    return '%s_%d%s' % (stem, n, ext)
+
+
 def classify(prev_mode, mode):
     """这一行该记成什么类型。抽成纯函数以便单测——瞬时行为取证最怕'当时没注意'。"""
     if prev_mode is None:
@@ -147,7 +158,9 @@ class BenchLog:
     def __init__(self, path, t0=None):
         self.path = path        # 小结与调用方都要能拿到证据文件名
         self.t0 = t0 if t0 is not None else time.time()
-        self.f = open(path, 'w', newline='', encoding='utf-8')
+        # 'x' 而不是 'w'：09-30 复审指出，默认目录只到分钟，同一分钟重跑一次就会
+        # 把上一份证据**静默清空**——而台账里可能已经引用过它。宁可报错也不覆盖。
+        self.f = open(path, 'x', newline='', encoding='utf-8')
         self.w = csv.writer(self.f)
         self.w.writerow(['t_rel', 'iso', 'kind', 'seq', 'mode', 'speed',
                          'current_a', 'batt_v', 'limits', 'note', 'peer'])
@@ -236,6 +249,22 @@ def _during_note(ctr):
             '⇒ 链路并没有真的静默，是发送端在重启或协议错位' % ctr['rejected'])
 
 
+def _alarm_note(rx, log, ctr, cooldown_s=5.0):
+    """坏帧洪水也要落一条 note。
+
+    09-30 复审指出：原来 `rx.alarm()` 的检查放在**有效帧**路径之后，而主循环遇到
+    坏帧就 `continue` —— 于是"坏帧持续到达"这个 alarm 设计要抓的唯一场景，恰恰永远
+    走不到检查那一行，ALARM 形同虚设。现在由 pump_once 在拒收分支里调用。
+    """
+    if not rx.alarm():
+        return
+    nowt = time.time()
+    if ctr.get('alarm_at') and nowt - ctr['alarm_at'] < cooldown_s:
+        return                                  # 洪水期间每 5 秒最多一条，别淹掉时间轴
+    ctr['alarm_at'] = nowt
+    log.note('ALARM 坏帧告警（1 秒内 >=5 个坏帧，疑似 PC/固件协议错位）')
+
+
 def pump_once(data, addr, rx, log, ctr, now=None):
     """处理一次 recvfrom 的结果，返回 (kind, status_dict)；没东西可打印时 (None, None)。
 
@@ -253,6 +282,7 @@ def pump_once(data, addr, rx, log, ctr, now=None):
         st = rx.handle(data)
         if st is None:
             ctr['rejected'] += 1
+            _alarm_note(rx, log, ctr)
         else:
             ctr['rejected'] = 0
             kind = log.frame(st, peer=addr[0])
@@ -292,7 +322,10 @@ def main():
     # 绑定成功之后才建日志：先建再绑的话，被拒的那一次会在盘上留下一个空 CSV，
     # 事后翻 results/ 会多出假证据文件。
     os.makedirs(out_dir, exist_ok=True)
-    csv_path = os.path.join(out_dir, 'bench_log.csv')
+    csv_path = unique_path(os.path.join(out_dir, 'bench_log.csv'))
+    if csv_path.endswith('_2.csv') or '_3.csv' in csv_path or '_4.csv' in csv_path:
+        print('注意：同一目录里已有别的记录文件，本次另存为 %s（旧文件不覆盖）'
+              % os.path.basename(csv_path))
     log = BenchLog(csv_path)
     rx = StatusReceiver()
 
@@ -346,8 +379,7 @@ def main():
                   % (st.get('t', 0) or time.time() - log.t0, st['seq'],
                      MODE_NAME.get(st['mode'], st['mode']), st['speed_mps'],
                      st['current_a'], st['battery_v'], st['limits'], lim, tag))
-            if rx.alarm():
-                log.note('ALARM 坏帧告警（疑似 PC/固件协议错位）')
+
     except KeyboardInterrupt:
         pass
     finally:

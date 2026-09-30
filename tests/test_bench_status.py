@@ -211,3 +211,42 @@ def test_verdict_rates_over_the_frame_stream_not_the_wall_clock():
     # 没传 active 时退回旧行为（总时长），不能因为加了参数就静默改判据
     v0 = bs.verdict(2703, 0, 0, 0, 2703, 185.0)
     assert any('14.6 帧/秒' in l for l in v0), v0
+
+
+def test_existing_evidence_is_never_overwritten(tmp_path):
+    """09-30 复审指出：默认目录只到分钟，同一分钟重跑会把上一份证据静默清空，
+    而台账里可能已经引用过那个路径。宁可另存，绝不覆盖。"""
+    path = os.path.join(str(tmp_path), 'bench_log.csv')
+    first = bs.BenchLog(path)
+    first.note('第一轮证据')
+    first.close()
+    before = open(path, 'rb').read()
+
+    raised = False
+    try:
+        bs.BenchLog(path)
+    except FileExistsError:
+        raised = True
+    assert raised, 'BenchLog 必须以独占创建打开，拒绝覆盖已存在的证据'
+    assert open(path, 'rb').read() == before, '被拒绝的那一次不许动旧文件一个字节'
+
+    alt = bs.unique_path(path)
+    assert alt != path and not os.path.exists(alt)
+    bs.BenchLog(alt).close()
+    assert os.path.exists(alt)
+    assert bs.unique_path(alt) != alt          # 再来一次又要换名，不能回头覆盖
+
+
+def test_alarm_lands_even_when_no_frame_is_good(tmp_path):
+    """ALARM 设计要抓的唯一场景就是"坏帧持续到达"，可它原来挂在有效帧之后 ——
+    st 为 None 就 continue，永远走不到。钉住拒收分支上的这条路径。"""
+    log, rx = _mklog(tmp_path), StatusReceiver()
+    ctr = {'rejected': 0}
+    junk = bytes([0xA5, 0x5A, 0x03, 0x00, 0x10, 0x00, 0x00, 0xFF, 0xFF])   # 长度与 CRC 都不对
+    base = time.time()
+    for i in range(8):
+        bs.pump_once(junk, ('127.0.0.1', 1), rx, log, ctr, now=base + 0.01 * i)
+    notes = [r['note'] for r in _rows(log) if r['kind'] == 'note']
+    assert any('ALARM' in n for n in notes), '坏帧洪水必须落一条 note'
+    assert len([n for n in notes if 'ALARM' in n]) == 1, '洪水期间要有冷却，别淹掉时间轴'
+    log.close()
