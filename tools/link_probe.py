@@ -13,12 +13,18 @@
 都是这么来的。
   mode_auto / mode_manual / clear
          -> 发 MODE(0x01 / 0x00 / 0x10)，预期 mode 从**基线**跳到对应态；
-            发送前就已经是那个态 => INCONCLUSIVE（不能证明是本次发送引发的）。
+            发送前就已经是那个态 => INCONCLUSIVE（不能证明是本次发送引发的）；
+            连发送前基线都没采到（暖机期内一帧 STATUS 都没读到）=> 同样 INCONCLUSIVE——
+            初始态证明不了因果，`judge()` 作为公开纯函数也不给这种入参印 PASS。
   estop  -> 预期 MANUAL -> ESTOP（这是旧判据误报的那一条）。
   nav    -> A2 之后 NAV **不再改 mode**，判据反过来：收到 STATUS 且 mode 没变才算 PASS；
-            mode 变了说明板上还是旧固件（F1 那个洞还没补）或另有东西在发帧。
+            mode 变了说明板上还是旧固件（F1 那个洞还没补）、另有东西在发帧、
+            或者**旁边有人在动遥控器/按了急停**（最后这条在台架上最常见，是合法跳变，
+            不是固件故障——三种可能都列出来，免得把 FAIL 一口读成固件坏了）。
   tool / beat -> 不以 mode 变化为判据（心跳把 AUTO 放回 MANUAL 本来就是预期，
             见 `retrofit.c:70-73`；单独发心跳观察不到转移属正常，不算失败）。
+            这两条的 PASS 文案只说"链路收到 STATUS"，**不说权限有没有变化**——
+            mode 到底变没变这两条根本没检查，写上去就是越过证据的话（AGENTS 清单第 5 条）。
 一帧 STATUS 都没收到才说"查串口/桥接/接线"；`reject != 0` 是**正常响应**——链路明明通了、
 只是权限没给，所以要报中文原因，不许写成"链路不通"。
 
@@ -122,6 +128,12 @@ def judge(kind, baseline_mode, seen_modes, reject_codes):
 
     前提（由 `_read_status` 保证）：seen_modes 是**发送开始之后**观察到的态，
     baseline_mode 是发送开始前最后一帧的态。二者混用就等于回到旧判据。
+
+    两条契约（2026-10-08 收尾批）：
+      - baseline_mode 为 None 时**不给 PASS**——没有基线就无从谈"这次发送引发了变化"，
+        即使调用方漏传（`_run_serial` 当前不会漏）也只能得 INCONCLUSIVE。
+      - detail 只写证据支持得到的话：tool/beat 不以 mode 变化为判据，也就没检查过
+        mode 变没变，它们的 PASS 文案里不出现"权限"字样（口径，AGENTS 清单第 5 条）。
     """
     if not seen_modes:
         if baseline_mode is None:
@@ -139,22 +151,35 @@ def judge(kind, baseline_mode, seen_modes, reject_codes):
     rejects = [c for c in reject_codes if c]      # 0 = "没有拒绝"，不是拒绝码
 
     if want is None:
-        # nav / tool / beat：判据是"链路活着且没有意外越权"
+        # nav / tool / beat 的判据是"链路活着"；只有 nav 还**真的**比较了基线与观察态。
+        # 文案必须跟着证据走（AGENTS 清单第 5 条）：没检查过的事不许写进结论里。
         if kind == 'nav':
             if baseline_mode is None:
                 return 'INCONCLUSIVE', '没有发送前基线，"mode 有没有变"这条无从判断'
             if any(m != baseline_mode for m in seen_modes):
                 return 'FAIL', ('NAV 之后 mode 变了（%s）——A2 之后 NAV 不许改权限，'
-                                '说明板上还是旧固件（F1 洞还没补）或有别的东西在发帧'
+                                '三种可能都要查：板上还是旧固件（F1 洞还没补）、'
+                                '有别的东西在发帧、或者旁边有人在动遥控器/按了急停'
+                                '（最后那条是合法跳变，不是固件故障）'
                                 % _mode_text(seen_modes))
-        text = '收到 STATUS，且没有意外的权限变化'
+            text = '收到 STATUS，且 mode 相对发送前基线没有变化'
+        else:
+            # tool / beat：不以 mode 变化为判据，mode 变没变本次**没有检查**，
+            # 所以这里只说链路，不说权限。
+            text = '收到 STATUS；本命令不以 mode 变化为判据（mode 变没变本次没有检查）'
         if rejects:
-            text += ('；但板子挂着 reject=0x%02X（%s）——那是权限的事，不是链路的事'
+            text += ('；但板子挂着 reject=0x%02X（%s）——那是板子对某条请求的答复，'
+                     '不是链路不通（reject 记的是"最近一次拒绝"，可能来自更早那条请求）'
                      % (rejects[-1], P.REJECT_TEXT.get(rejects[-1],
                                                        '未知拒绝码 %d' % rejects[-1])))
         return 'PASS', text
 
     if want in seen_modes:
+        if baseline_mode is None:
+            # 初始态证明不了因果（与"发送前就已经是 AUTO"同一个道理）：没有基线，
+            # 观察到的期望态既可能是本次发送引发的，也可能一直就在。
+            return 'INCONCLUSIVE', ('没有发送前基线（发送前那一段一帧 STATUS 都没读到），'
+                                    '无法确认观察到的 %s 是本次发送引发的' % MODE_NAME[want])
         if baseline_mode == want:
             return 'INCONCLUSIVE', ('发送前就已经是 %s，不能证明是这次发送引发的'
                                     % MODE_NAME[want])

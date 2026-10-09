@@ -188,6 +188,60 @@ def test_judge_tool_and_beat_are_not_judged_by_mode_change():
                     reject_codes=[])[0] == 'PASS'
 
 
+# ---- 审查遗留四条（口径与契约收口；每条都做过"旧写法下必红"反查）----
+
+
+@pytest.mark.parametrize('kind, reject_codes', [
+    ('tool', []), ('beat', []), ('tool', [3]), ('beat', [7]),
+])
+def test_judge_tool_and_beat_pass_text_claims_only_what_was_checked(kind, reject_codes):
+    """Important：tool/beat 根本没检查 mode 变化，PASS 文案就不许写"没有意外的权限变化"。
+
+    verdict=PASS 本身是 brief 契约（EXPECTED 里 tool/beat = None），错的是那句**越过证据**
+    的话（AGENTS 清单第 5 条：不得声称没检验的事）。reject 后缀是观察到的码，可以提，
+    但只能说"板子对某条请求的答复"，不许被读成"本次检查过权限、没查出问题"。
+    """
+    v, detail = lp.judge(kind, baseline_mode=0, seen_modes=[0, 2],
+                         reject_codes=reject_codes)
+    assert v == 'PASS'
+    assert '权限' not in detail
+    assert '收到 STATUS' in detail
+
+
+@pytest.mark.parametrize('kind, want', [
+    ('mode_auto', 1), ('mode_manual', 0), ('estop', 2), ('clear', 0),
+])
+def test_judge_never_credits_a_transition_without_a_baseline(kind, want):
+    """Minor-1：没有发送前基线时，"看到了期望态"不能算 PASS——初始态说明不了因果。
+
+    从 `_run_serial` 当前走不到这里（暖机期内它会先打一行警告），这条收的是 `judge()`
+    作为公开纯函数的契约：调用方漏传基线时不许印出一个 PASS。
+    """
+    v, detail = lp.judge(kind, baseline_mode=None, seen_modes=[want], reject_codes=[])
+    assert v == 'INCONCLUSIVE'
+    assert '基线' in detail
+
+
+@pytest.mark.parametrize('seen_modes', [[0], [0, 1]])
+def test_judge_nav_without_baseline_is_inconclusive(seen_modes):
+    """Minor-3：nav 的"mode 有没有变"必须有基线才能判——没基线给 INCONCLUSIVE。
+
+    旧写法把 `m != None` 恒真当成"变了"，印出一个 FAIL，把"没采到基线"说成"固件有问题"。
+    """
+    v, detail = lp.judge('nav', baseline_mode=None, seen_modes=seen_modes,
+                         reject_codes=[])
+    assert v == 'INCONCLUSIVE'
+    assert '基线' in detail
+
+
+def test_judge_nav_fail_names_a_human_at_the_tx_as_a_cause():
+    """Minor-2：台架最常见的跳变是有人在旁边动遥控器/按急停，那是合法跳变不是故障。"""
+    v, detail = lp.judge('nav', baseline_mode=0, seen_modes=[0, 2], reject_codes=[])
+    assert v == 'FAIL'
+    assert '遥控器' in detail
+    assert '旧固件' in detail      # 归因列全，但旧固件那条不许被换掉
+
+
 def test_mode_name_and_expected_tables_match_the_e3_contract():
     """两张表是 brief 定下的契约：MODE 含 TELEOP，nav 的预期不再是 mode=1。"""
     assert lp.MODE_NAME == {0: 'MANUAL', 1: 'AUTO', 2: 'ESTOP', 3: 'TELEOP'}
@@ -372,6 +426,8 @@ def test_probe_fails_nav_when_the_board_still_treats_nav_as_auto(capsys, monkeyp
     text = capsys.readouterr().out
     assert '判定：FAIL' in text
     assert '旧固件' in text
+    # Minor-2：打印层面也要看得见"人在旁边动过"这一种可能，否则 FAIL 会被读成固件故障。
+    assert '遥控器' in text
 
 
 def test_probe_names_the_reject_reason_instead_of_the_link(capsys, monkeypatch):
