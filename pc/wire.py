@@ -39,6 +39,9 @@ def frames_for_state(state, usable, vl, vr, tool_mm, permit=GATE_N):
       - ESTOP → 稳态不发帧（跳变那一拍由调用方发一次 ESTOP 帧）。
     许可位（spec §5.3）：GATE_N 下横移恒 0、刀位恒 0x07；
       GATE_F 下只有 "AUTO 且视觉可用" 才允许落刀（lift=0）。
+    未知许可位一律 ValueError（fail-closed）：0 / None / '' / 名字串都不等于
+      "允许落刀"。依据是计划 Global Constraints——任何拿不到的量都不得当作满足；
+      批 1a 之前固件侧还没有 REJECT_PERMIT，PC 这一关是唯一闸门。
     """
     if state not in HOLDING:
         if state == 'ESTOP':
@@ -50,9 +53,11 @@ def frames_for_state(state, usable, vl, vr, tool_mm, permit=GATE_N):
 
     if permit == GATE_N:
         off, lift = 0.0, 0x07
-    else:
+    elif permit == GATE_F:
         off = tool_mm
         lift = 0x00 if (state == 'AUTO' and usable) else 0x07
+    else:
+        raise ValueError('unknown permit %r' % permit)
 
     return [(P.TYPE_NAV, P.pack_nav(vl, vr)),
             (P.TYPE_TOOL, P.pack_tool(off, lift))]

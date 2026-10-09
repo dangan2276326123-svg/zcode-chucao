@@ -50,10 +50,34 @@ def test_gate_f_allows_knives_down_only_when_auto_and_usable():
     assert P.unpack_tool(up[1][1]) == (0.0, 0x07)
 
 
+# 审查 Important #1（任务审查 a1579e8）：permit 是本任务唯一的"执行许可"闸门。
+# 旧实现 `if permit == GATE_N: ... else: <GATE_F 语义>` 是 fail-open——实测
+# permit=0 / None / 'gate_f' / 'gate_n'（字符串）全都返回 TOOL(off=5.0, lift=0x00)，
+# 也就是门 N 的样机静默落刀 + 横移，而固件侧的 REJECT_PERMIT 要到批 1a 烧录后才存在。
+# 计划 Global Constraints 写的是"任何拿不到的量都不得当作满足 / fail-closed"，
+# 所以这里不猜：未知许可位一律 ValueError。（数值上等于 1/2 的 1.0/2.0/True 仍按
+# 相等的档位处理，因为那是 Python 的 ==，不是本模块的宽容。）
+@pytest.mark.parametrize('permit',
+                         [0, None, '', 3, -1, 2.5, 'gate_n', 'gate_f', 'GATE_F'])
+def test_unknown_permit_is_rejected_not_read_as_gate_f(permit):
+    with pytest.raises(ValueError):
+        wire.frames_for_state('AUTO', True, 0.2, 0.2, 5.0, permit)
+
+
 def test_lift_state_holds_authority_with_zero_speed():
     frames = wire.frames_for_state('LIFT', False, 0.0, 0.0, 0.0, wire.GATE_F)
     assert _kinds(frames) == [P.TYPE_NAV, P.TYPE_TOOL]
     assert P.unpack_tool(frames[1][1]) == (0.0, 0x07)
+    # 审查 Important #2（任务审查 a1579e8）：上面传的仍是 usable=False，于是
+    # "LIFT 专属保护"零覆盖——把 wire.py 的 `or state == 'LIFT'` 删掉，或把
+    # `lift = 0x00 if (state == 'AUTO' and usable)` 削成 `if usable`，10 条全绿
+    # （变异验证见 task-2-report.md「fix round 1」）。而 usable=True 的 LIFT 在现网
+    # 可达：pc/main.py 从未调用 vision_ok()，视觉恢复后状态会停在 LIFT 且 usable 为真。
+    # 测试名叫 ..._with_zero_speed，就必须真的查 NAV 速度——下面把两条都钉住。
+    held = wire.frames_for_state('LIFT', True, 0.2, 0.2, 5.0, wire.GATE_F)
+    assert _kinds(held) == [P.TYPE_NAV, P.TYPE_TOOL]
+    assert P.unpack_nav(held[0][1])[:2] == (0.0, 0.0)   # 速度锁零
+    assert P.unpack_tool(held[1][1]) == (0.0, 0x07)     # 刀锁提
 
 
 def test_estop_emits_nothing_every_beat():
