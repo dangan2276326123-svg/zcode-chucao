@@ -6,7 +6,9 @@ Frame layout (v0.4 Table 3):
   crc16 = CRC-16/CCITT-FALSE over all bytes AFTER the 2-byte header
   (len, type, seq, payload).
 
-Types: 1 NAV, 2 ESTOP, 3 HEARTBEAT, 4 TOOL, 0x10 STATUS.
+Types: 1 NAV, 2 ESTOP, 3 HEARTBEAT, 4 TOOL, 5 MODE (E3), 0x10 STATUS.
+STATUS payload is 14 B on firmware before E3 and 19 B after; unpack_status_any()
+dispatches on payload length (spec §3.5).
 """
 import struct
 
@@ -19,6 +21,58 @@ TYPE_ESTOP = 2
 TYPE_HEARTBEAT = 3
 TYPE_TOOL = 4
 TYPE_STATUS = 0x10
+
+TYPE_MODE = 5           # E3: 权限申请/交回/解除急停/档案握手（spec §3.1）
+
+# MODE.request（spec §3.1）
+MODE_REQ_MANUAL = 0x00        # 交回人工
+MODE_REQ_AUTO = 0x01          # 申请无人
+MODE_REQ_TELEOP = 0x02        # 申请遥操作（批 2 实现；固件回 REJECT_NOT_IMPL）
+MODE_REQ_CLEAR_ESTOP = 0x10   # 解除急停（A3 单确认）
+MODE_REQ_PROFILE = 0x20       # 档案握手，profile 字段有效
+
+# 车辆档案（spec §2 / §6）
+PROFILE_NONE = 0
+PROFILE_PREV = 1        # 上代车 3.25 m
+PROFILE_REAL = 2        # 样机 2.15 m
+
+# STATUS.authority = 最近一次权限变迁的原因（spec §3.2）
+AUTH_BOOT = 0
+AUTH_PC_GRANTED = 1
+AUTH_FIELD_TAKEOVER = 2
+AUTH_RCS_LOST = 3
+AUTH_LINK_LOST_ESTOP = 4
+AUTH_PC_CLEAR_ESTOP = 5
+AUTH_PC_RELEASE = 6
+AUTH_HEARTBEAT_RELEASE = 7
+
+# STATUS.reject（spec §3.3）
+REJECT_NONE = 0
+REJECT_PROFILE = 1
+REJECT_RCS_STALE = 2
+REJECT_FIELD_SWITCH = 3
+REJECT_ESTOP_LATCHED = 4
+REJECT_LOOP_STALLED = 5
+REJECT_NOT_IMPL = 6
+REJECT_FIELD_LATCHED = 7
+REJECT_PERMIT = 8
+
+REJECT_TEXT = {
+    REJECT_NONE: '',
+    REJECT_PROFILE: '档案不符（PC 与固件不是同一台车）',
+    REJECT_RCS_STALE: '遥控不新鲜（接收机断链或未同步）',
+    REJECT_FIELD_SWITCH: '现场拨档不在"允许无人"位',
+    REJECT_ESTOP_LATCHED: '急停仍锁存',
+    REJECT_LOOP_STALLED: '执行面停摆（主循环计数不变，见 Fw-21）',
+    REJECT_NOT_IMPL: '该模式本批未实现',
+    REJECT_FIELD_LATCHED: '已被现场夺权，锁存中',
+    REJECT_PERMIT: '许可位拒绝（门 N 下不许落刀/横移）',
+}
+
+STATUS_V1_LEN = 14
+STATUS_V2_LEN = 19
+STATUS_V1_FMT = '<fffBB'
+STATUS_V2_FMT = '<fffBBBBBBB'   # + profile, authority, loop_alive, build_id, reject
 
 _MAX_PAYLOAD = 512
 
@@ -128,3 +182,53 @@ def unpack_status(payload: bytes):
     if len(payload) != 14:
         raise ValueError('status payload must be 14 bytes')
     return struct.unpack('<fffBB', payload)
+
+
+# ---- E3 批 1b：MODE 帧与 STATUS v2（spec §3.1 / §3.2 / §3.5）--------------
+
+def wire_len(payload_len: int) -> int:
+    """线上总字节 = 载荷 + 9（2 头 + 2 长 + 1 型 + 2 序 + 2 CRC）。"""
+    return payload_len + HEADER_LEN + META_LEN + 2
+
+
+def pack_mode(request: int, profile: int = 0) -> bytes:
+    """MODE payload: request code + 档案号（只在 MODE_REQ_PROFILE 时有意义）。"""
+    return struct.pack('<BB', request, profile)
+
+
+def unpack_mode(payload: bytes):
+    if len(payload) != 2:
+        raise ValueError('mode payload must be 2 bytes')
+    return struct.unpack('<BB', payload)
+
+
+def pack_status_v2(speed: float, current_a: float, battery_v: float,
+                   limits: int, mode: int, profile: int, authority: int,
+                   loop_alive: int, build_id: int, reject: int) -> bytes:
+    """STATUS v2 (19 B) — spec §3.2。loop_alive/build_id/reject 都是 u8。"""
+    return struct.pack(STATUS_V2_FMT, speed, current_a, battery_v, limits, mode,
+                       profile, authority, loop_alive & 0xFF,
+                       build_id & 0xFF, reject)
+
+
+def unpack_status_any(payload: bytes) -> dict:
+    """按载荷长度分派（A8）：14 B = v1（E3 之前的固件），19 B = v2。
+
+    v1 时 E3 那五个键返回 None，这样调用方能区分"旧固件"与"新固件报了 0"。
+    其它长度一律 ValueError —— 字段错位必须炸，不能静默读歪。
+    """
+    if len(payload) == STATUS_V1_LEN:
+        speed, cur, bat, limits, mode = struct.unpack(STATUS_V1_FMT, payload)
+        return {'speed_mps': speed, 'current_a': cur, 'battery_v': bat,
+                'limits': limits, 'mode': mode, 'profile': None,
+                'authority': None, 'loop_alive': None, 'build_id': None,
+                'reject': None, 'v': 1}
+    if len(payload) == STATUS_V2_LEN:
+        (speed, cur, bat, limits, mode, profile, authority,
+         loop_alive, build_id, reject) = struct.unpack(STATUS_V2_FMT, payload)
+        return {'speed_mps': speed, 'current_a': cur, 'battery_v': bat,
+                'limits': limits, 'mode': mode, 'profile': profile,
+                'authority': authority, 'loop_alive': loop_alive,
+                'build_id': build_id, 'reject': reject, 'v': 2}
+    raise ValueError('status payload must be %d or %d bytes, got %d'
+                     % (STATUS_V1_LEN, STATUS_V2_LEN, len(payload)))

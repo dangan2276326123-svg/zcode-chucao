@@ -37,6 +37,12 @@ def build_vectors():
     vecs.append(('bad_crc_must_reject', bytes(good)))
     # 8. truncated frame (parser must reject)
     vecs.append(('truncated_must_reject', P.pack_frame(P.TYPE_NAV, P.pack_nav(0.1, 0.1), 8)[:-2]))
+    # 9-10. E3 MODE frames (spec §3.1): 权限申请与解除急停
+    vecs.append(('mode_auto', P.pack_frame(P.TYPE_MODE, P.pack_mode(P.MODE_REQ_AUTO, P.PROFILE_PREV), 9)))
+    vecs.append(('mode_clear', P.pack_frame(P.TYPE_MODE, P.pack_mode(P.MODE_REQ_CLEAR_ESTOP, P.PROFILE_PREV), 10)))
+    # 11. E3 STATUS v2, 19 B payload / 28 B on the wire (spec §3.2 / §3.5)
+    vecs.append(('status_v2', P.pack_frame(P.TYPE_STATUS, P.pack_status_v2(
+        0.0, 0.0, 48.0, 0, 1, P.PROFILE_PREV, P.AUTH_PC_GRANTED, 1, 0x3A, P.REJECT_NONE), 11)))
     return vecs
 
 
@@ -54,10 +60,11 @@ def sender(port, baud=115200, interval=0.1):
         for name, data in build_vectors():
             if 'must_reject' in name:
                 continue
-            frame = P.pack_frame(P.TYPE_NAV if name.startswith('nav') else
-                                 P.TYPE_TOOL if name.startswith('tool') else
-                                 P.TYPE_ESTOP if name.startswith('estop') else
-                                 P.TYPE_HEARTBEAT, data[7:-2], seq)
+            # 帧类型取自向量本身（unpack_frame），不再按名字前缀猜。
+            # 旧的猜测链只认 nav/tool/estop，mode_* 与 status_v2 会掉进最后的
+            # HEARTBEAT 分支——台架上就成了"发出去的是心跳"，对拍必错。
+            frame_type, _vector_seq, payload = P.unpack_frame(data)
+            frame = P.pack_frame(frame_type, payload, seq)
             ser.write(frame)
             print('%s seq=%d %d B' % (name, seq, len(frame)))
             seq = (seq + 1) & 0xFFFF
