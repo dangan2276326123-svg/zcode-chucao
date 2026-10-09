@@ -30,8 +30,9 @@ class StateMachine:
 
     # -- events ---------------------------------------------------------
     def go_auto(self, confidence_ok=True):
-        """User AUTO request; refused unless confidence is healthy and
-        not latched in ESTOP."""
+        """User AUTO request; refused unless confidence is healthy,
+        not latched in ESTOP, and the L2.5 confirm gate has been cleared
+        (needs_confirm — see confirm_continue())."""
         if self.state == self.ESTOP:
             return False
         if self.needs_confirm:
@@ -75,7 +76,15 @@ class StateMachine:
         return False
 
     def confirm_continue(self):
-        """L2.5 的人工确认键：清标志。返回是否真的清掉了。"""
+        """L2.5 的人工确认键：清标志。返回是否真的清掉了。
+
+        ESTOP 态一律拒绝（任务审查 I-2）：急停不是"告警消除"。若让确认键在 ESTOP
+        里返回 True 并清掉标志，"无墙且无独立边界依据必须人工确认"这道闸门就被
+        消费掉了，复归之后可以直接无确认进无人——ESTOP 与 L2.5 是两个不同问题，
+        各确认各的（fail-closed：闸门保留到 clear_estop() 之后再按一次为止）。
+        """
+        if self.state == self.ESTOP:
+            return False
         if not self.needs_confirm:
             return False
         self.needs_confirm = False
@@ -105,5 +114,12 @@ class StateMachine:
 
     @property
     def tools_raised(self):
-        """E3 §5.3：门 N 下 AUTO 也提刀；只有门 F 的 AUTO 才允许落刀。"""
-        return self.state != self.AUTO or self.permit == wire.GATE_N
+        """E3 §5.3：门 N 下 AUTO 也提刀；只有门 F 的 AUTO 才允许落刀。
+
+        判据写成"**不是门 F**"而不是"== 门 N"（任务审查 I-1，控制器裁定照修）：
+        未知/配错的许可位（0、None、没经 wire.PERMIT_BY_NAME 映射的 'gate_f' 串）
+        一律按"提刀"处理。依据是计划自己的 Global Constraints——任何拿不到的量
+        都不得当作满足；这与 pc/wire.py 对未知许可位抛 ValueError 是同一个洞的两半。
+        合法值行为不变：门 N 的 AUTO = True，门 F 的 AUTO = False。
+        """
+        return self.state != self.AUTO or self.permit != wire.GATE_F

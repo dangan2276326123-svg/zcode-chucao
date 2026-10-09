@@ -413,3 +413,54 @@ def test_state_machine_names_are_all_known_to_wire():
                                'holding/non-holding in wire.HOLDING: %s'
                                % sorted(declared - known))
 
+
+# ---- E3 批 1b Task 3 fix round 1（任务审查 I-1 / I-2）--------------------
+
+def test_tools_raised_is_fail_closed_for_unknown_permit():
+    """I-1：未知许可位不得被当成"允许落刀"。
+
+    brief 的字面表达式 `permit == GATE_N` 对配错的值（0 / None / 直接传 yaml
+    字符串 'gate_f' 而没经 wire.PERMIT_BY_NAME 映射）返回 tools_raised=False，
+    也就是 fail-open——而 tools_raised 从 Task 4/5 起就是 HUD/联锁的"刀已提"读数源。
+    收口理由不是改契约：计划自己的 Global Constraints 写着"任何拿不到的量都不得
+    当作满足"，且这与 pc/wire.py 里"未知许可位一律 ValueError"（Task 2 审查
+    Important #1 已就地收口）是同一个洞的两半。合法值行为一条都不变。
+    """
+    for bad in (0, None, 'gate_f', ''):
+        sm = StateMachine(permit=bad)
+        assert sm.go_auto(), 'permit validation is not go_auto\'s job'
+        assert sm.tools_raised, ('unknown permit %r must NOT read as '
+                                 '"tools may be lowered"' % bad)
+
+    # 合法值不受影响：门 N 的 AUTO 也提刀，门 F 的 AUTO 才允许落刀。
+    sm_n = StateMachine(permit=wire.GATE_N)
+    sm_n.go_auto()
+    assert sm_n.tools_raised
+    sm_f = StateMachine(permit=wire.GATE_F)
+    sm_f.go_auto()
+    assert not sm_f.tools_raised
+
+
+def test_estop_does_not_consume_the_confirm_gate():
+    """I-2：急停不是"确认告警"，不得把 L2.5 的人工闸门消费掉。
+
+    真实可达序列：进无人 -> 失视觉（needs_confirm 置位、LIFT）-> 急停
+    -> 操作员把确认键当"告警消除"按下 -> 复归 -> 再进无人。旧实现里
+    confirm_continue() 在 ESTOP 态照样返回 True 并清标志，于是"无墙且无独立
+    边界依据必须人工确认"这道闸门在急停里被白白用掉；ESTOP 与 L2.5 是两个
+    不同问题，复归后必须重新确认一次。
+    """
+    sm = StateMachine()
+    sm.go_auto()
+    sm.vision_loss()                          # 默认无独立边界依据
+    assert sm.needs_confirm and sm.state == 'LIFT'
+
+    sm.estop()
+    assert sm.state == 'ESTOP'
+    assert not sm.confirm_continue()          # ESTOP 下确认键无效
+    assert sm.needs_confirm                   # 闸门必须还在
+    assert sm.clear_estop() and sm.state == 'MANUAL'
+    assert not sm.go_auto()                   # 复归后仍不许无确认进无人
+    assert sm.confirm_continue()              # 此时才真正确认
+    assert sm.go_auto() and sm.state == 'AUTO'
+
