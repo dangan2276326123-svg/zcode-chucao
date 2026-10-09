@@ -966,6 +966,14 @@ def test_auto_needs_more_than_the_usable_floor(tmp_path, monkeypatch):
     剩下的东西——"进无人"和"继续跑"是两个风险等级，不能共用一个变量。
     单侧墙 + conf=0.03：usable 为真（继续跑没问题），进无人必须被拒。
     （gui=True：按键只在 GUI 分支里从 cv2.waitKey 读，见上面两条用例的注。）
+
+    本条钉的是 **PC 侧**"被拒就锁零、但仍持权"的语义，**批 1a 之前它不等于台架安全**：
+    持权时发出去的那条 `NAV(0,0)` 会被现在烧在板上的固件读成"进 AUTO"
+    （`firmware/retrofit.c:102`，早退 `:93` 只管长度与急停锁存），于是操作员按了一个
+    被明确拒绝的键、权柄却从遥控手里走了（`main.c:553-557`：AUTO 分支下四轮 veloc 由
+    PC 的 NAV 覆盖）。走掉的是权柄不是速度——速度确实在这里被钉成 0.0。
+    现场口径与自保动作见 `docs/X5验机与接入执行清单.md` §4A 第 7 条；
+    烧了批 1a 之后的原始症状复验收据在批 1a 计划 Task 9。**这条测试通过不关闭 F1。**
     """
     r = _drive_main(tmp_path, monkeypatch,
                     results=[_USABLE, _LEFT_LOW, _LEFT_LOW],
