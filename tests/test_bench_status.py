@@ -22,6 +22,7 @@ import time
 import pytest
 
 from common import protocol as P
+from pc import wire
 from pc.status_rx import StatusReceiver
 from tools import bench_status as bs
 
@@ -697,29 +698,124 @@ def test_send_enabled_banner_states_the_bench_hazards(tmp_path, monkeypatch, cap
 
 def test_nav_beyond_bench_limit_is_refused_not_sent(tmp_path, capsys):
     """I-1：现在烧在板上的固件，一条 NAV 就是 `mode = MODE_AUTO` 且把 cmd_vl/cmd_vr
-    钳到 **±1.0 m/s**（firmware/retrofit.c:93-102），行走斜率 SLEW_ACC=0.2 m/s²（:140）
+    钳到 **±1.0 m/s**（`firmware/retrofit.c:93` 早退、`:98-101` 钳制、`:102` 进 AUTO），
+    行走斜率 SLEW_ACC=0.2 m/s²（:140）
     ⇒ 一条 0.9 的命令 4.5 秒后真的把车推到 0.9 m/s。兄弟发送器 `tools/link_probe.py:377`
     早就把 0.20 写成硬闸——同一个 bridge:9000 入口，两个 PC 侧发送器不许一个有闸一个没闸。"""
     log = _mklog(tmp_path)
     sock = _FakeSock()
     s = bs.TxSender('192.168.127.10', 9000, sock=sock)
-    for line in ('!nav 0.9 0', '!nav -0.9 0', '!nav 0.0 1.5'):
+    for line in ('!nav 0.9 0', '!nav -0.9 0', '!nav 0.0 1.5', '!nav nan 0',
+                 '!nav 0 inf'):
         assert s.send_line(line, 1, log) is None, line
     out = capsys.readouterr().out
     assert 'TX REFUSED' in out and 'bench limit' in out and 'nothing sent' in out
     assert sock.sent == [] and s.sent == 0
-    assert s.refused == 3 and s.errors == 0 and s.unparsed == 0
+    assert s.refused == 5 and s.errors == 0 and s.unparsed == 0
     assert s.seq == 0, '拒发不消耗发送序号，也不许占号'
     assert _rows(log) == [] and log.rows == 0 and log.tx_rows == 0
+    # `!nav nan 0` 这一条是 C-1 的原始症状：pack 成 f32 NaN 再回读还是 NaN，
+    # 旧谓词 `NaN > 0.20+1e-6` 恒假 ⇒ 放行。现在它跟超限同一条出口：**拒发，
+    # 不发不落地**（上面 refused/sent/序号/tx 行四个数一起断，少一个都算没闭环）。
     # 限值以内照发，含"正好等于 0.20"这条边界（与 link_probe 的 `> 0.20` 同一口径）
     assert s.send_line('!nav 0.2 0.2', 1, log) is not None
     assert s.send_line('!nav -0.199 0.199', 1, log) is not None
-    assert s.sent == 2 and s.refused == 3 and len(sock.sent) == 2
+    assert s.sent == 2 and s.refused == 5 and len(sock.sent) == 2
     # 闸只管 NAV；TOOL/BEAT/MODE 的权限在板上，不在这里悄悄扩权
+    # （permit 显式给门 F：门 N 下 TOOL 另有 C-1 那道闸管，见下面那条测试，
+    #   这里要验的是"NAV 那道闸不越界去管 TOOL/BEAT/MODE"）
+    s.permit = wire.GATE_F
     for line in ('!tool 5 1', '!beat', '!auto'):
         assert s.send_line(line, 1, log) is not None
-    assert s.sent == 5 and s.refused == 3
+    assert s.sent == 5 and s.refused == 5
     log.close()
+
+
+def test_tool_gate_matches_what_the_closed_loop_would_send():
+    """C-1 的一致性：手动工具那道许可位闸，判据必须与闭环**同一个**——
+    `pc/wire.py:frames_for_state` 在 GATE_N 下强制 (0.0, 0x07)，所以那一对必须被
+    `tool_command_allowed` 放行；否则两个通道各有一套"门 N"，读代码的人分不清
+    哪一关生效（AGENTS 清单第 6 条）。
+    """
+    from tools.bench_limits import tool_command_allowed
+    for state in ('AUTO', 'LIFT'):
+        for usable in (True, False):
+            frames = wire.frames_for_state(state, usable, 12.0, -7.0, 40.0,
+                                           permit=wire.GATE_N)
+            payload = dict(frames)[P.TYPE_TOOL]
+            off, lift = P.unpack_tool(payload)
+            assert tool_command_allowed(wire.GATE_N, off, lift), (state, usable)
+        frames = wire.frames_for_state(state, True, 0.0, 0.0, 0.0,
+                                       permit=wire.GATE_F)
+        off, lift = P.unpack_tool(dict(frames)[P.TYPE_TOOL])
+        assert tool_command_allowed(wire.GATE_F, off, lift), state
+
+
+def test_tool_command_is_refused_under_gate_n_and_allowed_under_gate_f(tmp_path,
+                                                                       capsys):
+    """C-1（人打的字那一半）+ 审查第 7 条：`!tool mm lift` 过去**完全不查许可位**。
+
+    闭环在门 N 下没有选择（`pc/wire.py:91-95` 把横移强制 0.0、刀位强制 0x07），
+    而同一块板子上的手动通道按一个键就能落刀——门 N 的字面含义就没了。
+    现在三个许可位形态都要有答案：门 N 只许 (0, 0x07)、门 F 全放行、**取不到 = 一律拒**。
+    """
+    log = _mklog(tmp_path)
+    sock = _FakeSock()
+    n = bs.TxSender('192.168.127.10', 9000, sock=sock, permit=wire.GATE_N)
+    assert n.send_line('!tool 0 0', 1, log) is None, '门 N 下落刀必须拒'
+    assert n.send_line('!tool 5 7', 1, log) is None, '门 N 下横移必须拒'
+    assert n.send_line('!tool 0 3', 1, log) is None, '只提两把刀也算落了一把'
+    assert sock.sent == [] and n.sent == 0 and n.refused == 3
+    assert _rows(log) == [] and log.tx_rows == 0, '被拒的帧不许落 tx 行'
+    assert n.seq == 0, '拒发不占发送序号'
+    assert n.send_line('!tool 0 7', 1, log) is not None, '门 N 要放行的正是闭环那一套'
+    assert n.send_line('!tool 0 0x07', 1, log) is not None, '写法不同、上线的是同一对字节'
+    assert n.sent == 2 and n.refused == 3
+
+    f = bs.TxSender('192.168.127.10', 9001, sock=sock, permit=wire.GATE_F)
+    assert f.send_line('!tool 0 0', 1, log) is not None, '门 F 就是允许落刀'
+    assert f.sent == 1
+
+    # 档案读不到 / 许可位未知：一律拒。**这一条是本测试的核心**——"拿不到"若当成
+    # "允许落刀"，闸门就自己开了（批 1a 之前固件不看 TOOL 的许可位，PC 是唯一一关）。
+    for unknown in (None, 0, '', 'gate_n', True):
+        u = bs.TxSender('192.168.127.10', 9002, sock=sock, permit=unknown)
+        assert u.send_line('!tool 0 0', 1, log) is None, repr(unknown)
+        assert u.refused == 1, repr(unknown)
+    out = capsys.readouterr().out
+    assert out.count('[TX REFUSED] tool') >= 5, '拒发要看得见，不许静默'
+    log.close()
+
+
+def test_main_passes_the_profile_permit_into_the_sender(tmp_path, monkeypatch, capsys):
+    """接线层闭环：闸在 `TxSender` 里，而 permit 只有 `main()` 会去档案里取——
+    只测构造函数就等于没测"记录器真拿到了许可位"（AGENTS 清单第 2 条的闭环核对）。
+    """
+    made = _install_wiring(monkeypatch, ['开工标记\n', '!tool 0 0\n'])
+    monkeypatch.setattr(bs, 'load_permit', lambda path=None: wire.GATE_N)
+    _run_main(monkeypatch, ['--to', '127.0.0.1:19123', '--out', str(tmp_path / 'run')])
+    out = capsys.readouterr().out
+    assert any(c[0] == 'sendto' for s in made for c in s.calls) is False, \
+        '门 N 下这条 !tool 一个字节都不许上线'
+    assert '[TX REFUSED] tool' in out
+    assert 'permit=1' in out, '开机那行要印出许可位——操作员只看这几行'
+    rows = _rows_at(tmp_path / 'run' / 'bench_log.csv')
+    assert [r['kind'] for r in rows] == ['note'], '被拒的帧不许落 tx 行'
+
+
+def test_main_refuses_tool_when_the_profile_cannot_be_read(tmp_path, monkeypatch,
+                                                           capsys):
+    """同一接线的另一支：档案读不到 → permit=None → TOOL 一律拒，**不降级成门 F**。"""
+    def _boom(path=None):
+        raise ValueError('车辆档案读不进去')
+
+    made = _install_wiring(monkeypatch, ['!tool 0 7\n'])
+    monkeypatch.setattr(bs, 'load_permit', _boom)
+    _run_main(monkeypatch, ['--to', '127.0.0.1:19124', '--out', str(tmp_path / 'run')])
+    out = capsys.readouterr().out
+    assert 'permit unavailable' in out, '读不到要看得见，不许静默当门 F'
+    assert any(c[0] == 'sendto' for s in made for c in s.calls) is False
+    assert '[TX REFUSED] tool' in out
 
 
 def test_nav_bench_limit_is_one_shared_constant():
@@ -730,6 +826,38 @@ def test_nav_bench_limit_is_one_shared_constant():
     assert BL.NAV_BENCH_LIMIT_MPS == 0.20
     assert bs.NAV_BENCH_LIMIT_MPS is BL.NAV_BENCH_LIMIT_MPS
     assert LP.NAV_BENCH_LIMIT_MPS is BL.NAV_BENCH_LIMIT_MPS
+
+
+def test_nav_gate_is_fail_closed_on_non_finite_and_non_numeric():
+    """C-1（最终整枝审查）：这条谓词是三个手动发送器共用的**唯一**硬闸，
+    所以它必须 fail-closed——拿不到一个有限、装得进 f32 的数，就按超限处理（拒发）。
+
+    改之前它是 `max(abs(float(vl)), abs(float(vr))) > 0.20 + 1e-6`：NaN 的任何比较都是
+    False，`link_probe nav nan 0` 与 `!nav nan 0` 就这样过了闸。现固件对一条 NAV 是无
+    条件 `mode = MODE_AUTO`（`firmware/retrofit.c:93` 早退、`:98-101` 四次钳制对 NaN 一
+    次都不触发、`:102` 进 AUTO），于是 `cmd_vl` 留成 NaN = 一台既没停车也没跑的车，
+    正是 B2 里最难归因的那一类。
+    """
+    from tools import bench_limits as BL
+    nan, inf = float('nan'), float('inf')
+    # 非有限 => 判为超限（拒发），两个槽位任一中毒都算
+    assert BL.nav_exceeds_bench_limit(nan, 0.0)
+    assert BL.nav_exceeds_bench_limit(0.0, nan)
+    assert BL.nav_exceeds_bench_limit(inf, 0.0)
+    assert BL.nav_exceeds_bench_limit(-inf, 0.0)
+    # 不是数字就不是数字：谓词不替调用方猜类型（'0.1' 看着无害，但它没经过入参层）
+    assert BL.nav_exceeds_bench_limit('0.1', 0.0)
+    assert BL.nav_exceeds_bench_limit(None, 0.0)
+    # 超出 f32 范围：`pack_nav` 会抛 struct.error，而调用方是 sys.exit/[TX REFUSED]——
+    # 一条可执行的中文理由比一个裸 traceback 有用（这是设计选择，写进谓词 docstring）。
+    assert BL.nav_exceeds_bench_limit(1e39, 0.0)
+    # 限值以内仍然放行，含 f32 那条留了余量的边界
+    assert not BL.nav_exceeds_bench_limit(0.20, 0.20)
+    assert not BL.nav_exceeds_bench_limit(0.20 + 1e-7, 0.20)
+    assert BL.nav_exceeds_bench_limit(0.21, 0.0)
+    # 返回 bool、**不抛**：它是谓词不是校验器（三个调用方各自决定怎么退出）
+    assert BL.nav_exceeds_bench_limit(nan, nan) is True
+    assert BL.nav_exceeds_bench_limit(0.1, 0.1) is False
 
 
 def test_directed_broadcast_and_network_targets_are_refused():

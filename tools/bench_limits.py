@@ -19,15 +19,104 @@
 并且当场把拒了这件事打在屏幕上。这个工具不是行车工具——要跑闭环请用 `pc/main.py`。
 """
 
+import math
+
+from pc import wire
+
 # 台架 NAV 限速（m/s）：两个发送器共读这一个数。
 NAV_BENCH_LIMIT_MPS = 0.20
 
+# `struct.pack('<f', x)` 装不下的数会抛 `struct.error`/`OverflowError`——
+# 上面那道闸把"装不上线的数"也算成超限，所以要知道上线值域的边界是多少。
+_F32_MAX = 3.4028234663852886e38
+
+# 门 N 的刀位（bit0-2 = beam 1-3 全提）。这里**不另立一份口径**：闭环那一头的强制
+# 写在 `pc/wire.py:91-95`（GATE_N 下 `off=0.0, lift=0x07`），`tests/test_bench_status.py`
+# 里那条一致性断言把两边钉在一起——`frames_for_state` 改了这里就得跟着红。
+_GATE_N_LIFT = 0x07
+_GATE_N_OFFSET_MM = 0.0
+
+
+def _number_or_none(v):
+    """收成**可上线的有限 float**；不是数字、非有限、装不进 f32 ⇒ None。
+
+    只认 int/float（`bool` 也不算数）：把字面串递进来就该由入参层先转、转不了就报错，
+    由这道闸替它猜意思等于替它决定能不能上线——`float('nan')` 是一次**合法**转换，
+    而 `link_probe nav nan 0` 走的正是这条路（命令行字面串 → `float()` → 这里）。
+    """
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    v = float(v)
+    if not math.isfinite(v) or abs(v) > _F32_MAX:
+        return None
+    return v
+
 
 def nav_exceeds_bench_limit(vl, vr):
-    """True = 这条 NAV 超出台架限速，必须拒发。
+    """True = 这条 NAV 不许发：要么超出台架限速，要么根本不是一个可上线的速度。
+
+    **fail-closed**（最终整枝审查 C-1）：非有限值、超出 f32 值域、不是数字，一律按
+    "超限"处理。旧写法 `max(abs(float(vl)), abs(float(vr))) > 0.20 + 1e-6` 在 NaN 上恒为
+    False——而这条谓词是三个手动发送器共用的**唯一**硬闸，"比较不上"就等于"闸门开着"。
+    后果按现烧固件算：`firmware/retrofit.c:93` 的早退只管长度与急停锁存，`:98-101` 那
+    四次钳制对 NaN 一次都不触发（NaN 与任何数比较皆为假），而 `:102` 的
+    `mode = MODE_AUTO;` 无条件执行 = 夺遥控的权，最后得到的是一台**既没停车也没跑**的车
+    （B2 里最难归因的那一类症状）。
+
+    超出 f32 范围也算超限，这是一条**设计选择**（审查 C-1 要求写清）：`pack_nav` 对
+    `1e39` 抛的是 `struct.error`，而两个调用方的出口是 `sys.exit(一条中文理由)` 与
+    `[TX REFUSED]`；台架上说得清"为什么不能发"比一个裸 traceback 有用。
+
+    返回 bool、**不抛**：它是谓词不是校验器，报错文案由调用方各自决定。
 
     按 f32 的**线上值**比时要留一点余量：0.2 存成 f32 是 0.20000000298…，不留余量就会
-    把"正好等于限值"这条边界拒掉；而 `link_probe` 是按命令行字面量判 `> 0.20`、放行它。
-    同一个闸在两个发送器上必须给同一个答案，所以判定逻辑也放进这个文件里，而不只是数字。
+    把"正好等于限值"这条边界拒掉。同一个闸在几个发送器上必须给同一个答案，所以判定
+    逻辑也放进这个文件里，而不只是数字。
     """
-    return max(abs(float(vl)), abs(float(vr))) > NAV_BENCH_LIMIT_MPS + 1e-6
+    a, b = _number_or_none(vl), _number_or_none(vr)
+    if a is None or b is None:
+        return True
+    return max(abs(a), abs(b)) > NAV_BENCH_LIMIT_MPS + 1e-6
+
+
+def load_permit(path=None):
+    """车辆档案里的许可位（`wire.GATE_N` / `wire.GATE_F`）。**读不到就抛**，不返回默认值。
+
+    与 `tools/bench_status.py:load_profile_id()` 的降级语义是**两件事**，别照搬：
+    档案号读不到退回 0 是安全的，因为 0 一定被板子按 `reject=0x01` 拒、而且看得见；
+    许可位没有这个性质——"拿不到"若当成"门 F"，闸门就自己开了。所以这里只管取，
+    **取不到的后果由调用方决定**（两个手动工具都把它映射成 None = TOOL 一律拒）。
+    """
+    from pc import vehicle_profile
+    return vehicle_profile.load(path)['permit']
+
+
+def tool_command_allowed(permit, tool_mm, lift_bits):
+    """True = 门 N/F 许可位允许手动工具把这条 TOOL 发出去。fail-closed。
+
+    为什么要有它（最终整枝审查 C-1 的另一半 + 审查第 7 条"工具无视 permit"）：
+    闭环那一路在 GATE_N 下**没有选择**——`pc/wire.py:91-95` 把横移强制成 0.0、刀位强制
+    成 0x07；而 `!tool mm lift` / `link_probe tool mm lift` 是人打的字，过去**一个字都不
+    查**就上线。同一个桥上"闭环保了门 N、手动面不保"就是假的安全感：门 N 的字面含义是
+    刀不许落，而按下一个键就能落。
+      · GATE_F：载荷本身合法就放行（落刀与横移是门 F 的语义）；
+      · GATE_N：只许 `wire.frames_for_state` 本来就会发的那一对 (0.0, 0x07)；
+      · permit 拿不到 / 未知（None、0、没经 `wire.PERMIT_BY_NAME` 映射的名字串、bool）
+        ⇒ 一律 False。"读不到档案"当作"允许落刀"就是这条闸门存在的理由。
+
+    载荷本身要能上线（`pack_tool` 的 mm 是 f32、lift 是 u8）：装不下的数在这里给 False，
+    调用方因此拿到的是拒发文案而不是 `struct.error`——与 `nav_exceeds_bench_limit` 同一
+    个设计选择。返回 bool、**不抛**。
+    """
+    mm = _number_or_none(tool_mm)
+    if mm is None:
+        return False
+    if isinstance(lift_bits, bool) or not isinstance(lift_bits, int):
+        return False
+    if not 0 <= lift_bits <= 0xFF:              # u8：越界 pack_tool 会抛 struct.error
+        return False
+    if permit is wire.GATE_F:                   # 身份比较：True == 1 不算 GATE_F
+        return True
+    if permit is wire.GATE_N:
+        return mm == _GATE_N_OFFSET_MM and lift_bits == _GATE_N_LIFT
+    return False

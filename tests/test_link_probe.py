@@ -14,6 +14,7 @@ import time
 import pytest
 
 from common import protocol as P
+from pc import wire
 from tools import link_probe as lp
 
 
@@ -447,3 +448,116 @@ def test_probe_gives_up_on_mode_frames_when_board_is_pre_e3(capsys, monkeypatch)
     text = capsys.readouterr().out
     assert '判定：INCONCLUSIVE' in text
     assert 'v1' in text
+
+
+# ---------------- CLI（main()）那一层：参数校验与两道闸，全都不需要硬件 ----------------
+
+def _cli(monkeypatch, argv, permit=None):
+    """把 `main()` 整条跑一遍（假 socket，不发 UDP），返回 (发出去的帧, SystemExit 或 None)。
+
+    这一层以前没有测试：`nav_exceeds_bench_limit(*a.args)` 拿的是**命令行字面串**，
+    而 `link_probe nav nan 0` 正是走这条路把 NaN 送进 `pack_nav` 的（最终审查 C-1）。
+    只测函数不测 CLI，就等于没测那个原始症状。
+    """
+    import sys
+    sent = []
+
+    class _Sock:
+        def sendto(self, frame, addr):
+            sent.append((frame, addr))
+            return len(frame)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(lp.socket, 'socket', lambda *a, **k: _Sock())
+    if permit is not None:
+        monkeypatch.setattr(lp, 'load_permit', lambda path=None: permit)
+    monkeypatch.setattr(sys, 'argv', ['link_probe.py'] + argv)
+    try:
+        lp.main()
+    except SystemExit as exc:
+        return sent, exc
+    return sent, None
+
+
+def test_cli_refuses_a_nav_speed_that_is_not_finite(monkeypatch):
+    """C-1：`nav nan 0` 必须 rc≠0 且**一条帧都不发**。
+
+    改之前 `nav_exceeds_bench_limit('nan', '0')` 那类写法（`float('nan') > 0.20` 恒假）
+    会把 NaN 放行到 `pack_nav`，而现固件对一条 NAV 是无条件进 AUTO。
+    """
+    for bad in ('nan', 'inf'):
+        sent, exc = _cli(monkeypatch, ['nav', bad, '0'])
+        assert exc is not None and _rc(exc) != 0, bad
+        assert sent == [], bad
+        assert '有限' in _msg(exc), _msg(exc)
+    # `-inf` 到不了这道闸：argparse 先把以 `-` 开头的它当选项拒了（rc=2、一帧不发）。
+    # 记在这里是因为读代码的人会问"负无穷呢"——答案是**同样发不出去**，只是换一个出口。
+    sent, exc = _cli(monkeypatch, ['nav', '-inf', '0'])
+    assert exc is not None and _rc(exc) != 0 and sent == []
+
+
+def test_cli_refuses_a_nav_above_the_bench_limit(monkeypatch):
+    """超限那条同样 rc≠0、不发帧——这是 I-1 那条闸第一次有 CLI 层的证据。"""
+    sent, exc = _cli(monkeypatch, ['nav', '0.21', '0'])
+    assert exc is not None and _rc(exc) != 0
+    assert sent == []
+    assert '限速' in _msg(exc)
+    # 不是数的参数照实说"不是数"，不让人读到一句假的"超出限速"
+    sent, exc = _cli(monkeypatch, ['nav', 'abc', '0'])
+    assert exc is not None and _rc(exc) != 0 and sent == []
+    assert '不是数' in _msg(exc)
+
+
+def _rc(exc):
+    """`sys.exit(一条中文理由)` 在 Python 里就是 `SystemExit.code = 那条字符串`，
+    解释器据此以**非零**码退出。所以"rc≠0"= code 既不是 0 也不是 None。"""
+    return 0 if exc.code in (0, None) else 1
+
+
+def _msg(exc):
+    """退出时打给用户看的那句话（`sys.exit(str)` 的参数就是它）。"""
+    return exc.code if isinstance(exc.code, str) else str(exc.code)
+
+
+def test_cli_still_sends_a_legal_nav_speed(monkeypatch):
+    """闸收紧之后，正常那条路**必须照走**：`nav 0.05 0.05` 发一帧、不退出。
+
+    这条是给上一个测试当反向控制的——把共享谓词改成"只认数字"之后，如果 CLI 层
+    忘了先转 float，这里就会红，而不是安静地拒掉所有 NAV。
+    """
+    sent, exc = _cli(monkeypatch, ['nav', '0.05', '0.05'])
+    assert exc is None, str(exc)
+    assert len(sent) == 1
+    t, _seq, payload = P.unpack_frame(sent[0][0])
+    assert t == P.TYPE_NAV
+    assert P.unpack_nav(payload)[:2] == pytest.approx((0.05, 0.05), abs=1e-6)
+
+
+def test_cli_tool_gate_follows_the_permit(monkeypatch):
+    """审查第 7 条（"工具无视 permit"）：门 N 只许 `tool 0 7`，门 F 全放行。"""
+    sent, exc = _cli(monkeypatch, ['tool', '0', '7'], permit=wire.GATE_N)
+    assert exc is None, str(exc)
+    assert len(sent) == 1, '门 N 下这条与闭环会发的完全一样，该放行'
+
+    sent, exc = _cli(monkeypatch, ['tool', '0', '0'], permit=wire.GATE_N)
+    assert exc is not None and _rc(exc) != 0
+    assert sent == [], '被拒就不许有一个字节上线'
+    assert '门 N' in _msg(exc)
+
+    sent, exc = _cli(monkeypatch, ['tool', '5', '1'], permit=wire.GATE_F)
+    assert exc is None, str(exc)
+    assert len(sent) == 1, '门 F 就是允许落刀与横移，这条不该拒'
+
+
+def test_cli_tool_gate_fails_closed_when_the_profile_is_unavailable(monkeypatch):
+    """档案读不到 ⇒ permit 取不到 ⇒ TOOL 一律拒，**不降级成门 F**（C-1 fail-closed）。"""
+    def _boom(path=None):
+        raise ValueError('车辆档案不存在')
+
+    monkeypatch.setattr(lp, 'load_permit', _boom)
+    sent, exc = _cli(monkeypatch, ['tool', '0', '0'])
+    assert exc is not None and _rc(exc) != 0, '取不到许可位不许当作"允许落刀"'
+    assert sent == []
+    assert '读不到' in _msg(exc)

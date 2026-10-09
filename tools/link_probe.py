@@ -74,6 +74,7 @@ reject / 帧形态版本"分开收下来，判据 `judge()` 就建在这四样�
 "模式跳变序列而不是最后一帧"、"序号回退的帧不计为好帧"、"评审那两个反例判对"四条）。
 """
 import argparse
+import math
 import os
 import socket
 import sys
@@ -86,12 +87,14 @@ except AttributeError:
     pass
 
 from common import protocol as P          # noqa: E402
+from pc import wire                                    # noqa: E402
 # 台架 NAV 限速的唯一出处（09-30 复审 I-1：`bench_status --to` 与本文件是同一个
 # bridge:9000 入口的两个发送器，一个有闸一个没闸就是不一致的安全不变量）。
 # 这里只改 import 与下面那一处判定，不改第 4 行那句"只收不发"的旧口径——那是
 # Task 10 的文档同步项（M-8），不属于本批。
-from tools.bench_limits import (NAV_BENCH_LIMIT_MPS,          # noqa: E402,F401
-                                nav_exceeds_bench_limit)
+from tools.bench_limits import (NAV_BENCH_LIMIT_MPS,          # noqa: E402
+                                nav_exceeds_bench_limit,
+                                tool_command_allowed, load_permit)
 
 # 与固件 retrofit.h:11-13 及 spec §3.1 一致（TELEOP 是 E3 加的位，批 2 才实现）；
 # 不在这四个值里的原样打印数字，不替它编名字。
@@ -360,6 +363,63 @@ def _run_serial(a, frame_iter):
         print('判定：%s —— %s' % (verdict, detail))
 
 
+def _permit_or_none():
+    """车辆档案里的许可位（门 N/F）；**读不到返回 None = 一律拒**，不降级成门 F。
+
+    与 `_load_profile_id()` 的对照是刻意的（最终审查 C-1 / 第 7 条"工具无视 permit"）：
+    档案号取不到退回 0 是安全的（板子一定 reject=0x01，判据会说清）；许可位取不到若
+    当成"允许落刀"，这条手动通道就把门 N 的语义绕过去了——而批 1a 之前固件不看 TOOL 的
+    许可位，PC 这一关是唯一一关。取数用 `tools/bench_limits.load_permit()`（与
+    `tools/bench_status.py` 同一个出处，AGENTS 清单第 6 条）。
+    """
+    try:
+        return load_permit()
+    except (ValueError, OSError) as exc:      # vehicle_profile 把 OSError 收进 ValueError
+        print('warning: vehicle profile permit unavailable (%s) -> TOOL commands are '
+              'refused (fail-closed, not treated as gate_f)' % exc)
+        return None
+
+
+def _nav_speeds_or_exit(args):
+    """命令行的两个速度字面串 → 两个**有限** float；不是数/非有限就照实退出。
+
+    共享谓词现在只认数字（C-1：非有限、装不进 f32、不是数字一律判为超限），所以转换
+    放在这一层。报错文案要指着**真正的原因**说：对 `nav abc 0` 说"超出限速"是假话，
+    对 `nav nan 0` 说"超出限速"也是假话——NaN 不是"太大"，是"比较不上、没法执行"。
+    """
+    out = []
+    for tok in args:
+        try:
+            v = float(tok)
+        except (TypeError, ValueError):
+            sys.exit('nav 的速度参数不是数：%r（例如：nav 0.05 0.05）' % (tok,))
+        if not math.isfinite(v):
+            sys.exit('nav 的速度参数不是有限数：%r —— NaN/inf 装不进 f32，也没法当成'
+                     '"一个不超限的速度"（共享闸按超限处理：它要的是能上线的数，'
+                     '不是一个比较不上的值）' % (tok,))
+        out.append(v)
+    return out
+
+
+def _tool_gate_or_exit(args):
+    """TOOL 的两个参数 + 许可位 → 能不能发；不能就 sys.exit 说一句指着原因的话。"""
+    try:
+        mm, lift = float(args[0]), int(args[1])
+    except (TypeError, ValueError):
+        sys.exit('tool 的参数不是数：<横移mm> <lift位>（都写十进制整数，'
+                 '例如 tool 0 7），收到 %r' % (args,))
+    permit = _permit_or_none()
+    if isinstance(permit, bool) or permit not in (wire.GATE_N, wire.GATE_F):
+        sys.exit('tool 发不出去：许可位读不到或不是 gate_n/gate_f（收到 %r）。'
+                 'fail-closed：拿不到不当作"允许落刀"。' % (permit,))
+    if not tool_command_allowed(permit, mm, lift):
+        sys.exit('tool mm=%r lift=%r 在 permit=%r 下不许发。门 N 只许 `tool 0 7`'
+                 '（横移必须 0、三把刀必须全提），lift 还必须是 u8 里的整数——装不进'
+                 '`pack_tool` 的数在这里就拒，不让它变成一句 struct.error。落刀与横移'
+                 '属门 F：改 config/vehicle_profile.yaml 里的 permit，而那要先有'
+                 'B5 全项 + 刀控接线。' % (mm, lift, permit))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('kind', choices=['nav', 'tool', 'beat', 'estop']
@@ -383,9 +443,14 @@ def main():
         sys.exit('nav 需要两个速度参数，例如：nav 0.05 0.05')
     if a.kind == 'tool' and len(a.args) != 2:
         sys.exit('tool 需要 <横移mm> <lift位>，例如：tool 0 7')
-    if a.kind == 'nav' and nav_exceeds_bench_limit(*a.args):
-        sys.exit('探针限速 %.2f m/s，别拿它当行车工具——要跑闭环请用 pc/main.py'
-                 % NAV_BENCH_LIMIT_MPS)
+    # 两道闸都在**建 socket 之前**（与 bench_status 的 --to 同一条纪律：先拒、后碰资源）。
+    if a.kind == 'nav':
+        if nav_exceeds_bench_limit(*_nav_speeds_or_exit(a.args)):
+            # 到这里的都是有限数了，所以这一句只对"真的超限"说真话。
+            sys.exit('探针限速 %.2f m/s，别拿它当行车工具——要跑闭环请用 pc/main.py'
+                     % NAV_BENCH_LIMIT_MPS)
+    if a.kind == 'tool':
+        _tool_gate_or_exit(a.args)
     # MODE 三条的参数只有一个 profile 号，而它**必须**来自车辆档案：让用户在命令行
     # 上敲一个档案号，等于允许拿另一台车的权限去申请无人（spec §6）。
     if a.kind in MODE_REQUEST_KINDS and a.args:

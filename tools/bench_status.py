@@ -86,7 +86,11 @@ except AttributeError:                 # pragma: no cover - py<3.7
 from pc.status_rx import StatusReceiver          # noqa: E402
 from common import protocol as P                 # noqa: E402
 # 台架 NAV 限速与判定逻辑都在这里（与 tools/link_probe.py 共用同一个出处，09-30 复审 I-1）。
-from tools.bench_limits import NAV_BENCH_LIMIT_MPS, nav_exceeds_bench_limit   # noqa: E402
+# tool_command_allowed / load_permit 是最终审查 C-1 加的第二道闸：许可位在档案里，
+# 判定逻辑在 bench_limits，两个手动工具都读它，不在这里各写一份（AGENTS 清单第 6 条）。
+from tools.bench_limits import (NAV_BENCH_LIMIT_MPS,            # noqa: E402
+                                nav_exceeds_bench_limit,
+                                tool_command_allowed, load_permit)
 
 # 固件 retrofit.h:11-13 只有这三个值（pl[13]=mode，没有第四态）。
 # 这里不列的编号会原样打印数字——宁可看见"3"，也不要工具替它编一个名字。
@@ -412,27 +416,31 @@ class TxSender:
     证据价值了（这正是"边发边记"最容易被忽略的地方）。
 
     sock 参数是给测试留的缝（假 socket 记 sendto 的字节，不需要网口也不需要板子）。
+    permit 参数是门 N/F 许可位（`wire.GATE_N`/`wire.GATE_F`），由 `main()` 从车辆档案取；
+    **默认 None = 未知 = TOOL 命令一律拒**（C-1，fail-closed）。不降级成门 F：
+    "拿不到档案"当成"允许落刀"正是这道闸要防的那件事。
     """
 
-    def __init__(self, host, port, sock=None):
+    def __init__(self, host, port, sock=None, permit=None):
         self.host, self.port = host, port
         self.sock = sock if sock is not None else \
             socket.socket(socket.AF_INET, socket.SOCK_DGRAM)      # **不 bind**
+        self.permit = permit
         self.seq = 0
         self.sent = 0
         self.errors = 0
         self.unparsed = 0
-        self.refused = 0          # 过了语法、没过限速（I-1 的闸）
+        self.refused = 0          # 过了语法、没过安全闸（I-1 的限速 + C-1 的许可位）
 
     def send_line(self, line, profile_id, log):
-        """一行 stdin → 帧 → 限速闸 → sendto → 落一行 tx_*。成功返回 (kind, seq)，否则 None。
+        """一行 stdin → 帧 → 安全闸 → sendto → 落一行 tx_*。成功返回 (kind, seq)，否则 None。
 
         只有**真的写出去了**才落 tx 行、才消耗序号：sendto 抛了还记一行 tx_nav，
         就是给"这帧上过线"造一条假证据；而序号不消耗，下一条接着用同一个号。
 
         三类"什么都没发生"各有自己的出口，也都各有计数，不混在一起：
           · 解析不了      -> `unparsed`（[TX SKIPPED]）
-          · 超出台架限速  -> `refused` （[TX REFUSED]，I-1）
+          · 没过安全闸    -> `refused` （[TX REFUSED]，I-1 的 NAV 限速 + C-1 的 TOOL 许可位）
           · 发送失败      -> `errors`  （[TX FAILED]）
         """
         parsed = build_command(line, profile_id, self.seq)
@@ -445,14 +453,27 @@ class TxSender:
         if kind == 'tx_nav':
             # 速度硬闸（09-30 复审 I-1）。判的是**要上线的那对字节**，不是输入行上的字面量：
             # 闸该拦的是帧，不是打字。现固件把一条 NAV 当进 AUTO 的钥匙并把速度钳到 ±1.0 m/s
-            # （firmware/retrofit.c:93-102），而斜率是 0.2 m/s²（:140）——0.9 的命令 4.5 秒
-            # 后真的会把车推到 0.9 m/s。同一个 bridge:9000 入口的两个 PC 侧发送器
+            # （firmware/retrofit.c:93/:98-101/:102），而斜率是 0.2 m/s²（:140）——0.9 的命令
+            # 4.5 秒后真的会把车推到 0.9 m/s。同一个 bridge:9000 入口的 PC 侧发送器
             # （这里与 tools/link_probe.py）必须共用一个数，所以常量在 tools/bench_limits.py。
             vl, vr = P.unpack_nav(P.unpack_frame(frame)[2])[:2]
             if nav_exceeds_bench_limit(vl, vr):
                 self.refused += 1
-                print('  [TX REFUSED] nav beyond %.2f m/s bench limit '
-                      '(nothing sent, nothing recorded)' % NAV_BENCH_LIMIT_MPS)
+                print('  [TX REFUSED] nav beyond %.2f m/s bench limit, or not a finite '
+                      'f32 speed (nothing sent, nothing recorded)' % NAV_BENCH_LIMIT_MPS)
+                return None
+        if kind == 'tx_tool':
+            # 许可位硬闸（最终审查 C-1 的"人打的字"那一半）。同一道语义闭环已经有：
+            # `pc/wire.py:frames_for_state` 在 GATE_N 下把横移强制 0.0、刀位强制 0x07，
+            # 而这条手动通道过去一个字都不查——门 N 写着"刀不许落"，按一个键就能落。
+            # 判的同样是**要上线的那对字节**（NaN / 越界 lift 都在这一步被认出）。
+            off, lift = P.unpack_tool(P.unpack_frame(frame)[2])
+            if not tool_command_allowed(self.permit, off, lift):
+                self.refused += 1
+                print('  [TX REFUSED] tool offset=%.3f mm lift=0x%02X not allowed with '
+                      'permit=%r (GATE_N allows only offset=0 lift=0x07; an unreadable '
+                      'profile is refused, not treated as GATE_F) '
+                      '-- nothing sent, nothing recorded' % (off, lift, self.permit))
                 return None
         try:
             self.sock.sendto(frame, (self.host, self.port))
@@ -480,10 +501,14 @@ class TxSender:
             pass
 
 
-def sender_from_target(text, avoid_port=None):
-    """--to 的取值 → TxSender；**缺省（None）→ None = 发送彻底禁用**。"""
+def sender_from_target(text, avoid_port=None, permit=None):
+    """--to 的取值 → TxSender；**缺省（None）→ None = 发送彻底禁用**。
+
+    permit 一路透传给 TxSender：拿不到就保持 None，而 None 在 TxSender 里是
+    "TOOL 一律拒"（C-1 fail-closed），不是"随便发"。
+    """
     target = resolve_target(text, avoid_port=avoid_port)
-    return None if target is None else TxSender(target[0], target[1])
+    return None if target is None else TxSender(target[0], target[1], permit=permit)
 
 
 def handle_command_line(line, log, sender, profile_id=P.PROFILE_NONE):
@@ -515,6 +540,23 @@ def load_profile_id():
         print('warning: vehicle profile unavailable (%s) -> sending profile=0; '
               'the board will reject MODE requests with reject=0x01' % exc)
         return P.PROFILE_NONE
+
+
+def permit_or_none():
+    """门 N/F 许可位；**读不到返回 None（= TOOL 命令一律拒），绝不降级成门 F**。
+
+    与上面 `load_profile_id()` 的对照是刻意的（C-1，审查第 7 条"工具无视 permit"）：
+    档案号那条允许降级，因为 0 一定被板子拒而且看得见；许可位这条不允许，因为
+    "拿不到当作满足"在这里没有第二道闸兜着——批 1a 之前固件根本不看 TOOL 的许可位，
+    PC 这一关就是唯一一关。取数走 `tools/bench_limits.load_permit()`（两个手动工具同一个
+    出处，AGENTS 清单第 6 条），这里只负责"取不到怎么办"。
+    """
+    try:
+        return load_permit()
+    except (ValueError, OSError) as exc:
+        print('warning: vehicle profile permit unavailable (%s) -> TOOL commands are '
+              'refused (fail-closed, not treated as GATE_F)' % exc)
+        return None
 
 
 def _note_listener(log, stop, sender=None, profile_id=P.PROFILE_NONE):
@@ -627,6 +669,11 @@ def main():
         sender = sender_from_target(a.to, avoid_port=a.port)
     except ValueError as exc:
         sys.exit(str(exc))
+    if sender is not None:
+        # 许可位与档案号一样"只在真的要发时才读"，但**取法不同**（C-1）：档案号读不到
+        # 退回 0 是安全的（板子一定 reject=0x01，看得见），许可位读不到只能保持
+        # None = TOOL 命令一律拒——"拿不到当作门 F"在这里没有第二道闸兜着。
+        sender.permit = permit_or_none()
     # 档案号只在真的要发 MODE 请求时才去读（读不到会打一行警告并退回 0）。
     profile_id = load_profile_id() if sender is not None else P.PROFILE_NONE
 
@@ -687,6 +734,12 @@ def main():
               'board down -- retrofit_clear_estop has no caller (Fw-14) and !clear '
               'sends TYPE_MODE, which the flashed firmware does not handle. '
               'To observe continuously, keep sending (this tool has no --every yet)')
+        # 许可位也印在这里（C-1）：它决定 `!tool` 能不能上线，而操作员只看这几行。
+        print('  tool gate: permit=%s from the vehicle profile -- GATE_N(1) allows only '
+              '"!tool 0 7" (offset 0, all three beams raised), GATE_F(2) allows any '
+              'legal payload, and an unreadable profile refuses every !tool. Same rule '
+              'the closed loop enforces in pc/wire.py:frames_for_state'
+              % (sender.permit,))
     # 原来这里只是一句"请先去确认 pc_ip"的提示，等于把判断推给人做。09-28 改成自己查：
     # X5 是按 config.yaml 里的 pc_ip **单向投递**的，本机不是那个地址就一帧都收不到，
     # 而这在 CSV 里和"接线不通"长得一模一样——今天已经为此白拆过一次线。

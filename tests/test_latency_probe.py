@@ -401,18 +401,20 @@ def test_d2_refuses_a_step_above_the_shared_bench_limit():
 
 
 def test_d2_refuses_non_finite_inputs_because_the_shared_gate_is_nan_blind():
-    """共享谓词的比较对 NaN 恒假（NaN > x 永远不成立）——那道闸拦不住 NaN。
+    """共享闸现在 fail-closed（C-1 收口）：非有限值一律判为超限，这道闸拦得住 NaN 了。
 
-    所以本模块自己拒非有限值：NaN 一旦放过，`pack_nav` 把它写进线上，
-    `speed >= threshold` 恒假，测出来是"超时 N 次"，看着像链路问题、其实是入参问题。
-    这里只在自己家门口补闸，**不改共享模块**（那是最终审查后的收口项）。
+    本模块的 `_finite()` 仍然保留，理由不是"共享闸拦不住"而是它给的是**带参数名的
+    ValueError**——一句能照着改的报错比一个布尔值有用；NaN 一旦放过，`pack_nav` 把它
+    写进线上，`speed >= threshold` 恒假，测出来是"超时 N 次"，看着像链路问题、其实是
+    入参问题。`_check_d2_inputs()` 的先后（`:307` 的 `_finite` 在 `:313` 的共享闸之前）
+    保证非有限值拿到的是 "must be finite" 那条，不是误导人的 "beyond bench limit"。
     """
     for bad in (float('nan'), float('inf'), float('-inf')):
         with pytest.raises(ValueError):
             LP.measure_d2(lambda f: None, _no_frames, step_v=bad, repeats=1)
         with pytest.raises(ValueError):
             LP.measure_d2(lambda f: None, _no_frames, threshold=bad, repeats=1)
-    assert not BL.nav_exceeds_bench_limit(float('nan'), float('nan'))   # 前提
+    assert BL.nav_exceeds_bench_limit(float('nan'), float('nan'))   # 共享闸 fail-closed
 
 
 def test_d2_refuses_a_step_that_cannot_reach_its_own_threshold():
