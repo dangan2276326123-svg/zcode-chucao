@@ -10,6 +10,15 @@ MUST be caught — a bare unpack_status would kill the control loop.
 Bad frames are counted, not silently swallowed: >=5 bad frames in a
 rolling 1 s window is almost always a firmware/Python protocol
 desync — a bug to fix, so StatusReceiver.alarm() flags it.
+
+STATUS payloads come in two shapes (E3 spec §3.5): 14 B before E3, 19 B
+after.  handle() dispatches on payload length through
+protocol.unpack_status_any(), so an old firmware keeps working (its five
+E3 keys read as None) and any other length is counted as a bad frame.
+This dispatch is the reason the PC side must merge BEFORE the 19 B
+firmware is flashed: with the old 14 B-only unpacker every single frame
+would be counted bad and alarm() would cry "link desync" about our own
+parser, not the radio.
 """
 import time
 from collections import deque
@@ -20,6 +29,8 @@ STATUS_UDP_PORT = 9100   # keep in sync with vehicle.bridge.PC_PORT
 ALARM_BAD_PER_S = 5.0
 STALE_S = 1.0            # no fresh STATUS within this -> link down / MCU hung
 RESYNC_RUN = 50          # 连续这么多帧"序号互不相同且递增"且已判 stale -> MCU 重启，重新同步
+STALL_FRAMES = 5         # 主循环约 80 ms 一圈、STATUS 20 Hz：250 ms 内应有约 3 次自增，
+                         # 连续 5 帧读到同一个值 = 执行面停摆（spec §3.2 loop_alive）
 
 
 def _seq_newer(a, b):
@@ -41,6 +52,7 @@ class StatusReceiver:
         self._rej_run = 0       # consecutive rejected frames with increasing seq
         self._rej_last = None   # last rejected seq, to require distinct+increasing
         self._bad_times = deque(maxlen=64)
+        self._loop_hist = deque(maxlen=STALL_FRAMES)   # loop_alive of accepted frames
 
     def _note_rejection(self, seq):
         """E1② 判据（09-21 复审修正）：只有**互不相同且单调递增**的被拒序号才累计。
@@ -64,7 +76,7 @@ class StatusReceiver:
             ftype, seq, payload = P.unpack_frame(raw)
             if ftype != P.TYPE_STATUS:
                 raise ValueError('unexpected frame type %d on status port' % ftype)
-            speed, current_a, battery_v, limits, mode = P.unpack_status(payload)
+            st = P.unpack_status_any(payload)      # 按载荷长度分派 14/19（A8）
         except ValueError:
             self.bad += 1
             self._bad_times.append(now)
@@ -85,11 +97,46 @@ class StatusReceiver:
         self._last_seq = seq
         self.good += 1
         self.last_good_time = now
-        self.last = {
-            'seq': seq, 'speed_mps': speed, 'current_a': current_a,
-            'battery_v': battery_v, 'limits': limits, 'mode': mode,
-        }
+        st['seq'] = seq
+        self.last = st
+        la = st.get('loop_alive')
+        if la is None:
+            self._loop_hist.clear()      # v1 固件：没有这个字段，不猜、也不留着旧账
+        else:
+            self._loop_hist.append(la)
         return dict(self.last)
+
+    @property
+    def status_version(self):
+        """STATUS 载荷形态：1 = E3 之前的 14 B，2 = E3 的 19 B，None = 还没收到。"""
+        return None if self.last is None else self.last.get('v')
+
+    def loop_stalled(self, frames=STALL_FRAMES):
+        """True = 执行面停摆（Fw-21 的探测手段，也是固件 reject=0x05 的 PC 侧对应物）。
+
+        判据是**连续 frames 帧读到同一个 loop_alive 值**。主循环约 80 ms 一圈、
+        STATUS 20 Hz，250 ms 内应有约 3 次自增，所以 5 帧不变不是"采样凑巧"而是真停摆；
+        u8 回绕（...253,254,255,0,1）时 5 个值互不相同，不会被误判。
+        v1 固件没有这个字段 ⇒ 历史被清空 ⇒ 恒 False：**绝不谎报停摆**。
+
+        frames 只用于收紧判据；放宽到比 STALL_FRAMES 更大的值不会更保守，
+        因为历史窗口的长度就是 STALL_FRAMES。
+        """
+        if len(self._loop_hist) < frames:
+            return False
+        vals = list(self._loop_hist)[-frames:]
+        return len(set(vals)) == 1
+
+    def reject_text(self):
+        """最近一次拒绝原因的人话（spec §5.4：HUD 不显示十六进制）。
+
+        没有 STATUS / v1 帧 / reject 为 None ⇒ 空串；未知码 ⇒ 带数字的兜底文案。
+        这里**不抛异常**：它在控制循环里被每帧调用，固件将来加的原因码不该让 PC 停。
+        """
+        if not self.last or self.last.get('reject') is None:
+            return ''
+        code = self.last['reject']
+        return P.REJECT_TEXT.get(code, '未知拒绝码 %d' % code)
 
     def age_s(self, now=None):
         """Seconds since the last fresh STATUS frame; None if never received."""
