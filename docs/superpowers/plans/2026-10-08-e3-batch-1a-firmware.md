@@ -897,7 +897,7 @@ EOF
 
 - [ ] **Step 3: 跑检查器与全量测试**
 
-Run: `python tools/check_doc_invariants.py` → Expected: 退出码 0，`①–⑧` 命中 **6** 次
+Run: `python tools/check_doc_invariants.py` → Expected: 退出码 **0**（工具自己比对 AGENTS 写的基线，命中数以工具输出为准，**不要手抄数字进本计划**）。本任务不得新增任何"圈号 + 短横 + 圈号"的区间记法——要引用场景区间就写"①到⑥ 加 ⑧到⑫"这种逐号形式，或者直接把场景号列出来。
 Run: `python -B -m pytest tests/ -q -p no:cacheprovider` → Expected: **207 passed**（批 1a 不改 Python）
 
 - [ ] **Step 4: 提交**
@@ -917,7 +917,7 @@ git commit -F- --cleanup=verbatim <<'EOF'
 - F3 的 ⑧ 场景在台架无执行元件时是**恒真命题**，不算验过（09-22 已定级）。
 
 AGENTS 的编译数字续写不删历史；⑥ 的状态从"spec 待审"改为"两批均已编码、未台架"。
-check_doc_invariants 退出码 0（①–⑧ = 6 = 基线）；pytest 207 passed。
+check_doc_invariants 退出码 0（未新增区间记法）；pytest 207 passed。
 EOF
 ```
 

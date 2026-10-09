@@ -1753,7 +1753,7 @@ Pc-8 状态列**就地改写**（不删原文，按"就地撤回"的规矩加一
 
 - [ ] **Step 4: 跑检查器与全量测试**
 
-Run: `python tools/check_doc_invariants.py` → Expected: 退出码 **0**，`①–⑧` 命中 **6** 次（基线），其余区分类符号 0
+Run: `python tools/check_doc_invariants.py` → Expected: 退出码 **0**（命中数以工具输出为准，**不要手抄数字进本计划**——把基线写进文档就等于给检查器自我污染，10-08 已经踩过一次；基线由 AGENTS 单独维护）。本任务不得新增"圈号–圈号"区间记法：要引用场景区间就逐号列出，或写成"①到⑥ 加 ⑧到⑫"。
 Run: `python -B -m pytest tests/ -q -p no:cacheprovider` → Expected: **207 passed**
 
 - [ ] **Step 5: 提交**
@@ -1770,7 +1770,7 @@ git commit -F- --cleanup=verbatim <<'EOF'
 - 缺口清单 ③-B 标明"批 1b 已编码、批 1a 未开工、顺序不可换"。
 - AGENTS 测试基线 159 -> 207，链条续写不删历史。
 
-check_doc_invariants 退出码 0（①–⑧ 命中 6 = 基线）；pytest 207 passed。
+check_doc_invariants 退出码 0（未新增区间记法）；pytest 207 passed。
 EOF
 ```
 
