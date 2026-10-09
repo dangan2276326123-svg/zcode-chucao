@@ -16,8 +16,8 @@
 
 | 文件 | 说明 |
 |---|---|
-| `protocol.py` | 串口通信协议（帧格式、CRC、命令字），与下位机 `firmware/protocol.c` 一一对应 |
-| `uart_vectors.py` | 控制量/状态量的串口向量编解码 |
+| `protocol.py` | 串口通信协议（帧格式、CRC、命令字），与下位机 `firmware/protocol.c` 一一对应。**E3 批 1b 加**：`TYPE_MODE=5` 与 `pack_mode()`（申请/退出无人、解除急停、档案握手——A2 之后 NAV 不再承担权限语义）、STATUS 两形态 `pack_status_v2()`（19 B）与 `unpack_status_any()`（**按载荷长度分派 14/19**，A8）、`REJECT_*` 原因码与 `REJECT_TEXT` 中文长文案、`PROFILE_*`/`AUTH_*` 常量。⚠️ 这些是 **PC 侧的一半**：现固件的 switch 没有 `TYPE_MODE` 分支（`retrofit.c:60-75`），STATUS 仍是 14 B——两侧都要生效必须等批 1a 烧录 |
+| `uart_vectors.py` | **B2 台架对拍向量表 + USB-TTL 手发 sender**（`python common/uart_vectors.py --dump` 打印，`<COM>` 真发）。**组数以 `--dump` 当场输出为准**（E3 批 1b 加了 `mode_auto`/`mode_clear` 两条 MODE 与一条 19 B 的 `status_v2`，批 1a 的对拍基准就是这张表）；含两条**必须被丢弃**的坏帧（坏 CRC、截断）。`repack()` 按帧自身的类型重打包——早期是按向量名字前缀猜（`nav*`→NAV、其余→HEARTBEAT），E3 的 `mode_*`/`status_v2` 不匹配任何前缀会被当心跳发出去，而固件见心跳是"AUTO 交回 MANUAL"，语义正好相反 |
 
 ### `network/` — 深度学习与感知算法
 
@@ -47,8 +47,16 @@
 | `perception.py` | 感知封装：加载权重与标定 → 去畸变 → 分割 → IPM 鸟瞰 → **导航线拟合**（远场 `peony_postprocess` + `fit_centerline_lsq_weighted` 给底盘导航；近场 `peony_postprocess` 给中间刀 PID） |
 | `control.py` | 控制层 4 个纯 Python 类（无 torch/cv2 依赖，各带单元测试）：`MiddleToolPID` 近场横向误差 → 中间刀滑台偏移（条件积分抗饱和，输出限幅 ±50mm）；`LatencyCompensator` 链路时延估计（滚动 p50/p95）+ 误差前移补偿 err+rate·delay；`LatErrorRate` 横向误差变化率估计（有限差分 + 平滑，供上者）；`DifferentialDrive` 底盘差速：远场横向误差+航向阻尼 → 左右轮速 v∓dv（标称 0.14 m/s，限幅 ±0.2）。⚠️ 过渡态：实车有四轮转向伺服但固件在 AUTO 锁直，按纯差速走；四轮转向+差速混合重写未做（缺口清单 P0-1），电流前馈也未实现（F4） |
 | `state_machine.py` | 作业状态机（待机/作业/掉头/急停等状态切换） |
-| `status_rx.py` | MCU STATUS 接收（live 模式，UDP 9100）：坏帧捕获计数绝不裸抛（D7 约束），滚动 1 秒 ≥5 坏帧报警（多半是固件/Python 协议字段失同步）；纯逻辑类，socket 留在 main |
+| `wire.py` | **E3 §5.1/§5.3「这一拍往线上发什么」的唯一出处**（10-08 批 1b 加）：纯函数 `frames_for_state(state, usable, vl, vr, tool_mm, permit)`——持权（AUTO/LIFT）必发 NAV+TOOL 且**永不发 HEARTBEAT**，MANUAL 只发心跳，ESTOP **稳态返回 `[]`**（跳变那一拍的 ESTOP 帧由调用方发）；`permit` 非 `GATE_N`/`GATE_F` 一律 `ValueError`（fail-closed，四个状态都校验）。同文件另有 `RUN_LOG_COLUMNS`（**run_log 列名的权威**）与 `run_log_row()`、门 N 语义（`GATE_N` 下横移恒 0、刀位恒 `0x07`）、HUD 用的 `REJECT_SHORT` ASCII 短码表与 `reject_short()`（`cv2.putText` 画不出 CJK，中文长文案留在 `common/protocol.py:REJECT_TEXT` 与 CSV/stdout）。抽出来的理由：这三条判定原先散在 `main.py` 三个分支里，"AUTO 但这一帧不可用"会掉进 else 发心跳 |
+| `vehicle_profile.py` | **车辆档案加载（E3 §6）**：读 `config/vehicle_profile.yaml` 的 `profile_id` 与 `permit` 两个平铺键（手写解析，不引 PyYAML）。**读不到就报错停下，绝不回默认值**——档案装的是换算量与安全许可位，静默回默认等于让车带着错参数进无人；`exists()` 为真但读不进去（目录/被占用/权限）也算"读不到"，统一抛 `ValueError` 给 `pc/main.py` 决定"能不能进无人" |
+| `status_rx.py` | MCU STATUS 接收（live 模式，UDP 9100）：坏帧捕获计数绝不裸抛（D7 约束），滚动 1 秒 ≥5 坏帧报警（多半是固件/Python 协议字段失同步）；纯逻辑类，socket 留在 main。**E3 批 1b 加**：`handle()` 改用 `protocol.unpack_status_any()` **按载荷长度分派**（14 B = E3 之前的 v1，19 B = E3 的 v2，其它长度计坏帧）——这就是"批 1b 必须先合、批 1a 才能烧"的理由：旧解析器见到 19 B 会把每一帧计成坏帧，报警会喊成自家解析器；`status_version` 属性给出 1/2/None；`loop_stalled()` 由连续 `STALL_FRAMES` 帧读到同一个 `loop_alive` 判**执行面停摆**（Fw-21 的探测手段，固件 `reject=0x05` 的 PC 侧对应物）——⚠️ **它返回 False 不等于执行面活着**，v1 固件没有这个字段时历史被清空、恒 False，"绝不谎报停摆"；`reject_text()` 把拒绝码翻成中文长文案（HUD 不用它，见 `pc/wire.py`） |
 | `ipm_io.py` | **IPM 外参加载器（带来源校验）**：拒绝无来源字段、`points_source != field`、源图近乎纯色/全黑、重投影超 2 cm、点数 <4、**车辆档案不匹配**的标定文件。存在的原因：仓库里那份 `results/smoke_ipm/ipm_params.json` 看着像标定，其实源图全黑（mean=0/std=0），只是求解器的冒烟测试 |
+
+### `config/` — PC 侧配置
+
+| 文件 | 说明 |
+|---|---|
+| `vehicle_profile.yaml` | **E3 车辆档案（spec §6）**，上电握手用，只有两个平铺键：`profile_id`（1 = PREV 上代车 3.25 m / 2 = REAL 样机 2.15 m）与 `permit`（`gate_n` = 只许沿行空跑、刀强制提且横移禁；`gate_f` = 允许落刀与横移）。PC 发 `MODE(0x20, profile_id)`，固件拿它跟自己烧进去的 `PROFILE_ID` 比，不一致 ⇒ `reject=0x01` 且拒绝进无人。**运行中不热切**（v1.0 §4.3）：档案装的是换算量，行驶中切换会让控制量跳变；换车 = 重新上电 + 改这个文件 + 烧对应固件。⚠️ 固件侧那份是**编译期常量**，与本文件不一致时**以固件为准**（固件回 `reject=0x08`），本文件只决定"PC 该发什么"。读取方：`pc/vehicle_profile.py`（读不到就抛，不回默认值）；`tools/bench_status.py --to` 与 `tools/latency_probe.py` 的档案号也**只从这里取**，不在命令行或输入行上给（spec §6：改档案号 = 改一台车的权限） |
 
 ### `vehicle/` — 车端（现在是 RDK X5，目录名与部分注释沿用"树莓派"，未全量改名）
 
@@ -63,7 +71,10 @@
 
 | 文件 | 说明 |
 |---|---|
-| `bench_status.py` | **B1/B2 台架验收记录器**：收 MCU 的 STATUS 帧（UDP 9100，复用 `pc/status_rx.StatusReceiver`，与生产同一套新鲜度/乱序/重启重同步判据），按绝对时间戳把每帧、每次**模式跳变**、每段**静默 gap**（成对 gap_start/gap_end ＋ 时长）和**你敲的场景标记**写进同一张 CSV。用途是把"失联几秒停车、夺权后刀具动不动"这类几秒内的瞬时行为变成可回看的证据。⚠️ 它**不测**横向偏差的米制数值（感知侧占位几何未接线）；CSV 里的 `current_a`/`batt_v` 两列固件是占位值（`retrofit.c:226` 写死 48.0f），只能看趋势不能当实测。X5 侧 `vehicle/config.yaml` 的 `pc_ip` 必须指到本机，否则收不到帧——那不是 MCU 的错。 |
+| `bench_status.py` | **B1/B2 台架验收记录器**：收 MCU 的 STATUS 帧（UDP 9100，复用 `pc/status_rx.StatusReceiver`，与生产同一套新鲜度/乱序/重启重同步判据），按绝对时间戳把每帧、每次**模式跳变**、每段**静默 gap**（成对 gap_start/gap_end ＋ 时长）和**你敲的场景标记**写进同一张 CSV。用途是把"失联几秒停车、夺权后刀具动不动"这类几秒内的瞬时行为变成可回看的证据。⚠️ 它**不测**横向偏差的米制数值（感知侧占位几何未接线）；CSV 里的 `current_a`/`batt_v` 两列固件是占位值（`retrofit.c:226` 写死 48.0f），只能看趋势不能当实测。X5 侧 `vehicle/config.yaml` 的 `pc_ip` 必须指到本机，否则收不到帧——那不是 MCU 的错。**E3 批 1b（Task 8）加发送面**：`--to <桥IP>:9000` 是 **opt-in**（不填时一个字节都不往外发，`!nav` 之类只打一行"没启用"），填了才另开一个不 bind 的 socket 发；stdin 命令 `!nav vL vR` / `!tool mm lift` / `!beat` / `!auto` / `!manual` / `!clear`，档案号只从 `config/vehicle_profile.yaml` 取；**发出的每一帧同样落进那张 CSV**（`kind=tx_*`，自带发送序号），发送序号与 STATUS 的接收序号是两套计数（共用就等于给自己的新鲜度/重同步判据喂假数据）。有了它，"PC 持续发 NAV/TOOL 的同时看 STATUS"那一类场景才不用关掉记录器改开 `pc/main.py`。⚠️ **发 NAV 前必读**：现在板上的固件里一条 NAV 就是进 AUTO 的钥匙（`firmware/retrofit.c:93→:102`，批 1a 的 F1 拆掉它但**尚未烧**），且本工具对 NAV 有 **0.20 m/s 硬闸**（与 `tools/link_probe.py` 共用 `tools/bench_limits.py` 那一个数），超限 `[TX REFUSED]`：不发、不消耗序号、不落 CSV；**用法前提是驱动轮离地**，跑行车闭环请用 `pc/main.py`。 |
+| `bench_limits.py` | **台架限速的唯一出处**（AGENTS 审查清单第 6 条"单一事实源"）：`NAV_BENCH_LIMIT_MPS = 0.20` + 谓词 `nav_exceeds_bench_limit(vl, vr)`。现在能往大板发帧的三个 PC 入口——`tools/link_probe.py`、`tools/bench_status.py --to`、`tools/latency_probe.py`——走的是同一个 `bridge:9000`、同一块板子，所以这条安全不变量**只能有一份**：各写一个字面量，下一次就是改了一份没改另一份，而"哪个闸生效"没人会在台架上重新验。判定逻辑（不只是数字）也在这里，同一个闸在三个入口必须给同一个答案；比较留了 f32 余量（0.2 存成 f32 是 0.20000000298…，不留余量会把"正好等于限值"这条边界拒掉）。理由与出处写在该文件文档串里：`retrofit.c:98-102` 一条 NAV 即进 AUTO 并把速度钳到 ±1.0，而斜率 `SLEW_ACC=0.2 m/s²`（`:140`）意味着一条 0.9 的命令约 4.5 秒后**真的**把 2.15 m 宽、带着刀和滑台的机器推到 0.9 m/s |
+| `link_probe.py` | **PC → 大板的反向探针**（只发不收，不 bind 端口，可与记录器同时开）：往 `bridge:9000` 发一帧，看单片机认不认。**E3 批 1b（Task 7）重写判据**：废掉"是否曾看到 AUTO"这个统一判据，改成 `EXPECTED` 表按命令定义预期响应 + `judge()` 把"发送前基线"与"发送后变化"分开算，并保留 INCONCLUSIVE（发送前基线没采到、或本来就是那个态 ⇒ 证明不了因果）；A2 之后 NAV 不再改 `mode`，所以 nav 的判据反过来是"**mode 不许变**"，变了要列三种可能（旧固件 F1 洞 / 有别的东西在发帧 / 旁边有人动遥控器）；`reject != 0` 是**正常响应**（链路通了、权限没给），报中文原因不写"链路不通"。NAV 同受 `tools/bench_limits.py` 的 0.20 m/s 闸 |
+| `latency_probe.py` | **E3 spec §7.2 的延迟自测两条，都不改固件**：`D1` = 交替发 `MODE(0x01)`/`MODE(0x00)`，量到 STATUS 里 `mode` 变成这条请求所要的那个值（⚠️ **不能用 NAV 测**——A2 之后 NAV 不改 `mode`，发它看不到任何回显变化，会被读成"链路超时"；分辨率受 STATUS 20 Hz 限制 ±50 ms）；`D2` = 每轮先把 NAV(0,0) **持停到看见轮子确实停了**再发阶跃，量到 `speed` 首次越过阈值（含 D1 全部 + 斜坡 + PWM + 电机 + 传动 + 轮胎）。**两个数必须分开报**：`SLEW_ACC=0.2 m/s²` 让 0→0.14 m/s 要约 0.7 秒，完全掩盖百毫秒级链路延迟，论文口径是"链路延迟 = D1；机械响应 ≈ D2 − D1"。硬约束写在该文件文档串里并各有出处：阈值下限 0.05 m/s 是硬的（TIM3 16 位，脉冲间隔 >65.536 ms 取模 ⇒ 低速段 `speed` 不可信）；阶跃速度共用 `tools/bench_limits.py`；续发/持停是因为桥在最后一条 PC 帧 500 ms 后自注 ESTOP 而锁存只能断电清（Fw-14），`--keepalive 0` 在命令行上直接拒。⚠️ 已知未修：**续发节奏由到达的 STATUS 驱动，STATUS 断流 ⇒ 续发停摆 ⇒ 又静默**（审查发现 M-3，已登记台账） |
 | `check_dataset.py` | 数据集完整性检查（图/mask 对齐、类别统计） |
 | `json2mask.py` | 标注 JSON → 训练用灰度 mask |
 | `morph_process.py` | 分割结果后处理 + **导航线拟合**（被 `pc/perception.py` 和 `network/local_single_station.py` 导入）：`extract_dual_walls` 从 IPM 鸟瞰掩膜提取左右垄墙 → `fit_centerline_lsq` 对双墙各拟合 x=a·y+b 取中点 → `fit_centerline_lsq_weighted` 裁剪最小二乘 + 按内点率加权融合（遮挡鲁棒，单墙退化时门控回退）→ 输出 lookahead 行的横向偏差 `center_x` |
@@ -116,9 +127,9 @@
 | `calib_imgs/` | 标定棋盘格照片 `IMG_XXXX.jpg`（已 gitignore） |
 | `model_data/weights/` | 训练权重 `best_model.pth`（已 gitignore）。⚠️ 与只读仓 `chucao_prj/model_data/0.7428m/best_model.pth` **同大小不同 md5**（`32da179c…` vs `cdd22733…`），不是同一个 checkpoint，引用前必须点名 |
 | `results/smoke*` | 冒烟测试输出：标定/去畸变/推理样例图与 `run_log.csv` |
-| `tests/` | **14 个测试文件，`python -B -m pytest tests/ -q` = **159 passed（09-30 实测）**。逐个：`test_protocol.py` 协议编解码/CRC 向量（**不含** C 对拍，那要台架 B2）；`test_control.py` 控制量与跨边界拆帧；`test_status_rx.py` STATUS 坏帧/新鲜度/MCU 重启重新同步；`test_nav_geometry.py` 前轮 Ackermann 几何（直行极限/后轮零角/共 ICC/刚体速度/镜像）；`test_mjpeg.py` TCP 流解析 + 有界读流 `StreamFeed`（含"connect 卡住也不拖住控制循环"）；`test_adaptive_walls.py` 自适应双墙；`test_perception_norm.py` 感知归一化；`test_data_tools.py` 资产安全 + 分组划分（含"文件名没带批次号 → 整批塌成一组"的命名陷阱）；`test_geometry_check.py` 空间口径判据（**只测事实与单位，不测物理结论**）；`test_ipm_io.py` 标定来源校验＋跑真实 solve() 的闭环；`test_pre_annotate.py` 预标注护栏（含"人工改过后重跑仍保留"）；`test_link_probe.py` 反向探针的 `--serial` 读数路（假串口喂字节：跨读边界拼帧、模式跳变序列、序号回退不计好帧）——**不需要硬件**；`test_bench_status.py` 台架状态记录器（字段名必须与生产解析器一致、模式跳变单独成行、静默段成对落账；含 09-28 那条盲点回归——**报文一直到达但全被拒收时也必须记 gap**，因为 MCU 重启后序号回退正好就是这个样子）；`test_doc_invariants.py` 文档不变量检查器本身（钉住两条容易做错的语义：规则自己举的反例不计入扫描、基线按出现次数而非行数） |
+| `tests/` | **测试文件数与通过条数以 `python -B -m pytest tests/ -q -p no:cacheprovider` 当场实测为准**——本行不写死数字（抄进文档的那一刻它就变成待检查内容，上一批正是"把检查器的符号抄进计划"害它长红一次）；增长链与最近一次读数记在 AGENTS「当前状态」那一条，那里同样写着"后续每批以实测数为准"。逐个：`test_protocol.py` 协议编解码/CRC 向量 + **E3 的 MODE 载荷、STATUS 14/19 两形态、reject 码与中文文案全覆盖**（**不含** C 对拍，那要台架 B2）；`test_control.py` 控制量与跨边界拆帧 + **E3 主循环组合场景**（持权期间的发帧序列、`run_log` 列名与列位、档案实读值进每一行、按键发 `TYPE_MODE` 而不是靠 NAV 隐含、HUD 每行 ≤85 字符且纯 ASCII）；`test_status_rx.py` STATUS 坏帧/新鲜度/MCU 重启重新同步 + **E3 的按载荷长度分派与 `loop_stalled()`**（v1 固件没这字段 ⇒ 恒 False，不许谎报停摆）；`test_nav_geometry.py` 前轮 Ackermann 几何（直行极限/后轮零角/共 ICC/刚体速度/镜像）；`test_mjpeg.py` TCP 流解析 + 有界读流 `StreamFeed`（含"connect 卡住也不拖住控制循环"）；`test_adaptive_walls.py` 自适应双墙；`test_perception_norm.py` 感知归一化；`test_data_tools.py` 资产安全 + 分组划分（含"文件名没带批次号 → 整批塌成一组"的命名陷阱）；`test_geometry_check.py` 空间口径判据（**只测事实与单位，不测物理结论**）；`test_ipm_io.py` 标定来源校验＋跑真实 solve() 的闭环；`test_pre_annotate.py` 预标注护栏（含"人工改过后重跑仍保留"）；`test_link_probe.py` 反向探针（`--serial` 读数路：跨读边界拼帧、模式跳变序列、序号回退不计好帧）+ **E3 重写后的 `judge()`**（发送前基线与发送后变化分开算、无基线给 INCONCLUSIVE、NAV 的判据是"mode 不许变"、reject 非零算正常响应）——**不需要硬件**；`test_bench_status.py` 台架状态记录器（字段名必须与生产解析器一致、模式跳变单独成行、静默段成对落账；含 09-28 那条盲点回归——**报文一直到达但全被拒收时也必须记 gap**，因为 MCU 重启后序号回退正好就是这个样子）+ **E3 的 `--to` 发送面**（不填即一个字节都不发、`tx_*` 落同一张 CSV、发送序号与接收序号两套计数、NAV 超限拒发且不消耗序号）；`test_wire.py` **E3 的持权发帧纯函数**（AUTO 瞎了那一拍仍发 NAV+TOOL 不发心跳、ESTOP 稳态返回空、未知 permit 一律抛、门 N 下刀恒 `0x07` 横移恒 0、`RUN_LOG_COLUMNS` 与行长一致）；`test_vehicle_profile.py` **E3 的档案加载**（读不到就抛、空串 `''` 不回默认路径、`OSError` 也收口成 `ValueError`、`permit` 只认名字表）；`test_latency_probe.py` **E3 的 D1/D2 假世界**（桥的 500 ms 静默窗口建模、re-arm 门、阈值 0.05 硬下限、打印面随实参走、以及"不许对现场说台账里已有条目"的静态断言）；`test_doc_invariants.py` 文档不变量检查器本身（钉住两条容易做错的语义：规则自己举的反例不计入扫描、基线按出现次数而非行数）。⚠️ 全绿只说明**编码层无回归**，不是任何台架/田间准入（AGENTS 审查清单第 5 条） |
 | `docs/缺口清单.md` | **项目"欠账台账"**：顶部『📊 总览：做完的/没做的』板为进度权威，逐项含做法/验收/耗时/依赖 |
-| `docs/参数差异台账.md` | **硬件/参数事实的唯一权威**（Hw/Fw/Pc 项 + 改一笔记一笔）。当前到 Hw-19 |
+| `docs/参数差异台账.md` | **硬件/参数事实的唯一权威**（Hw/Fw/Pc 项 + 改一笔记一笔）。最新编号只增不复用，**以该文件表格当场读到的为准**（本行不写死编号，写死必然落后于包含本行的那次提交） |
 | `docs/决策依据说明.md` | 设计决策记录（D1–D8）。⚠️ D8"实车无转向执行器"已作废未标，见台账 Hw-13 |
 | `docs/接线图_v1.md` | 大板接线图 v1（含 §4A 待改项） |
 | `docs/车上供电与接线清单.md` | **供电与接线权威版**（方案 B 定稿 v4，198 行，采购详版，09-12） |
@@ -213,7 +224,7 @@ python pc/main.py --live --pi-ip 192.168.127.10 --stream-host 192.168.127.10 --s
 ### 测试
 
 ```bash
-python -B -m pytest tests/ -q        # 09-30 基线：159 passed
+python -B -m pytest tests/ -q        # 通过条数以本命令当场输出为准；这里不写死数字（理由见上面 tests/ 那一行）
 python -B tools/check_doc_invariants.py   # 圈编号/交叉引用全仓枚举；exit 0 才算干净
 ```
 
