@@ -129,3 +129,40 @@ def test_returns_exactly_the_three_contract_keys(tmp_path):
     assert isinstance(cfg['path'], str) and os.path.isabs(cfg['path'])
     # 相对路径进来也必须绝对出去（Task 6 要把这个路径写进日志取证）。
     assert os.path.isabs(VP.load(VP.DEFAULT_PATH)['path'])
+
+
+# ---------- Task 6 前置：Task 5 审查 P1/P2/P3（三条都必须先钉住）----------
+def test_missing_permit_key_raises(tmp_path):
+    """P3：只有 profile_id 一行、permit 键整体缺失也必须抛。
+
+    实现今天就走 kv.get('permit') -> None 不在 PERMIT_BY_NAME -> ValueError，
+    但没有任何用例钉着：谁把它"顺手"改成 kv.get('permit', 'gate_n')，
+    门 N 就会被静默当成写在档案里的值。
+    """
+    with pytest.raises(ValueError):
+        VP.load(_write(tmp_path, 'profile_id: 1'))
+
+
+def test_directory_path_raises_value_error(tmp_path):
+    """P1：契约是"读不到 => ValueError"，而"存在但打不开"旧实现漏在外面。
+
+    os.path.exists(目录) 为真，之后裸 open() 抛 PermissionError（OSError 子类、
+    **不是** ValueError）。调用方（pc/main.py）按 except ValueError 决定
+    "能不能进无人"，这条路径就会漏成崩溃；编辑器锁文件/杀软占用是同一形态。
+    """
+    d = tmp_path / 'vehicle_profile.yaml'
+    d.mkdir()
+    with pytest.raises(ValueError):
+        VP.load(str(d))
+
+
+def test_empty_path_does_not_fall_back_to_default(tmp_path):
+    """P2：`path = path or DEFAULT_PATH` 让 '' 静默读默认档案。
+
+    传空串的人想的是"我没指定路径"，拿到的是**另一台车**的换算量与许可位——
+    这正好绕开了本文件存在的全部理由。契约：未指定一律传 None。
+    """
+    with pytest.raises(ValueError):
+        VP.load('')
+    # 默认值仍然只在 None 时生效（别把修法做过头）
+    assert VP.load(None)['profile_id'] in (P.PROFILE_PREV, P.PROFILE_REAL)

@@ -119,9 +119,21 @@ class StatusReceiver:
         u8 回绕（...253,254,255,0,1）时 5 个值互不相同，不会被误判。
         v1 固件没有这个字段 ⇒ 历史被清空 ⇒ 恒 False：**绝不谎报停摆**。
 
-        frames 只用于收紧判据；放宽到比 STALL_FRAMES 更大的值不会更保守，
-        因为历史窗口的长度就是 STALL_FRAMES。
+        frames 的合法区间是 **1..STALL_FRAMES**，两个方向都收窄了（旧 docstring
+        把"收紧/放宽"说反了，Task 4 审查点给 Task 6）：
+          - 调小 = **提前**判停摆（更敏感、也更容易误报），只给探针用；
+            控制循环里必须用默认的 STALL_FRAMES。
+          - 调大在物理上不可能：历史窗口的长度就是 STALL_FRAMES，旧实现里
+            `len(hist) > 5` 永不成立 ⇒ 本函数**永远返回 False**，真停摆也不报
+            （fail-open），所以这里直接 ValueError，不给它静默的机会。
+          - frames < 1 按 1 处理：旧实现 frames=0 的 `[-0:]` 等于 `[0:]`，取的是
+            **整个窗口**而不是"零帧"，与 frames=1 不同义；clamp 之后两者同义
+            （= 最后一帧自比，恒真）。HUD 里那个调用点用的是默认值。
         """
+        if frames > STALL_FRAMES:
+            raise ValueError('frames=%r 超出历史窗口长度 %d：判据永远不成立'
+                             % (frames, STALL_FRAMES))
+        frames = max(1, int(frames))
         if len(self._loop_hist) < frames:
             return False
         vals = list(self._loop_hist)[-frames:]

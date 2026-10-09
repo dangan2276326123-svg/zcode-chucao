@@ -42,7 +42,15 @@ def frames_for_state(state, usable, vl, vr, tool_mm, permit=GATE_N):
     未知许可位一律 ValueError（fail-closed）：0 / None / '' / 名字串都不等于
       "允许落刀"。依据是计划 Global Constraints——任何拿不到的量都不得当作满足；
       批 1a 之前固件侧还没有 REJECT_PERMIT，PC 这一关是唯一闸门。
+      校验在**函数入口**、对**每个状态**都做（Task 3 审查第 3 条）：旧实现只在
+      持权分支里抛，MANUAL/ESTOP 先 return，于是"permit 配错了"这件事在非持权
+      状态下静默通过，而文案写的是"一律"。pc/main.py 每个状态都显式传 permit，
+      配错就是配错，不该等到进 AUTO 才炸。ESTOP 的既有语义不变：合法 permit 下
+      稳态仍然返回 []（一帧不发）。
     """
+    if permit not in (GATE_N, GATE_F):
+        raise ValueError('unknown permit %r' % permit)
+
     if state not in HOLDING:
         if state == 'ESTOP':
             return []
@@ -53,11 +61,9 @@ def frames_for_state(state, usable, vl, vr, tool_mm, permit=GATE_N):
 
     if permit == GATE_N:
         off, lift = 0.0, 0x07
-    elif permit == GATE_F:
+    else:                       # 入口已校验过，这里只剩 GATE_F
         off = tool_mm
         lift = 0x00 if (state == 'AUTO' and usable) else 0x07
-    else:
-        raise ValueError('unknown permit %r' % permit)
 
     return [(P.TYPE_NAV, P.pack_nav(vl, vr)),
             (P.TYPE_TOOL, P.pack_tool(off, lift))]

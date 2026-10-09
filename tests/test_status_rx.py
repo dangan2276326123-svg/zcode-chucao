@@ -320,3 +320,46 @@ def test_unknown_reject_code_falls_back_without_raising():
     text = rx.reject_text()
     assert text and '99' in text
     assert text not in set(P.REJECT_TEXT.values())
+
+
+# ---- Task 6 前置（Task 4 审查点给 Task 6）：loop_stalled 的 frames 实参 fail-open ----
+def test_loop_stalled_frames_beyond_the_window_raises():
+    """传**大于** STALL_FRAMES 的值，旧实现得到的是永远 False（历史窗口 maxlen=5），
+    而 docstring 当时写"只用于收紧判据"——方向正好说反。
+    窗口只有这么长，超出就是不可能的判据，必须当场拒绝而不是静默不报停摆。
+    """
+    from pc.status_rx import STALL_FRAMES
+    rx = StatusReceiver()
+    for i in range(STALL_FRAMES):
+        rx.handle(_v2(10 + i, 7), now=100.0 + i * 0.05)
+    assert rx.loop_stalled()                     # 默认判据：5 帧同值 = 停摆
+    with pytest.raises(ValueError):
+        rx.loop_stalled(frames=STALL_FRAMES + 1)
+    with pytest.raises(ValueError):
+        rx.loop_stalled(frames=99)               # 不会因为"永远 False"而更安全
+
+
+def test_loop_stalled_frames_below_one_is_clamped_to_one():
+    """frames=0 旧实现里 [-0:] == [0:] = 取**整个窗口**，与 frames=1 语义不一致：
+    窗口内 5 帧互不相同时 0 给 False、1 给 True，同一个调用点换个写法就翻脸。
+    修法 max(1, int(frames)) 之后两者同义（都等于"最后一帧自比"，恒真，
+    只许在探针里用，控制循环里必须用默认判据）。
+    """
+    from pc.status_rx import STALL_FRAMES
+    rx = StatusReceiver()
+    for i in range(STALL_FRAMES):
+        rx.handle(_v2(40 + i, i), now=200.0 + i * 0.05)   # 5 帧互不相同 = 没停摆
+    assert not rx.loop_stalled()
+    assert rx.loop_stalled(frames=1)
+    assert rx.loop_stalled(frames=0) == rx.loop_stalled(frames=1)
+    assert rx.loop_stalled(frames=-3) == rx.loop_stalled(frames=1)
+
+
+def test_loop_stalled_frames_is_coerced_to_int():
+    """float 实参旧实现直接 TypeError（切片不接受浮点）——控制循环里抛异常
+    就是把 HUD 打掉，所以这里就地 int()。"""
+    rx = StatusReceiver()
+    for i in range(3):
+        rx.handle(_v2(50 + i, 11), now=5.0 + i * 0.05)    # 3 帧同值
+    assert rx.loop_stalled(frames=2.5)
+    assert rx.loop_stalled(frames=3.0)

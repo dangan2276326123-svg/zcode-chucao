@@ -109,3 +109,22 @@ def test_run_log_row_tolerates_v1_status_and_no_status():
                               0.0, 5.0, {'seq': 1, 'mode': 0, 'v': 1},
                               ({}, 0, None), wire.GATE_N)
     assert len(row_none) == len(row_v1) == len(wire.RUN_LOG_COLUMNS)
+
+
+# ---- Task 6 前置（Task 3 审查第 3 条）：许可位校验提到函数入口 ----
+@pytest.mark.parametrize('state', ['MANUAL', 'ESTOP', 'LIFT', 'AUTO'])
+def test_permit_is_validated_at_the_entry_for_every_state(state):
+    """docstring 写的是"未知许可位一律 ValueError"，旧实现只在**持权分支**里抛：
+    MANUAL/ESTOP 先 return，配错的 permit 在这两个状态下静默通过。
+    main.py 现在每个状态都显式传 permit，所以 fail-closed 的位置必须与文案一致。
+    """
+    for bad in (0, None, '', 3, 'gate_n', 'gate_f'):
+        with pytest.raises(ValueError):
+            wire.frames_for_state(state, True, 0.1, 0.1, 1.0, bad)
+
+
+def test_estop_still_emits_nothing_for_both_valid_permits():
+    """上提校验不许改掉 ESTOP 的既有语义：合法 permit 下 ESTOP 稳态仍是**不发帧**
+    （ESTOP 帧由调用方在跳变那一拍发一次）。"""
+    assert wire.frames_for_state('ESTOP', True, 0.0, 0.0, 0.0, wire.GATE_N) == []
+    assert wire.frames_for_state('ESTOP', False, 0.0, 0.0, 0.0, wire.GATE_F) == []
