@@ -3,6 +3,7 @@ import pytest
 from pc.control import (MiddleToolPID, LatencyCompensator, DifferentialDrive,
                         LatErrorRate)
 from pc.state_machine import StateMachine
+from pc import wire
 from common import protocol as P
 from vehicle.bridge import decide_forward, extract_one_stream, poll_serial_frames
 
@@ -117,13 +118,19 @@ def test_vision_loss_lift_and_recover():
     assert sm.state == 'MANUAL'  # never auto-resumes AUTO
 
 
-def test_tools_raised_outside_auto():
-    sm = StateMachine()
+def test_tools_raised_depends_on_permit():
+    """E3 §5.3：门 N 下 AUTO 也提刀；只有门 F 的 AUTO 才允许落刀。"""
+    sm = StateMachine()                       # 默认 permit = GATE_N
     assert sm.tools_raised
     sm.go_auto()
-    assert not sm.tools_raised
+    assert sm.tools_raised                    # <- 契约变更：过去这里是 False
     sm.estop()
     assert sm.tools_raised
+
+    sm_f = StateMachine(permit=wire.GATE_F)
+    assert sm_f.tools_raised
+    sm_f.go_auto()
+    assert not sm_f.tools_raised              # 门 F 的 AUTO 才落刀
 
 
 # ---- protocol stream extraction -----------------------------------------
@@ -339,4 +346,70 @@ def test_bridge_real_frame_never_losing_window():
     fwd, inject, last, li = decide_forward(None, 50000, last_pc_ms=49000,
                                            auto_on=True, last_inject_ms=49900)
     assert fwd is None and not inject           # silence 1 s < 500 ms
+
+
+# ---- E3 批 1b Task 3: permit / needs_confirm / authority -------------------
+
+def test_holds_authority_matches_wire_holding():
+    sm = StateMachine()
+    assert not sm.holds_authority             # MANUAL
+    sm.go_auto()
+    assert sm.holds_authority
+    sm.vision_loss()
+    assert sm.holds_authority                 # LIFT 仍持权
+    assert sm.state == 'LIFT'
+    sm.go_manual()
+    assert not sm.holds_authority
+
+
+def test_vision_loss_sets_needs_confirm_and_vision_ok_does_not_clear_it():
+    """L2.5：无墙且无独立边界依据 -> 停车 + 必须人工确认，视觉回来也不自动放行。"""
+    sm = StateMachine()
+    sm.go_auto()
+    sm.vision_loss()                          # 默认 no_boundary_evidence=True
+    assert sm.needs_confirm
+    sm.vision_ok()
+    assert sm.state == 'MANUAL'
+    assert sm.needs_confirm                   # 标志不被视觉恢复清掉
+    assert not sm.go_auto()                   # 未确认前不许再进无人
+    assert sm.confirm_continue()
+    assert not sm.needs_confirm
+    assert sm.go_auto() and sm.state == 'AUTO'
+
+
+def test_vision_loss_with_boundary_evidence_does_not_need_confirm():
+    sm = StateMachine()
+    sm.go_auto()
+    sm.vision_loss(no_boundary_evidence=False)
+    assert sm.state == 'LIFT' and not sm.needs_confirm
+    sm.vision_ok()
+    assert sm.go_auto()                       # 有边界依据时允许直接恢复
+
+
+def test_manual_vision_loss_still_does_not_change_state():
+    """H2.1 旧契约保留：MANUAL 下失视觉不改状态（否则 NAV(0,0) 会被当成进 AUTO）。"""
+    sm = StateMachine()
+    sm.vision_loss()
+    assert sm.state == 'MANUAL'
+
+
+def test_state_machine_names_are_all_known_to_wire():
+    """集合钉桩（Task 2 审查发现的同一失效类）：wire.frames_for_state() 对**未知
+    状态名**一律回 HEARTBEAT，也就是静默把权限交回遥控。状态机每加一个新模式
+    （批 2 的 TELEOP 等）都必须先在 wire 侧登记它是否持权，否则这条红。
+    只钉集合关系，不改 wire 的行为。
+
+    两条都要：第一条钉"当前四态"，第二条从类上枚举**全部**大写字符串常量——
+    只写第一条的话，新增 TELEOP 不会让它变红（它只看那四个名字）。"""
+    names = {StateMachine.MANUAL, StateMachine.AUTO,
+             StateMachine.LIFT, StateMachine.ESTOP}
+    known = set(wire.HOLDING) | {'MANUAL', 'ESTOP'}
+    assert names <= known, ('wire.frames_for_state() would silently send '
+                            'HEARTBEAT for %s' % sorted(names - known))
+
+    declared = {v for k, v in vars(StateMachine).items()
+                if not k.startswith('_') and k.isupper() and isinstance(v, str)}
+    assert declared <= known, ('new state machine mode not classified as '
+                               'holding/non-holding in wire.HOLDING: %s'
+                               % sorted(declared - known))
 
