@@ -7,7 +7,7 @@ Two modes:
 
 Usage:
   python pc/main.py --source field_video1.avi                # replay
-  python pc/main.py --live --pc-ip 192.168.1.2               # live (PC is AP)
+  python pc/main.py --live --pi-ip 192.168.127.10            # live (X5 bridge)
 """
 import argparse
 import csv
@@ -26,6 +26,10 @@ from pc.state_machine import StateMachine
 from pc.perception import px_to_meters
 from pc.replay import draw_overlay
 from pc.status_rx import StatusReceiver, STATUS_UDP_PORT
+# E3 批 1b：线上发什么帧由 wire 决定，执行许可位与档案号由 vehicle_profile 决定。
+# 这两件事在 pc/wire.py 与 pc/vehicle_profile.py 里各自只有一份事实，这里只引用。
+from pc import vehicle_profile
+from pc import wire
 
 PI_IP = '192.168.127.10'        # RDK X5 (bridge) — control UDP target
 PI_PORT = 9000
@@ -134,9 +138,20 @@ def main():
 
     os.makedirs(args.out, exist_ok=True)
 
+    # ---- E3 spec §6：车辆档案必须在任何控制量之前读到 ----
+    # 读不到 / 值非法就抛，**不许带错参数进无人**：档案里的 profile_id 决定
+    # 米<->像素换算，permit 决定门 N 期间刀能不能落。loader 的契约是
+    # "不存在与打不开都是 ValueError"，这里故意不 catch——让它把进程停下来。
+    # 位置在加载感知权重之前：配置错了不该先花十秒钟再告诉操作者。
+    cfg_profile = vehicle_profile.load()
+    permit = cfg_profile['permit']
+    profile_id = cfg_profile['profile_id']
+    print('vehicle profile: id=%d permit=%d file=%s' % (
+        profile_id, permit, os.path.basename(cfg_profile['path'])))
+
     from pc.perception import Perception
     per = Perception()
-    sm = StateMachine()
+    sm = StateMachine(permit=permit)      # E3 §5.3：门 N 下 AUTO 也必须提刀
     pid = MiddleToolPID()
     drive = DifferentialDrive()
     comp = LatencyCompensator()
@@ -193,10 +208,7 @@ def main():
 
     with open(csv_path, 'w', newline='', encoding='utf-8') as fcsv:
         wr = csv.writer(fcsv)
-        wr.writerow(['t', 'frame_id', 'state', 'status', 'lat_m', 'lat_comp_m',
-                     'vL', 'vR', 'tool_mm', 'conf', 'latency_ms',
-                     'mcu_mode', 'batt_v', 'rx_good', 'rx_bad',
-                     'frame_age_s', 'recv_timeouts', 'link_drops'])
+        wr.writerow(wire.RUN_LOG_COLUMNS)     # 24 列；E3 的六列在 pc/wire.py 里定义
         src = FrameSource(args.source, args.live, args.step,
                           args.stream_host, args.stream_port)
         for fid, frame in enumerate(src.frames()):
@@ -234,10 +246,17 @@ def main():
                 # latches the MCU (physical reset to clear); entering LIFT is
                 # recoverable and is driven by the NAV-zero + TOOL-up frames
                 # in the state branch below - never an ESTOP frame.
+                # ESTOP 帧**只在跳变这一拍发一次**（E3 §5.1）；稳态由下面的
+                # wire.frames_for_state('ESTOP', ...) 返回 []，也就是 PC 在线上
+                # 完全静默——旧代码在这里还会发 HEARTBEAT keep-alive，那是
+                # 有意的行为变更，不是漏掉（交互见 task-6-report.md 的失联一节）。
                 if sm.state == 'ESTOP':
                     send(P.TYPE_ESTOP, b'')
 
-            # ---- control by state ----
+            # ---- control by state（E3 §5.1：状态优先，持权期间永不发心跳）----
+            # 原来这里是三分支（AUTO+usable / LIFT / else），"AUTO 但这一帧不可用
+            # 且未满 2 秒"会掉进 else 发心跳，固件收心跳就把权限交回遥控，而 PC
+            # 状态与 run_log 仍写 AUTO（codex 新发现一）。发帧内容整个交给 wire。
             vl = vr = 0.0
             tool_mm = 0.0
             if sm.state == 'AUTO' and usable:
@@ -248,20 +267,18 @@ def main():
                 lat_c = comp.compensate(lat_m, e_dot)
                 vl, vr = drive.wheel_speeds(lat_c, err_rate=e_dot)  # PD(e,ė), H4.6-A
                 tool_mm = pid.update(tool_px * px_to_meters(1.0) * 1000.0, dt)
-                send(P.TYPE_NAV, P.pack_nav(vl, vr))
-                send(P.TYPE_TOOL, P.pack_tool(tool_mm, 0))
-            elif sm.state == 'LIFT':
-                # degraded vision: stay in AUTO on the wire with zero wheel
-                # speeds and all knives raised - recoverable when vision
-                # returns; if the PC dies entirely the MCU watchdog latches.
-                send(P.TYPE_NAV, P.pack_nav(0.0, 0.0))
-                send(P.TYPE_TOOL, P.pack_tool(0.0, 0x07))
             else:
+                # 这一拍不驱动工具轴，清积分。两半边都要：
+                #   LIFT / "AUTO 但这一拍瞎了"——仍持权，帧仍由 wire 给（速度锁零 + 提刀）；
+                #   MANUAL / ESTOP——旧代码在这里也清；brief 的片段写成
+                #   `elif sm.holds_authority: pid.reset()` 就把这一半省了，积分会跨过
+                #   急停活着，恢复那一拍刀带着 windup 顶出去。那是旧不变量的回归，
+                #   不是新行为（见 task-6-report.md §4 第 5 条）。
                 pid.reset()
-                send(P.TYPE_HEARTBEAT, b'')   # MANUAL/ESTOP keep-alive; MCU
-                # releases AUTO to MANUAL on HEARTBEAT (P0-2 fix, 09-05).
-                # ESTOP frame is sent once on the transition (see above);
-                # MCU latches and only a physical reset clears it.
+
+            for ftype, payload in wire.frames_for_state(
+                    sm.state, usable, vl, vr, tool_mm, permit):
+                send(ftype, payload)
 
             t_rel = t0 - t0_first
             if not args.no_gui:
@@ -277,16 +294,34 @@ def main():
                     import numpy as np
                     last_vis = np.zeros((720, 960, 3), 'uint8')
                 vis = last_vis.copy()
-                hud2 = 'STATE:%s  [A]uto [M]anual [E]stop [R]eset [Q]uit' % sm.state
+                hud2 = ('STATE:%s  permit:%d  cfg:%d  '
+                        '[A]uto [M]anual [E]stop [R]eset [C]onfirm [Q]uit'
+                        % (sm.state, permit, profile_id))
+                if sm.needs_confirm:
+                    # E3 §5.2 L2.5：闸门是一次性的，所以必须让操作者看得见
+                    # "现在按 [C] 才算数"（视觉已恢复时按了不生效，见按键处）。
+                    hud2 += '  L2.5 CONFIRM REQUIRED - press [C] while blind'
                 if rx is not None:
                     st = rx.last
                     if st is not None:
                         hud2 += '  MCU:m%d %.1fV %.1fA' % (st['mode'], st['battery_v'],
                                                            st['current_a'])
+                        if st.get('v') == 2:
+                            # spec §5.4：档案号 / 权限来源 / 主循环计数 / build 号
+                            hud2 += '  prof:%d auth:%d loop:%d build:%02X' % (
+                                st['profile'], st['authority'],
+                                st['loop_alive'], st['build_id'])
+                            if rx.loop_stalled():
+                                hud2 += '  !!LOOP-STALLED!!'
+                        else:
+                            hud2 += '  MCU:STATUS-v1'   # 旧固件没这四个字段，不留白
                     if rx.bad:
                         hud2 += '  bad:%d' % rx.bad
                     if rx.stale(t0):
                         hud2 += '  MCU:STALE'
+                    _rj = rx.reject_text()          # 人话文案，不是十六进制
+                    if _rj:
+                        hud2 += '  reject:%s' % _rj
                 if frame is None:
                     hud2 += '  *** NO FRAME - vision lost ***'
                 if _age is not None:
@@ -301,8 +336,11 @@ def main():
                 if k == ord('q'):
                     break
                 elif k == ord('a'):
-                    sm.go_auto(confidence_ok=res['confidence'] > 0.05)
+                    # E3 §3.1：申请无人 = 显式 MODE 帧，不再靠"开始发 NAV"隐含进 AUTO
+                    send(P.TYPE_MODE, P.pack_mode(P.MODE_REQ_AUTO, profile_id))
+                    sm.go_auto(confidence_ok=usable)
                 elif k == ord('m'):
+                    send(P.TYPE_MODE, P.pack_mode(P.MODE_REQ_MANUAL, profile_id))
                     sm.go_manual()
                 elif k == ord('e'):
                     prev = sm.state
@@ -310,20 +348,35 @@ def main():
                     if sm.state != prev and sm.state in ('ESTOP', 'LIFT'):
                         send(P.TYPE_ESTOP, b'')   # keyboard path must wire too (P0-4)
                 elif k == ord('r'):
-                    sm.clear_estop()   # TEST ONLY; real reset is physical
+                    # A3 单确认解除急停；清锁 != 授权——固件按 §4.6 的三条件复查后
+                    # 回到 MANUAL，不会因此直接进无人。真复位仍是物理复位。
+                    send(P.TYPE_MODE, P.pack_mode(P.MODE_REQ_CLEAR_ESTOP, profile_id))
+                    sm.clear_estop()
+                elif k == ord('c'):
+                    # L2.5 人工确认。**闸门是一次性的**：confirm_continue() 清掉
+                    # needs_confirm 之后，这条恢复链路上就只剩调用方传的
+                    # confidence_ok 独任（go_auto 的另一个条件）。所以这里做最小收口：
+                    # 只在"确实需要确认、且视觉仍不可用"（= L2.5 自己的现场：已停车、
+                    # 刀已提）时才生效；视觉已恢复时的误按不许消费这道闸门
+                    # （Task 3 审查缺口 B）。"一次性"这件事要落进台账（Task 10）。
+                    if sm.needs_confirm and not usable:
+                        sm.confirm_continue()
+                    else:
+                        print('L2.5 confirm ignored: needs_confirm=%s usable=%s'
+                              ' (press [C] only while vision is still lost)'
+                              % (sm.needs_confirm, usable))
 
-            wr.writerow(['%.3f' % t_rel, fid, sm.state,
-                         res['status'],
-                         '%.4f' % lat_m if usable else '',
-                         '%.4f' % (comp.compensate(lat_m, rate.rate)) if usable else '',
-                         '%.3f' % vl, '%.3f' % vr,
-                         '%.1f' % tool_mm, '%.3f' % res['confidence'],
-                         '%.1f' % latency,
-                         rx.last['mode'] if rx and rx.last else '',
-                         '%.2f' % rx.last['battery_v'] if rx and rx.last else '',
-                         rx.good if rx else '', rx.bad if rx else '',
-                         '%.3f' % _age if _age is not None else '',
-                         _st.get('recv_timeouts', ''), _st.get('link_drops', '')])
+            # lat_comp_m 沿用原来的表达式（延迟补偿后的横向误差）。两个横向量都
+            # 只在**可用**那一拍写值，不可用写空：日志里的 0.0000 读起来像
+            # "实测正好压在行上"，把没测到当成测到了就是伪造证据（旧实现同样是空）。
+            lat_comp_m = comp.compensate(lat_m, rate.rate) if usable else None
+            wr.writerow(wire.run_log_row(
+                t_rel, fid, sm.state, res,
+                lat_m if usable else None, lat_comp_m, vl, vr, tool_mm, latency,
+                rx.last if rx else None, (_st, _seq, _age), permit,
+                rx_good=rx.good if rx else '', rx_bad=rx.bad if rx else '',
+                recv_timeouts=_st.get('recv_timeouts', ''),
+                link_drops=_st.get('link_drops', '')))
             n += 1
             if n % 20 == 0:
                 print('[%d] %s lat=%.3fm vL=%.2f vR=%.2f tool=%.1fmm %.0fms%s' % (
