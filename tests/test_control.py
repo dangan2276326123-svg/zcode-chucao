@@ -7,6 +7,7 @@ import pytest
 from pc.control import (MiddleToolPID, LatencyCompensator, DifferentialDrive,
                         LatErrorRate)
 from pc.state_machine import StateMachine
+from pc.status_rx import StatusReceiver
 from pc import wire
 from common import protocol as P
 from vehicle.bridge import decide_forward, extract_one_stream, poll_serial_frames
@@ -486,6 +487,12 @@ _USABLE = {'status': 'dual', 'lateral_px': 0.0, 'confidence': 0.9,
            'tool_offset_px': 12.0, 'nav_far': {}, 'nav_near': {}}
 _BLIND = {'status': 'no_frame', 'lateral_px': None, 'confidence': 0.0,
           'tool_offset_px': None, 'nav_far': {}, 'nav_near': {}}
+# 单侧墙（spec §5.2 的 L1）：usable 的门槛（>0.01）过得了，进无人的门槛（>0.05）
+# 过不了——两条用例分别用它的高/低置信度版本。
+_LEFT = {'status': 'left_only', 'lateral_px': 0.0, 'confidence': 0.9,
+         'tool_offset_px': 0.0, 'nav_far': {}, 'nav_near': {}}
+_LEFT_LOW = {'status': 'left_only', 'lateral_px': 0.0, 'confidence': 0.03,
+             'tool_offset_px': 0.0, 'nav_far': {}, 'nav_near': {}}
 
 # STATUS v2 报文里的 MCU 回显值：profile=2 与下面 PC 侧的 profile_id=1 **故意不同**，
 # 这样 CSV 的 profile 列（来自 MCU）与 permit 列（来自 PC 档案）不会互相冒充。
@@ -493,22 +500,37 @@ _MCU_STATUS = dict(speed=0.0, current=0.0, battery_v=48.0, limits=0, mode=1,
                    profile=2, authority=1, loop_alive=7, build_id=0x3A,
                    reject=P.REJECT_PERMIT)
 
+# HUD 每行的字符预算。**这里写死数字**是故意的：它是测试自己的牙，不能跟着
+# pc/main.py 里的常量一起漂（那样把预算调大就同时把断言调松了）。推导与测量
+# （画布宽 960 px、字号 0.7、笔画 2、平均 11.19 px/字符）在 pc/main.py 的
+# HUD_MAX_CHARS 注释里；两边一致性由 test_hud_lines_are_short_and_ascii 钉。
+_HUD_MAX_CHARS = 85
+
 
 class _FakeCv2:
-    """只够 main 的 GUI 分支用：记录 HUD 文本、按剧本给键。"""
+    """只够 main 的 GUI 分支用：记录 HUD 文本、按剧本给键。
+
+    I-4（fix round 1）之后 HUD 是**多行**的，所以这里按拍收集：putText 攒着，
+    imshow 落一格——`hud[拍]` 就是那一拍画的所有行（坐标另存在 hud_orgs，
+    都画在同一个 y 上等于叠在一起，仍然看不见）。
+    """
 
     FONT_HERSHEY_SIMPLEX = 0
 
-    def __init__(self, keys, hud):
+    def __init__(self, keys, hud, orgs):
         self._keys = list(keys)
         self._beat = 0
         self.hud = hud
+        self.orgs = orgs
+        self._cur = []
 
     def putText(self, img, text, org, fontface, fscale, color, thickness):
-        self.hud.append(text)
+        self._cur.append((org, fscale, text))
 
     def imshow(self, name, img):
-        pass
+        self.hud.append([t for _o, _s, t in self._cur])
+        self.orgs.append([o for o, _s, _t in self._cur])
+        self._cur = []
 
     def waitKey(self, delay):
         k = self._keys[self._beat] if self._beat < len(self._keys) else -1
@@ -516,14 +538,42 @@ class _FakeCv2:
         return k
 
 
+def _hud_text(r, beat):
+    """某一拍所有 HUD 行拼成一条（给"这串字在 HUD 上出现过"这类断言用）。"""
+    return ' | '.join(r['hud'][beat])
+
+
+def _data_frames(sent, profile_id=1):
+    """去掉上电握手的 MODE(0x20)：握手由 I-5 的用例单独钉，别的用例只关心
+    "这一拍往线上发的控制帧是什么"，别让握手把帧序断言搅浑。"""
+    out = []
+    for beat, ftype, payload, addr in sent:
+        if ftype == P.TYPE_MODE and \
+                P.unpack_mode(payload) == (P.MODE_REQ_PROFILE, profile_id):
+            continue
+        out.append((beat, ftype, payload, addr))
+    return out
+
+
+class _RebootingStatusReceiver(StatusReceiver):
+    """第 3 个有效帧之后把 `resynced` 翻成 1 = "检测到 MCU 重启"。
+    main 只承诺"rx.resynced 变了就重发握手"，所以这里翻计数器，不伪造序号回退。"""
+
+    def handle(self, raw, now=None):
+        out = StatusReceiver.handle(self, raw, now)
+        if self.good >= 3:
+            self.resynced = 1
+        return out
+
+
 def _drive_main(tmp_path, monkeypatch, results, states=None, keys=(), n_status=None,
                 permit=wire.GATE_N, profile_id=1, gui=False,
-                vision_loss_beat=None):
+                vision_loss_beat=None, status_factory=None):
     """跑 n=len(results) 拍，返回 {'sent','header','rows','sm','hud','permits','holder'}。"""
     import numpy as np
     import pc.main as M
 
-    holder = {'beat': 0, 'sm': None, 'permits': [], 'loaded': False,
+    holder = {'beat': 0, 'cur': 0, 'sm': None, 'permits': [], 'loaded': False,
               'gates': [], 'resets': 0, 'updates': 0, 'perception_built': False}
     script = list(states) if states else []
     results = list(results)
@@ -569,9 +619,14 @@ def _drive_main(tmp_path, monkeypatch, results, states=None, keys=(), n_status=N
 
         def frames(self):
             for i in range(len(results)):
-                yield i + 1                 # 非 None：这一拍有帧，走 per.process()
+                # 拍号在循环体执行**之前**就确定：握手帧、ESTOP 跳变帧这些都发生在
+                # process() 之前，用 holder['beat']-1 会把它们标到上一拍去。
+                holder['cur'] = i
+                yield i + 1               # 非 None：这一拍有帧，走 per.process()
 
-    def _sm_factory(permit=wire.GATE_N):
+    # 没有默认值：main 必须**显式**把档案里的 permit 传进状态机。退回无参
+    # `StateMachine()` 会让"permit 来自档案"这条断言失去意义（fix round 1 Minor）。
+    def _sm_factory(permit):
         holder['permits'].append(permit)
         holder['sm'] = StateMachine(permit=permit)
         return holder['sm']
@@ -604,10 +659,10 @@ def _drive_main(tmp_path, monkeypatch, results, states=None, keys=(), n_status=N
         def sendto(self, data, addr):
             assert self.kind == 'ctrl', 'the status socket must never send'
             ftype, _seq, payload = P.unpack_frame(data)
-            sent.append((holder['beat'] - 1, ftype, payload, addr))
+            sent.append((holder['cur'], ftype, payload, addr))
 
         def recvfrom(self, _maxlen):
-            beat = holder['beat']          # drain 发生在 process() 之前 = 当前拍号
+            beat = holder['cur']            # drain 发生在 process() 之前 = 当前拍号
             if queue and beat not in served:
                 served.add(beat)
                 return queue.pop(0), ('127.0.0.1', 9100)
@@ -629,6 +684,7 @@ def _drive_main(tmp_path, monkeypatch, results, states=None, keys=(), n_status=N
             return _Socket(kind)
 
     hud = []
+    hud_orgs = []
     monkeypatch.setattr('pc.perception.Perception', _perception_factory)
     monkeypatch.setattr('pc.vehicle_profile.load', _profile_loader)
     monkeypatch.setattr(M, 'StateMachine', _sm_factory)
@@ -636,8 +692,10 @@ def _drive_main(tmp_path, monkeypatch, results, states=None, keys=(), n_status=N
     monkeypatch.setattr(M, 'FrameSource', _FakeSource)
     monkeypatch.setattr(M, 'socket', _SocketModule())
     monkeypatch.setattr(M, 'draw_overlay', lambda res: np.zeros((8, 8, 3), 'uint8'))
+    if status_factory is not None:      # I-5：模拟"检测到 MCU 重启"的接收器
+        monkeypatch.setattr(M, 'StatusReceiver', status_factory)
     if gui:
-        monkeypatch.setitem(sys.modules, 'cv2', _FakeCv2(keys, hud))
+        monkeypatch.setitem(sys.modules, 'cv2', _FakeCv2(keys, hud, hud_orgs))
 
     argv = ['pc/main.py', '--live', '--pi-ip', '127.0.0.1', '--source', 'fake',
             '--out', str(tmp_path)]
@@ -649,8 +707,8 @@ def _drive_main(tmp_path, monkeypatch, results, states=None, keys=(), n_status=N
     with open(os.path.join(str(tmp_path), 'run_log.csv'), encoding='utf-8') as f:
         rows = list(csv.reader(f))
     return {'sent': sent, 'header': rows[0], 'rows': rows[1:], 'sm': holder['sm'],
-            'permits': holder['permits'], 'hud': hud, 'holder': holder,
-            'gates': holder['gates']}
+            'permits': holder['permits'], 'hud': hud, 'hud_orgs': hud_orgs,
+            'holder': holder, 'gates': holder['gates']}
 
 
 def _kinds_by_beat(sent):
@@ -680,26 +738,26 @@ def test_main_frame_sequence_holds_authority_and_stays_silent_in_estop(tmp_path,
                     results=[_USABLE, _BLIND, _USABLE, _USABLE, _USABLE],
                     states=['AUTO', 'AUTO', 'ESTOP', 'ESTOP', 'MANUAL'],
                     permit=wire.GATE_N, profile_id=1)
-    kinds = _kinds_by_beat(r['sent'])
+    kinds = _kinds_by_beat(_data_frames(r['sent']))
 
     assert kinds[0] == [P.TYPE_NAV, P.TYPE_TOOL]        # 持权：NAV+TOOL
     assert kinds[1] == [P.TYPE_NAV, P.TYPE_TOOL]        # 同一状态、这一拍瞎了：仍是 NAV+TOOL
     assert kinds[2] == [P.TYPE_ESTOP]                   # 跳变那一拍只发一次 ESTOP
     assert 3 not in kinds, kinds[3]                     # ESTOP 稳态：PC 在线上完全静默
     assert kinds[4] == [P.TYPE_HEARTBEAT]               # MANUAL 才交回权限
-    assert [f[1] for f in r['sent']].count(P.TYPE_HEARTBEAT) == 1
-    assert [f[1] for f in r['sent']].count(P.TYPE_ESTOP) == 1
+    assert [f[1] for f in _data_frames(r['sent'])].count(P.TYPE_HEARTBEAT) == 1
+    assert [f[1] for f in _data_frames(r['sent'])].count(P.TYPE_ESTOP) == 1
 
-    nav0 = [f for f in r['sent'] if f[0] == 0 and f[1] == P.TYPE_NAV][0]
+    nav0 = [f for f in _data_frames(r['sent']) if f[0] == 0 and f[1] == P.TYPE_NAV][0]
     # 可用这一拍才真的有速度（v_nominal 0.14 走 float32，与 test_wire 同一口径）
     assert P.unpack_nav(nav0[2])[:2] == pytest.approx((0.14, 0.14))
-    tool0 = [f for f in r['sent'] if f[0] == 0 and f[1] == P.TYPE_TOOL][0]
+    tool0 = [f for f in _data_frames(r['sent']) if f[0] == 0 and f[1] == P.TYPE_TOOL][0]
     off, lift = P.unpack_tool(tool0[2])
     assert (off, lift) == (0.0, 0x07)      # 门 N：AUTO 且视觉可用也不许落刀/横移
 
-    blind_nav = [f for f in r['sent'] if f[0] == 1 and f[1] == P.TYPE_NAV][0]
+    blind_nav = [f for f in _data_frames(r['sent']) if f[0] == 1 and f[1] == P.TYPE_NAV][0]
     assert P.unpack_nav(blind_nav[2])[:2] == (0.0, 0.0)       # 瞎了 = 速度锁零
-    blind_tool = [f for f in r['sent'] if f[0] == 1 and f[1] == P.TYPE_TOOL][0]
+    blind_tool = [f for f in _data_frames(r['sent']) if f[0] == 1 and f[1] == P.TYPE_TOOL][0]
     assert P.unpack_tool(blind_tool[2]) == (0.0, 0x07)        # 瞎了 = 提刀
     assert r['permits'] == [wire.GATE_N]   # 状态机拿到的 permit 来自档案，不是默认值
 
@@ -709,9 +767,12 @@ def test_main_frame_sequence_holds_authority_and_stays_silent_in_estop(tmp_path,
     assert r['holder']['resets'] == 4, '瞎了/急停/手动三态每一拍都该清积分'
 
 
-def test_main_run_log_writes_24_columns_and_the_e3_fields(tmp_path, monkeypatch):
-    """CSV 不能被接线写坏：表头 = wire.RUN_LOG_COLUMNS，每行 24 项，
+def test_main_run_log_writes_25_columns_and_the_e3_fields(tmp_path, monkeypatch):
+    """CSV 不能被接线写坏：表头 = wire.RUN_LOG_COLUMNS，每行 25 项，
     五个 E3 列来自**真解出来**的 STATUS v2，permit 列每行都是档案里那一档。
+
+    25 列（原 24 + `l1_events`）是控制器批准的偏差，理由见 fix round 1 的 I-6：
+    spec §5.2 的降级事件必须落到时间轴上，24 是计划正文里的旧数。
 
     另外钉住一件事：不可用那一拍的 lat_m 必须是**空**，不是 '0.0000'——
     日志里的 0.0000 读起来像"实测正好压在行上"，那是伪造证据（旧实现就是这个
@@ -721,8 +782,8 @@ def test_main_run_log_writes_24_columns_and_the_e3_fields(tmp_path, monkeypatch)
                     results=[_USABLE, _BLIND, _USABLE],
                     states=['AUTO', 'AUTO', 'AUTO'], permit=wire.GATE_N, profile_id=1)
     assert r['header'] == list(wire.RUN_LOG_COLUMNS)
-    assert len(r['header']) == 24
-    assert all(len(row) == 24 for row in r['rows']), [len(x) for x in r['rows']]
+    assert len(r['header']) == 25
+    assert all(len(row) == 25 for row in r['rows']), [len(x) for x in r['rows']]
 
     idx = {c: i for i, c in enumerate(r['header'])}
     assert [row[idx['permit']] for row in r['rows']] == ['1', '1', '1']
@@ -735,6 +796,8 @@ def test_main_run_log_writes_24_columns_and_the_e3_fields(tmp_path, monkeypatch)
     assert [row[idx['state']] for row in r['rows']] == ['AUTO', 'AUTO', 'AUTO']
     assert [row[idx['recv_timeouts']] for row in r['rows']] == ['2', '2', '2']
     assert [row[idx['link_drops']] for row in r['rows']] == ['1', '1', '1']
+    # 双墙/瞎了都不是 L1 ⇒ 计数恒 0（不是空串：这一列必须是可求和的数）
+    assert [row[idx['l1_events']] for row in r['rows']] == ['0', '0', '0']
     assert r['rows'][0][idx['lat_m']] == '0.0000'
     assert r['rows'][1][idx['lat_m']] == ''                 # 瞎了这拍不写测量值
     assert r['rows'][1][idx['lat_comp_m']] == ''
@@ -783,7 +846,7 @@ def test_main_keys_send_mode_frames_and_confirm_gate_needs_blind_vision(
     """按键语义 + L2.5 闸门的最小收口（Task 3 审查缺口 B）。
 
     剧本（每拍一键；拍 N 的按键发生在该拍发帧**之后**、写 CSV 之前）：
-      拍0 无键，MANUAL -> 只发 HEARTBEAT
+      拍0 无键，MANUAL -> 只发 HEARTBEAT（拍首还有一发上电握手 MODE(0x20)，见 I-5 用例）
       拍1 'a' 申请无人 -> MODE(0x01)
       拍2 视觉丢失事件把状态机送进 LIFT 并置闸门；这一拍视觉**已恢复**，误按 'c'
           —— 闸门不许被消费
@@ -797,9 +860,9 @@ def test_main_keys_send_mode_frames_and_confirm_gate_needs_blind_vision(
                           ord('r')],
                     vision_loss_beat=2, permit=wire.GATE_N, profile_id=1, gui=True)
     sm = r['sm']
-    kinds = _kinds_by_beat(r['sent'])
+    kinds = _kinds_by_beat(_data_frames(r['sent']))
     mode = {}
-    for beat, ftype, payload, _addr in r['sent']:
+    for beat, ftype, payload, _addr in _data_frames(r['sent']):
         if ftype == P.TYPE_MODE:
             mode[beat] = P.unpack_mode(payload)
 
@@ -825,15 +888,224 @@ def test_main_keys_send_mode_frames_and_confirm_gate_needs_blind_vision(
     states = [row[2] for row in r['rows']]
     assert states == ['MANUAL', 'AUTO', 'LIFT', 'LIFT', 'MANUAL', 'ESTOP', 'MANUAL']
 
-    # HUD（spec §5.4：权限、档案号、build、loop_alive 是否在动、reject 人话）
+    # HUD（spec §5.4：权限、档案号、build、loop_alive 是否在动、reject 短码）
+    # I-4：HUD 是**多行**的，所以这里按拍拼接；"看得见"由
+    # test_hud_lines_are_short_and_ascii 那一条钉（行长 + 纯 ASCII + 行不重叠）。
     assert len(r['hud']) == 7
-    assert 'permit:1' in r['hud'][-1] and 'cfg:1' in r['hud'][-1]
-    assert 'prof:2' in r['hud'][-1] and 'auth:1' in r['hud'][-1]
-    assert 'build:3A' in r['hud'][-1]
-    assert '!!LOOP-STALLED!!' in r['hud'][-1]      # queue 里 loop_alive 恒 7 = 停摆
-    assert P.REJECT_TEXT[P.REJECT_PERMIT] in r['hud'][-1]   # 人话，不是十六进制
-    assert 'L2.5' in r['hud'][2] and 'CONFIRM' in r['hud'][2]
-    assert 'L2.5' not in r['hud'][4]               # 闸门清掉之后不该继续催
+    last = _hud_text(r, -1)
+    assert 'permit:1' in last and 'cfg:1' in last
+    assert 'prof:2' in last and 'auth:1' in last
+    assert 'build:3A' in last
+    assert '!!LOOP-STALLED!!' in last             # queue 里 loop_alive 恒 7 = 停摆
+    assert 'rej:PERMIT' in last                   # ASCII 短码，putText 画得出来
+    assert P.REJECT_TEXT[P.REJECT_PERMIT] not in last   # 中文画不出，不许进 HUD
+    hud2 = _hud_text(r, 2)
+    assert 'L2.5' in hud2 and 'CONFIRM' in hud2
+    assert 'L2.5' not in _hud_text(r, 4)         # 闸门清掉之后不该继续催
+
+
+# ---- E3 批 1b Task 6 fix round 1（审查 I-1 / I-2 / I-3 / I-4 / I-5 / I-6 + 两条 Minor）----
+
+def test_confirm_gate_can_be_cleared_after_vision_recovers(tmp_path, monkeypatch):
+    """I-1 第一支：**视野恢复了闸门也必须能被消费掉**。
+
+    原始症状（审查者内存复现 "LOCKED OUT: 200 拍内 AUTO 不可达"）：旧按键层写的是
+    `if sm.needs_confirm and not usable`，而 confirm_continue() 只在 needs_confirm
+    为真时有效、go_auto() 在 needs_confirm 为真时直接 False——一旦
+    AUTO→(满 2 s)vision_loss→LIFT+needs_confirm 而之后视觉一直健康，
+    C 被拒（usable 为真）、A 也被拒（闸门还在），闸门只能靠"视觉再坏一次"来清。
+    这条链是可达的：main 从不主动调 vision_ok()，视觉回来时 usable 立刻为真。
+
+    剧本：拍1 'a' 进无人 -> 拍2 vision_loss 置闸门后 'm' 交回人工 -> 拍3 视觉健康时
+    按 'c'（此时 PC 不持权、操作员已在驾驶位，不可能是误按）-> 拍4 'a' 才进得去。
+    """
+    r = _drive_main(tmp_path, monkeypatch,
+                    results=[_USABLE] * 6,
+                    keys=[-1, ord('a'), ord('m'), ord('c'), ord('a'), -1],
+                    vision_loss_beat=2, permit=wire.GATE_N, profile_id=1, gui=True)
+    gates = {b: (st, nc) for b, st, nc in r['gates']}
+    assert gates[3] == ('MANUAL', True)      # 'm' 不消费闸门，只是交回权限
+    assert gates[4] == ('MANUAL', False)     # 视觉健康时的 'c' 把闸门消费掉了
+    states = [row[2] for row in r['rows']]
+    assert states == ['MANUAL', 'AUTO', 'MANUAL', 'MANUAL', 'AUTO', 'AUTO']
+    autos = [b for b, _t, p, _a in r['sent']
+             if _t == P.TYPE_MODE and P.unpack_mode(p) == (P.MODE_REQ_AUTO, 1)]
+    assert autos == [1, 4]                   # 两次申请都真线上过线
+    kinds = _kinds_by_beat(_data_frames(r['sent']))
+    assert kinds[5] == [P.TYPE_NAV, P.TYPE_TOOL]     # 拍4 真进了无人 => 拍5 在跑
+
+
+def test_confirm_gate_still_clears_while_blind(tmp_path, monkeypatch):
+    """I-1 第二支：L2.5 自己的现场（视觉仍不可用）按 'c' 照常生效。
+
+    修法把条件写成 `needs_confirm and (not usable or state == 'MANUAL')`，两个分支
+    都要有牙：这条钉 `not usable` 那一半——把条件改成只认 MANUAL（另一种"顺手"的
+    写法）就让 L2.5 的现场按不动了，而它才是这条闸门当初要管的场景。
+
+    gui=True 是**必需的**，不是装饰：按键是从 cv2.waitKey 读的（main 的按键分支在
+    GUI 块里），不开 GUI 那剧本里的 'a'/'c' 根本不会被按下，测试会变成空转。
+    """
+    r = _drive_main(tmp_path, monkeypatch,
+                    results=[_USABLE, _USABLE, _BLIND, _BLIND],
+                    keys=[-1, ord('a'), ord('c'), -1],
+                    vision_loss_beat=2, permit=wire.GATE_N, profile_id=1, gui=True)
+    gates = {b: (st, nc) for b, st, nc in r['gates']}
+    assert gates[2] == ('LIFT', True)        # 瞎了这拍的起点：闸门在
+    assert gates[3] == ('LIFT', False)       # 瞎着按 'c' 生效
+    assert [row[2] for row in r['rows']] == ['MANUAL', 'AUTO', 'LIFT', 'LIFT']
+
+
+def test_auto_needs_more_than_the_usable_floor(tmp_path, monkeypatch):
+    """I-2：进无人的门槛不许跟着"继续跑"的门槛一起降到 0.01。
+
+    `confidence = min(1.0, support * 10)`（pc/perception.py:154,163），support 是
+    两侧墙的行像素占比：>0.01 只要 0.1% 的像素，而 base 的进无人判据是 0.5%，
+    并且单侧墙也算数。要害是 L2.5 闸门是一次性的、而这道判据是闸门之后**唯一**
+    剩下的东西——"进无人"和"继续跑"是两个风险等级，不能共用一个变量。
+    单侧墙 + conf=0.03：usable 为真（继续跑没问题），进无人必须被拒。
+    （gui=True：按键只在 GUI 分支里从 cv2.waitKey 读，见上面两条用例的注。）
+    """
+    r = _drive_main(tmp_path, monkeypatch,
+                    results=[_USABLE, _LEFT_LOW, _LEFT_LOW],
+                    keys=[-1, ord('a'), -1], permit=wire.GATE_N, profile_id=1,
+                    gui=True)
+    assert r['gates'][1][1:] == ('MANUAL', False)
+    states = [row[2] for row in r['rows']]
+    assert states[1] != 'AUTO', states            # 被 go_auto 拒了
+    assert [f for f in r['sent'] if f[1] == P.TYPE_MODE and
+            P.unpack_mode(f[2])[0] == P.MODE_REQ_AUTO] == []   # 兼 I-3：没上线
+    kinds = _kinds_by_beat(_data_frames(r['sent']))
+    assert kinds[2] == [P.TYPE_NAV, P.TYPE_TOOL]  # 拒进无人 => 持权锁零（LIFT）
+    blind_nav = [f for f in _data_frames(r['sent'])
+                 if f[0] == 2 and f[1] == P.TYPE_NAV][0]
+    assert P.unpack_nav(blind_nav[2])[:2] == (0.0, 0.0)    # 速度锁零、刀提
+
+
+def test_no_auto_request_leaves_the_pc_while_it_does_not_hold_authority(
+        tmp_path, monkeypatch):
+    """I-3：申请帧必须在状态机点头**之后**才上线。
+
+    旧写法是 `send(MODE_REQ_AUTO)` 无条件、且在 `go_auto()` 之前。ESTOP 下
+    go_auto() 必 return False ⇒ PC 停在 ESTOP 一帧不发，而 MCU 已经收到申请 ⇒
+    批 1a 的五条件若成立就授权，PC 静默 ⇒ 500 ms 链路看门狗把 MCU 闩死
+    （retrofit.c:316-318）。这正是报告 Concern 1 那条"自锁分叉"的真实触发路径。
+    """
+    r = _drive_main(tmp_path, monkeypatch,
+                    results=[_USABLE] * 5,
+                    keys=[-1, ord('e'), ord('a'), ord('a'), ord('c')],
+                    permit=wire.GATE_N, profile_id=1, gui=True)
+    autos = [b for b, _t, _p, _a in r['sent']
+             if _t == P.TYPE_MODE and P.unpack_mode(_p) == (P.MODE_REQ_AUTO, 1)]
+    assert autos == [], 'ESTOP 下不许把进无人申请发到线上'
+    assert [row[2] for row in r['rows']] == ['MANUAL', 'ESTOP', 'ESTOP',
+                                             'ESTOP', 'ESTOP']
+    # 被拒要看得见：HUD 上有拒绝原因（否则操作员只会看到"按了没反应"）
+    assert 'AUTO' in _hud_text(r, 4) and 'REFUSED' in _hud_text(r, 4)
+    assert 'ESTOP' in _hud_text(r, 4)
+
+
+def test_confirm_refusal_names_the_state(tmp_path, monkeypatch, capsys):
+    """Minor 2：'c' 被拒的原因不止"视觉已恢复"那一种。
+
+    ESTOP 下 needs_confirm 也可以是 True（LIFT→急停，闸门还在），此时按 'c' 同样被
+    拒，但原因完全不同（confirm_continue() 在 ESTOP 里无效，见 state_machine 的
+    fail-closed 契约）。提示语必须带上状态，否则现场会照着"等视觉坏掉再按"去排障。
+    （gui=True：按键只在 GUI 分支里从 cv2.waitKey 读，见上面两条用例的注。）
+    """
+    r = _drive_main(tmp_path, monkeypatch,
+                    results=[_USABLE, _USABLE, _USABLE, _USABLE],
+                    keys=[-1, ord('a'), ord('e'), ord('c')],
+                    vision_loss_beat=2, permit=wire.GATE_N, profile_id=1, gui=True)
+    out = capsys.readouterr().out
+    assert 'L2.5 confirm ignored' in out
+    assert 'state=ESTOP' in out, out
+    assert r['gates'][3][1:] == ('ESTOP', True)     # 闸门没被消费，也没被清
+    # 剧本里拍1 那次 [A] 是**合法**的进无人申请（它必须先成立，拍2 的 vision_loss
+    # 才能把闸门立起来），所以这里钉的是"之后一帧 AUTO 申请都没再上过线"——
+    # 也就是被拒的 [C] 不许顺手把车交出去。写法比"从来没有 AUTO 申请"更紧。
+    autos = [f[0] for f in r['sent'] if f[1] == P.TYPE_MODE and
+             P.unpack_mode(f[2])[0] == P.MODE_REQ_AUTO]
+    assert autos == [1], autos
+
+
+def test_hud_lines_are_short_and_ascii(tmp_path, monkeypatch):
+    """I-4：spec §5.4 点名的那几个字段必须真的**看得见**。
+
+    三件事一起钉：
+      1. 每行长度 <= 画布能放下的字符数（旧实现是一整行 297 个字符，尾部
+         prof/auth/loop/build、!!LOOP-STALLED!!、MCU:STALE、reject 全被挤出画面）；
+      2. 每一行都是纯 ASCII——cv2.putText 画不出 CJK，中文进了 HUD 就是一串方框，
+         比不显示更难排障；中文长文案留在 CSV/stdout；
+      3. 各行坐标互不相同（都画在同一个 y 上等于叠在一起，仍然看不见）。
+    """
+    import pc.main as M
+    r = _drive_main(tmp_path, monkeypatch,
+                    results=[_USABLE, _USABLE, _USABLE, _BLIND, _BLIND, _BLIND],
+                    keys=[-1, ord('a'), ord('e'), ord('c'), ord('a'), -1],
+                    vision_loss_beat=2, permit=wire.GATE_N, profile_id=1, gui=True)
+    lines = [ln for beat in r['hud'] for ln in beat]
+    assert lines, 'HUD 一行都没画'
+    too_long = [(len(ln), ln) for ln in lines if len(ln) > M.HUD_MAX_CHARS]
+    assert not too_long, too_long
+    assert M.HUD_MAX_CHARS == _HUD_MAX_CHARS, 'main 的预算与测试的预算漂移了'
+    non_ascii = [ln for ln in lines if not all(ord(c) < 128 for c in ln)]
+    assert not non_ascii, non_ascii
+    assert 'rej:PERMIT' in _hud_text(r, 5)          # 短码在位（不是方框也不是 0x08）
+    assert len(r['hud'][5]) >= 2, r['hud'][5]       # 真的拆成了多行
+    assert len(set(r['hud_orgs'][5])) == len(r['hud'][5]), r['hud_orgs'][5]
+
+
+def test_profile_handshake_precedes_the_first_control_frame(tmp_path, monkeypatch):
+    """I-5：`MODE(0x20)` 握手在批 1a 之后是进无人的**第一道条件**，全仓必须有发送点。
+
+    固件 `enter_unmanned()` 的第一条件就是 handshake_ok，而它只由 MODE_REQ_PROFILE
+    置位（spec §4.2 第一条 / §6）。Python 侧原本零调用 ⇒ 门 N 步 4 逻辑上不可能通过，
+    而且会被 B2 那道 fail-closed 遮住，第一次排障会误判成"档案不匹配"。
+    位置也要钉：握手必须在**任何控制帧之前**，否则同一个拍里先发了 NAV 就还是没握手。
+    """
+    r = _drive_main(tmp_path, monkeypatch, results=[_USABLE], states=['MANUAL'],
+                    permit=wire.GATE_N, profile_id=1)
+    modes = [P.unpack_mode(f[2]) for f in r['sent'] if f[1] == P.TYPE_MODE]
+    assert modes == [(P.MODE_REQ_PROFILE, 1)], modes
+    assert r['sent'][0][1] == P.TYPE_MODE and r['sent'][0][0] == 0
+    assert [f[1] for f in r['sent']] == [P.TYPE_MODE, P.TYPE_HEARTBEAT]
+
+
+def test_profile_handshake_resent_after_the_mcu_rebooted(tmp_path, monkeypatch):
+    """I-5 第二半：MCU 重启（`rx.resynced` 变了）之后握手必须重发。
+
+    固件的 handshake_ok 是 RAM 位，重启即清零；PC 不重发就一直 reject=0x01。
+    这里翻的是**检测信号本身**（StatusReceiver.resynced），main 承诺的判据就是它。
+    """
+    r = _drive_main(tmp_path, monkeypatch, results=[_USABLE] * 6,
+                    states=['MANUAL'] * 6, permit=wire.GATE_N, profile_id=1,
+                    status_factory=_RebootingStatusReceiver)
+    hand = [b for b, _t, p, _a in r['sent'] if _t == P.TYPE_MODE and
+            P.unpack_mode(p) == (P.MODE_REQ_PROFILE, 1)]
+    assert len(hand) == 2, hand
+    assert hand[0] == 0 and hand[1] >= 1, hand
+
+
+def test_single_wall_runs_at_l1_speed_and_counts_the_event(tmp_path, monkeypatch):
+    """I-6：spec §5.2 的 L1（仅单侧墙）在 main 里必须有落点——降速 + 记事件。
+
+    原来 left_only/right_only 都算 usable 并按 v_nominal **全速**走，也没有任何
+    降级记录；A10 定的是"本批 L1 只做降速 + 记事件"。系数 0.5 是初始值（台架整定），
+    接线与计数不可延后。计数按**事件**（进入 L1 的边缘）而不是按拍，否则一次
+    10 秒的单侧墙会在日志里读成 125 次降级。
+    """
+    r = _drive_main(tmp_path, monkeypatch,
+                    results=[_LEFT, _LEFT, _USABLE, _LEFT, _USABLE],
+                    states=['AUTO'] * 5, permit=wire.GATE_N, profile_id=1, gui=True)
+    idx = {c: i for i, c in enumerate(r['header'])}
+    navs = {b: P.unpack_nav(p)[:2] for b, t, p, _a in r['sent'] if t == P.TYPE_NAV}
+    assert navs[0] == pytest.approx((0.07, 0.07))    # 0.5 x 0.14
+    assert navs[1] == pytest.approx((0.07, 0.07))    # 还在 L1 里，速度仍是降的
+    assert navs[2] == pytest.approx((0.14, 0.14))    # 双墙恢复 => 全速
+    assert navs[3] == pytest.approx((0.07, 0.07))
+    assert [row[idx['l1_events']] for row in r['rows']] == ['1', '1', '1', '2', '2']
+    assert 'l1:2' in _hud_text(r, 4), r['hud'][4]    # HUD 也看得见计数
+    assert 'L1' in _hud_text(r, 3)                   # 正处于降级时标明 x0.5
 
 
 

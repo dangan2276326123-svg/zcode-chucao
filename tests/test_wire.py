@@ -128,3 +128,36 @@ def test_estop_still_emits_nothing_for_both_valid_permits():
     （ESTOP 帧由调用方在跳变那一拍发一次）。"""
     assert wire.frames_for_state('ESTOP', True, 0.0, 0.0, 0.0, wire.GATE_N) == []
     assert wire.frames_for_state('ESTOP', False, 0.0, 0.0, 0.0, wire.GATE_F) == []
+
+
+# ---- Task 6 fix round 1：I-6 的新列 + I-4 的 HUD 短码表（wire 层的那一半）----
+def test_run_log_row_carries_l1_events_and_reject_short_codes():
+    """l1_events 是第 25 列（控制器批准的偏差），reject_short 是 HUD 的 ASCII 短码表。
+
+    两件事都在 wire 层钉：列数与**默认值**。默认给 0 而不是空串——"这一列没接线"
+    和"这一趟没降级"必须是两件能区分的事，而读日志的人只会看到一格空白或一个 0。
+    短码表覆盖 protocol 的每一个 REJECT_* 常量（缺项就走 UNKNOWN-<十进制> 兜底：
+    宁可显示一条说不清的拒绝，也不静默变空），且全是 ASCII——cv2.putText 画不出
+    中文，中文长文案留在 CSV/stdout。
+    """
+    assert 'l1_events' in wire.RUN_LOG_COLUMNS
+    assert wire.RUN_LOG_COLUMNS[-1] == 'l1_events'   # 追加在末尾，旧列下标不变
+    res = {'status': 'left_only', 'confidence': 0.9, 'lateral_px': 3.0}
+    _args = (1.0, 7, 'AUTO', res, 0.01, 0.02, 0.07, 0.07, 0.0, 12.0, None,
+             ({}, 0, None), wire.GATE_N)
+    row = wire.run_log_row(*_args)
+    assert len(row) == len(wire.RUN_LOG_COLUMNS) == 25
+    col = wire.RUN_LOG_COLUMNS.index('l1_events')
+    assert row[col] == '0'
+    assert wire.run_log_row(*_args, l1_events=3)[col] == '3'
+
+    for code in (P.REJECT_PROFILE, P.REJECT_RCS_STALE, P.REJECT_FIELD_SWITCH,
+                 P.REJECT_ESTOP_LATCHED, P.REJECT_LOOP_STALLED, P.REJECT_NOT_IMPL,
+                 P.REJECT_FIELD_LATCHED, P.REJECT_PERMIT):
+        short = wire.reject_short(code)
+        assert short and short == short.upper()
+        assert all(ord(c) < 128 for c in short)
+        assert len(short) <= 12            # 单片段过长的话 HUD 那一行就折不开了
+    assert wire.reject_short(P.REJECT_NONE) == ''      # 没有拒绝 = 不占一行
+    assert wire.reject_short(None) == ''               # v1 固件没这个字段
+    assert wire.reject_short(200) == 'UNKNOWN-200'     # 未知码：可见兜底，不是空

@@ -26,7 +26,36 @@ RUN_LOG_COLUMNS = [
     'frame_age_s', 'recv_timeouts', 'link_drops',
     # ---- E3 新增（spec §5.4）----
     'profile', 'authority', 'reject', 'loop_alive', 'build_id', 'permit',
+    # ---- E3 Task 6 fix round 1 / I-6：L1 降级事件计数（spec §5.2）----
+    # 追加在**末尾**：前面各列的下标不变，按位置读日志的旧消费者不受影响。
+    'l1_events',
 ]
+
+# HUD 用的 ASCII 短码（fix round 1 I-4）。cv2.putText 画不出 CJK——
+# protocol.REJECT_TEXT 那串中文进了 HUD 就是一排方框，比不显示还难排障；
+# 长文案留在 CSV/stdout，短码进 HUD。仍然是"人话"，**不是十六进制**
+# （spec §5.4 明令）。表与 protocol 的 REJECT_* 常量一一对应；将来固件加了
+# 新原因码而这里缺项时，reject_short() 给可见的 UNKNOWN-<十进制> 兜底，
+# 不抛、也不静默变空。
+REJECT_SHORT = {
+    P.REJECT_NONE: '',
+    P.REJECT_PROFILE: 'PROFILE',
+    P.REJECT_RCS_STALE: 'RCS-STALE',
+    P.REJECT_FIELD_SWITCH: 'FIELD-SWITCH',
+    P.REJECT_ESTOP_LATCHED: 'ESTOP-LATCH',
+    P.REJECT_LOOP_STALLED: 'LOOP-STALLED',
+    P.REJECT_NOT_IMPL: 'NOT-IMPL',
+    P.REJECT_FIELD_LATCHED: 'FIELD-LATCH',
+    P.REJECT_PERMIT: 'PERMIT',
+}
+
+
+def reject_short(code):
+    """拒绝码 -> HUD 短码。None（v1 固件没有这个字段）给空串 = 不显示；
+    未知码给 UNKNOWN-<十进制> = 显示"有个说不清的拒绝"，绝不装作没事。"""
+    if code is None:
+        return ''
+    return REJECT_SHORT.get(code, 'UNKNOWN-%d' % code)
 
 
 def frames_for_state(state, usable, vl, vr, tool_mm, permit=GATE_N):
@@ -71,8 +100,15 @@ def frames_for_state(state, usable, vl, vr, tool_mm, permit=GATE_N):
 
 def run_log_row(t_rel, fid, state, res, lat_m, lat_comp_m, vl, vr, tool_mm,
                 latency_ms, st, feed_snapshot, permit,
-                rx_good='', rx_bad='', recv_timeouts='', link_drops=''):
-    """按 RUN_LOG_COLUMNS 的顺序拼一行。st 可以是 None（无 STATUS）或 v1 字典。"""
+                rx_good='', rx_bad='', recv_timeouts='', link_drops='',
+                l1_events=0):
+    """按 RUN_LOG_COLUMNS 的顺序拼一行。st 可以是 None（无 STATUS）或 v1 字典。
+
+    l1_events 是**累计的 L1 降级事件数**（spec §5.2，I-6），由调用方维护，
+    这里只负责落到最后一列。它写整数而不是空串：这一列的用法是"求和/看趋势"，
+    空串会让读日志的人把"没有降级"和"没接线"混成一回事。默认 0 = "没进入过 L1"，
+    与 main 的初始值同一个语义。
+    """
     st = st or {}
     _feed, _seq, age = feed_snapshot if feed_snapshot else ({}, 0, None)
 
@@ -95,4 +131,5 @@ def run_log_row(t_rel, fid, state, res, lat_m, lat_comp_m, vl, vr, tool_mm,
         recv_timeouts, link_drops,
         _e3('profile'), _e3('authority'), _e3('reject'),
         _e3('loop_alive'), _e3('build_id'), permit,
+        '%d' % l1_events,
     ]
