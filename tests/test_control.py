@@ -427,8 +427,10 @@ def test_tools_raised_is_fail_closed_for_unknown_permit():
     brief 的字面表达式 `permit == GATE_N` 对配错的值（0 / None / 直接传 yaml
     字符串 'gate_f' 而没经 wire.PERMIT_BY_NAME 映射）返回 tools_raised=False，
     也就是 fail-open——而 tools_raised 从 Task 4/5 起就是 HUD/联锁的"刀已提"读数源。
-    收口理由不是改契约：计划自己的 Global Constraints 写着"任何拿不到的量都不得
-    当作满足"，且这与 pc/wire.py 里"未知许可位一律 ValueError"（Task 2 审查
+    收口理由不是改契约：`docs/superpowers/plans/2026-10-08-e3-batch-1a-firmware.md:18`
+    写着"任何拿不到的量都不得当作满足"（那条是给**固件**写的，批 1b 计划的
+    Global Constraints 里没有它；PC 侧照搬是 E3 批 1b 的任务内决定），
+    且这与 pc/wire.py 里"未知许可位一律 ValueError"（Task 2 审查
     Important #1 已就地收口）是同一个洞的两半。合法值行为一条都不变。
     """
     for bad in (0, None, 'gate_f', ''):
@@ -1035,7 +1037,9 @@ def test_hud_lines_are_short_and_ascii(tmp_path, monkeypatch):
       1. 每行长度 <= 画布能放下的字符数（旧实现是一整行 297 个字符，尾部
          prof/auth/loop/build、!!LOOP-STALLED!!、MCU:STALE、reject 全被挤出画面）；
       2. 每一行都是纯 ASCII——cv2.putText 画不出 CJK，中文进了 HUD 就是一串方框，
-         比不显示更难排障；中文长文案留在 CSV/stdout；
+         比不显示更难排障；CSV 的 reject 列存数字码，中文全文在
+         `common/protocol.py:REJECT_TEXT`（`tools/link_probe.py` 的 stdout 打整句，
+         `pc/main.py` 的 stdout 不打——`status_rx.reject_text()` 没有生产调用点）；
       3. 各行坐标互不相同（都画在同一个 y 上等于叠在一起，仍然看不见）。
     """
     import pc.main as M

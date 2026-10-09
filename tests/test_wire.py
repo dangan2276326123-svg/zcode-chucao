@@ -138,7 +138,8 @@ def test_run_log_row_carries_l1_events_and_reject_short_codes():
     和"这一趟没降级"必须是两件能区分的事，而读日志的人只会看到一格空白或一个 0。
     短码表覆盖 protocol 的每一个 REJECT_* 常量（缺项就走 UNKNOWN-<十进制> 兜底：
     宁可显示一条说不清的拒绝，也不静默变空），且全是 ASCII——cv2.putText 画不出
-    中文，中文长文案留在 CSV/stdout。
+    中文。CSV 的 reject 列存的是**数字码**；中文全文（`common/protocol.py:REJECT_TEXT`）
+    目前没有生产调用点，只有 `tools/link_probe.py` 在 stdout 打整句。
     """
     assert 'l1_events' in wire.RUN_LOG_COLUMNS
     assert wire.RUN_LOG_COLUMNS[-1] == 'l1_events'   # 追加在末尾，旧列下标不变

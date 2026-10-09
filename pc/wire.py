@@ -33,8 +33,11 @@ RUN_LOG_COLUMNS = [
 
 # HUD 用的 ASCII 短码（fix round 1 I-4）。cv2.putText 画不出 CJK——
 # protocol.REJECT_TEXT 那串中文进了 HUD 就是一排方框，比不显示还难排障；
-# 长文案留在 CSV/stdout，短码进 HUD。仍然是"人话"，**不是十六进制**
-# （spec §5.4 明令）。表与 protocol 的 REJECT_* 常量一一对应；将来固件加了
+# 所以进 HUD 的是短码，CSV 的 reject 列存的是**数字码**。中文全文目前**没有**生产
+# 调用点（`status_rx.reject_text()` 只有单测在调，`pc/main.py` 的 stdout 也没打它；
+# 打整句的是 `tools/link_probe.py`，它读的是 `protocol.REJECT_TEXT` 那本字典）——
+# spec §5.4 那句"人话"按批 1b 的收口口径是「已编码 + 待联调」。短码仍然是"人话"，
+# **不是十六进制**（spec §5.4 明令）。表与 protocol 的 REJECT_* 常量一一对应；将来固件加了
 # 新原因码而这里缺项时，reject_short() 给可见的 UNKNOWN-<十进制> 兜底，
 # 不抛、也不静默变空。
 REJECT_SHORT = {
@@ -69,7 +72,9 @@ def frames_for_state(state, usable, vl, vr, tool_mm, permit=GATE_N):
     许可位（spec §5.3）：GATE_N 下横移恒 0、刀位恒 0x07；
       GATE_F 下只有 "AUTO 且视觉可用" 才允许落刀（lift=0）。
     未知许可位一律 ValueError（fail-closed）：0 / None / '' / 名字串都不等于
-      "允许落刀"。依据是计划 Global Constraints——任何拿不到的量都不得当作满足；
+      "允许落刀"。依据 = `docs/superpowers/plans/2026-10-08-e3-batch-1a-firmware.md:18`
+      那条 fail-closed 约束（"任何拿不到的量都不得当作满足"）——**那句是给固件写的**，
+      批 1b 计划的 Global Constraints 里没有它；PC 侧照搬是 E3 批 1b 的任务内决定。
       批 1a 之前固件侧还没有 REJECT_PERMIT，PC 这一关是唯一闸门。
       校验在**函数入口**、对**每个状态**都做（Task 3 审查第 3 条）：旧实现只在
       持权分支里抛，MANUAL/ESTOP 先 return，于是"permit 配错了"这件事在非持权

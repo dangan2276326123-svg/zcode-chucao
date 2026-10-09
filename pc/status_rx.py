@@ -140,10 +140,19 @@ class StatusReceiver:
         return len(set(vals)) == 1
 
     def reject_text(self):
-        """最近一次拒绝原因的人话（spec §5.4：HUD 不显示十六进制）。
+        """最近一次拒绝原因的中文全文（spec §5.4 要"人话"而不是十六进制）。
+
+        **这个方法目前没有生产调用点**：HUD 走 `pc/wire.py:REJECT_SHORT` 的 ASCII 短码
+        （cv2.putText 画不出 CJK），CSV 的 reject 列存的是数字码，`pc/main.py` 的 stdout
+        也没打这句全文——调用它的只有 `tests/`。同一份文案作为**字典**
+        （`common/protocol.py:REJECT_TEXT`）倒是有一个人看得见的落点：
+        `tools/link_probe.py` 判到 `reject != 0` 时在 stdout 打整句。
+        所以 spec §5.4 那句"人话"在批 1b 的口径里是「已编码 + 待联调」，
+        **待联调不等于已存在**（AGENTS 清单第 5 条）。
 
         没有 STATUS / v1 帧 / reject 为 None ⇒ 空串；未知码 ⇒ 带数字的兜底文案。
-        这里**不抛异常**：它在控制循环里被每帧调用，固件将来加的原因码不该让 PC 停。
+        这里**不抛异常**：将来接进控制循环时它是每帧都要调的，固件新加的原因码
+        不该让 PC 停。
         """
         if not self.last or self.last.get('reject') is None:
             return ''

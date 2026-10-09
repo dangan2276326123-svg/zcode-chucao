@@ -118,8 +118,10 @@ class StateMachine:
 
         判据写成"**不是门 F**"而不是"== 门 N"（任务审查 I-1，控制器裁定照修）：
         未知/配错的许可位（0、None、没经 wire.PERMIT_BY_NAME 映射的 'gate_f' 串）
-        一律按"提刀"处理。依据是计划自己的 Global Constraints——任何拿不到的量
-        都不得当作满足；这与 pc/wire.py 对未知许可位抛 ValueError 是同一个洞的两半。
+        一律按"提刀"处理。依据 = `docs/superpowers/plans/2026-10-08-e3-batch-1a-firmware.md:18`
+        那条 fail-closed 约束（"任何拿不到的量都不得当作满足"）——**那句是给固件写的**，
+        批 1b 计划的 Global Constraints 里没有它；PC 侧照搬是 E3 批 1b 的任务内决定。
+        这与 pc/wire.py 对未知许可位抛 ValueError 是同一个洞的两半。
         合法值行为不变：门 N 的 AUTO = True，门 F 的 AUTO = False。
         """
         return self.state != self.AUTO or self.permit != wire.GATE_F

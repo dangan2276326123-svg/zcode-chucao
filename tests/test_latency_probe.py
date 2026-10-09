@@ -400,14 +400,17 @@ def test_d2_refuses_a_step_above_the_shared_bench_limit():
                   step_v=BL.NAV_BENCH_LIMIT_MPS, repeats=1, timeout_s=0.01)
 
 
-def test_d2_refuses_non_finite_inputs_because_the_shared_gate_is_nan_blind():
-    """共享闸现在 fail-closed（C-1 收口）：非有限值一律判为超限，这道闸拦得住 NaN 了。
+def test_d2_refuses_non_finite_inputs_because_its_gate_names_the_parameter():
+    """非有限入参在本模块就被拒，现在共享闸也拦得住 NaN 了——两道闸各有各的用处。
 
-    本模块的 `_finite()` 仍然保留，理由不是"共享闸拦不住"而是它给的是**带参数名的
-    ValueError**——一句能照着改的报错比一个布尔值有用；NaN 一旦放过，`pack_nav` 把它
-    写进线上，`speed >= threshold` 恒假，测出来是"超时 N 次"，看着像链路问题、其实是
-    入参问题。`_check_d2_inputs()` 的先后（`:307` 的 `_finite` 在 `:313` 的共享闸之前）
-    保证非有限值拿到的是 "must be finite" 那条，不是误导人的 "beyond bench limit"。
+    旧名 `..._because_the_shared_gate_is_nan_blind`（Task 9 起）说的是当时的事实：
+    那时 `nav_exceeds_bench_limit` 对 NaN 恒假。C-1 收口之后共享闸 fail-closed，
+    "闸拦不住 NaN"不再是这条的理由，所以名字改过来；旧名在 `.superpowers/` 的
+    审查 diff 与 task-9 报告里仍指同一条测试。
+
+    留着本模块这道闸的真实理由：它给的是**带参数名的 ValueError**，谓词只给 bool。
+    NaN 一旦放过，`pack_nav` 把它写进线上，`speed >= threshold` 恒假，测出来是
+    "超时 N 次"，看着像链路问题、其实是入参问题。
     """
     for bad in (float('nan'), float('inf'), float('-inf')):
         with pytest.raises(ValueError):

@@ -174,14 +174,19 @@ def unpack_tool(payload: bytes):
 def pack_status(speed: float, current_a: float, battery_v: float,
                 limits: int, mode: int) -> bytes:
     """STATUS (0x10) payload from MCU: wheel speed m/s, motor current A,
-    battery V, limit-switch bits, mode (0 manual / 1 auto / 2 estop)."""
-    return struct.pack('<fffBB', speed, current_a, battery_v, limits, mode)
+    battery V, limit-switch bits, mode (0 manual / 1 auto / 2 estop).
+
+    形态与长度都引用 `STATUS_V1_FMT` / `STATUS_V1_LEN`（:72-75），不在这里再写一遍
+    字面量——写第二份就是给"改了一份没改另一份"留位子（AGENTS 清单第 6 条），
+    而这一份漂了的代价是 v1/v2 分派按长度读错位字段。
+    """
+    return struct.pack(STATUS_V1_FMT, speed, current_a, battery_v, limits, mode)
 
 
 def unpack_status(payload: bytes):
-    if len(payload) != 14:
-        raise ValueError('status payload must be 14 bytes')
-    return struct.unpack('<fffBB', payload)
+    if len(payload) != STATUS_V1_LEN:
+        raise ValueError('status payload must be %d bytes' % STATUS_V1_LEN)
+    return struct.unpack(STATUS_V1_FMT, payload)
 
 
 # ---- E3 批 1b：MODE 帧与 STATUS v2（spec §3.1 / §3.2 / §3.5）--------------

@@ -419,8 +419,10 @@ def main():
                         # reject 进 HUD 用 ASCII 短码：REJECT_TEXT 是中文人话，而
                         # cv2.putText 画不出 CJK，进 HUD 就是一排方框，比不显示还难
                         # 排障（报告 Concern 4）。短码表在 pc/wire.py:REJECT_SHORT，
-                        # **仍然不是十六进制**（spec §5.4）；中文全文留在 CSV 的
-                        # reject 列（数字码）与 stdout。
+                        # **仍然不是十六进制**（spec §5.4）。中文全文这条**还没有生产
+                        # 调用点**：CSV 的 reject 列存的是数字码，stdout 这里也没打全文
+                        # （`status_rx.reject_text()` 只被单测调用），spec §5.4 的"人话"
+                        # 到批 1b 为止是「已编码 + 待联调」，不是"已经在屏幕上"。
                         _rj = wire.reject_short(st.get('reject'))
                         if _rj:
                             alerts.append('rej:%s' % _rj)

@@ -21,8 +21,9 @@
     （评审指出 0.005 m/s 会被算成约 0.01451 m/s）⇒ 低速段的 `speed` 不可信，
     `measure_d2()` 对更低的阈值直接拒。
   · **阶跃速度共用 `tools/bench_limits` 那一个数**（`NAV_BENCH_LIMIT_MPS = 0.20`，
-    谓词 `nav_exceeds_bench_limit()`）。那个谓词对 NaN 比较恒假，所以非有限值在
-    **本模块**的入参校验里拒掉——不改共享模块（最终审查后的收口项）。
+    谓词 `nav_exceeds_bench_limit()`）。那条共享闸现在自己就 fail-closed（非有限值
+    一律判为超限，C-1 收口）；本模块的 `_finite()` **照旧留着**，因为它给的是带参数名的
+    `ValueError`，而谓词只回答是/否——一句能照着改的报错比一个布尔值有用（细节见那里）。
   · **续发 / 持停**：桥在最后一条 PC 帧 500 ms 后自注 ESTOP（`vehicle/bridge.py:24/30/206`），
     而锁存只能把板子断电清（台账 Fw-14、`retrofit_clear_estop()` 全工程无调用点）。
     阶跃到阈值本身要约 0.7 秒 > 500 ms，所以只发一条 NAV 的测法**必然**超时：
@@ -199,19 +200,26 @@ def _window(name, value):
 def _finite(name, value):
     """把入参收成**有限**的 float。
 
-    这道闸必须自己开：`bench_limits.nav_exceeds_bench_limit()` 用的是大小比较，
-    而 NaN 的任何比较都是 False —— NaN 过不了那道共享闸，却能被 `pack_nav` 写成线上
-    的 f32，然后在 `speed >= threshold` 上永远不成立，测出一串"超时"，
-    把入参问题伪装成链路问题。inf 同理（f32 装不下还会 struct.error）。
+    共享闸（`bench_limits.nav_exceeds_bench_limit()`）现在自己就 fail-closed 了
+    （C-1 收口：非有限值一律判为超限），这道闸**仍然留着**，理由是分工不是重复：
+    谓词只回答"能不能发"（bool），这里给的是**带参数名的 ValueError**——
+    `step_v must be finite, got nan` 一句就能照着改，`True` 不会告诉你哪个参数坏了。
+    顺序也因此要紧：`_check_d2_inputs()` 里 `_finite('step_v', ...)` 排在共享闸
+    **之前**，所以非有限值拿到的是这句可执行的报错，而不是"beyond bench limit"那种
+    会把入参问题说成限速问题的文案（顺序一改，文案就说假话——别把这两道闸调换）。
+    放过去会怎样（这条闸存在的原意，仍然成立）：`pack_nav` 能把 NaN 写成线上的 f32，
+    而 `speed >= threshold` 对 NaN 恒假 ⇒ 测出一串"超时"，把入参问题伪装成链路问题；
+    inf 同理（超出 f32 值域还会 `struct.error`）。
     """
     try:
         v = float(value)
     except (TypeError, ValueError):
         raise ValueError('%s must be a finite number, got %r' % (name, value))
     if not math.isfinite(v):
-        raise ValueError('%s must be finite, got %r (NaN slips past '
-                         'bench_limits.nav_exceeds_bench_limit(): comparisons with '
-                         'NaN are always False)' % (name, value))
+        raise ValueError('%s must be finite, got %r (bench_limits.'
+                         'nav_exceeds_bench_limit() now also refuses non-finite '
+                         'speeds, but it only answers yes/no - this one names '
+                         'the parameter)' % (name, value))
     return v
 
 
@@ -406,10 +414,11 @@ def measure_d2(send_fn, recv_iter, step_v=DEFAULT_STEP_MPS, threshold=MIN_THRESH
     所以只有直接调 API 的人会遇到它——`estop_caution()` 与 `report()` 对它各有专门的分支。
 
     ⚠️ 续发节奏是**由到达的 STATUS 驱动**的：STATUS 停下（比 `keepalive_s` 还慢或干脆断流）
-    时，节奏跟着停，PC 就又静默了。这是本轮**没修、也还没进台账**的遗留项（审查发现 M-3）：
-    登记位置见 task-9 报告 §F9，`docs/参数差异台账.md` 里目前**没有**这一条（10-08 实测
-    `docs/` 全目录 grep `M-3` 零命中）。它不是已解决的口子；`_diagnostics()` 里的
-    `reader_error`/`rx` 计数就是给这个场景看的。
+    时，节奏跟着停，PC 就又静默了。这一条**本体未修**（审查发现 M-3），登记处 =
+    `docs/参数差异台账.md` 的 **Pc-9** 行（10-09 由文档收口批落成本行；在那之前它只活在
+    task-9 报告 §F9 里，`docs/` 全目录 grep `M-3` 当时零命中）。它不是已解决的口子：
+    落点两处见 Pc-9（本函数文档串 + `estop_caution()` 的输出行，`--keepalive` 的 help
+    **没有**写它）；`_diagnostics()` 里的 `reader_error`/`rx` 计数就是给这个场景看的。
 
     计数 `rounds_step_commanded` = **真的发过阶跃**的轮次数。`not_rearmed` 混着两类轮次
     （持停段没挣到静止证据、一条阶跃都没发 / 发了阶跃但门始终没开），归因要靠上面那个数
