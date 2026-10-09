@@ -1,0 +1,12 @@
+# E3 车辆档案（spec §6）。上电握手用：PC 发 MODE(MODE_REQ_PROFILE, profile_id)，
+# 固件拿它跟自己烧进去的 PROFILE_ID 比；不一致 -> reject=REJECT_PROFILE 且拒绝进无人。
+#
+# profile_id: 1 = PREV 上代车（3.25 m，装控制栈试验用）
+#             2 = REAL 样机（2.15 m，在地里）
+# permit:     gate_n = 只许沿行空跑（刀强制提、横移禁）  <- 秋季门 N 用这个
+#             gate_f = 允许落刀作业与横移（门 F，需 B5 全项 + 刀控 + 滑台接线）
+#
+# ⚠️ 运行中不热切（v1.0 §4.3）：档案装的是换算量，行驶中切换会让控制量跳变。
+#    换车 = 重新上电 + 改这个文件 + 烧对应固件。
+profile_id: 1
+permit: gate_n
