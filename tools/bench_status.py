@@ -32,6 +32,29 @@ stdin 上多一套命令：`!nav vL vR` / `!tool mm lift` / `!beat` / `!auto` / 
 共用就等于自己给自己的判据喂假数据。有了它，验收表里"PC 持续发 NAV/TOOL 的同时看
 STATUS"那一类（②③⑧）才不用关掉记录器改用 `pc/main.py`——那条时间轴就是这么丢的。
 
+**发 NAV 之前必须知道的三件事**（09-30 复审 I-1，都是代码事实，出处写着）：
+  1. 现在烧在板上的固件，**一条 NAV 就是进 AUTO 的钥匙**：`firmware/retrofit.c:93`
+     `if (len < 9 || estop_latched) return;` → `:98-101` 把 `cmd_vl`/`cmd_vr` 钳到
+     **±1.0 m/s** → `:102` `mode = MODE_AUTO;`（批 1a 的 F1 修法就是拆掉这一支，但
+     **尚未实施、尚未烧**，所以板上还是这个语义）；
+  2. "钳到 ±1.0"**不等于安全**：行走斜率 `SLEW_ACC = 0.2 m/s²`（`retrofit.c:140`），
+     一条 0.9 的命令约 **4.5 秒**后真的把车推到 0.9 m/s；
+  3. 所以本工具对 NAV 有 **0.20 m/s 的硬闸**，与 `tools/link_probe.py` 读同一个数
+     （两者共用 `tools/bench_limits.py`，那还是唯一的一份）。超限就 `[TX REFUSED]`：
+     不发送、不消耗序号、不落 CSV，只加一个 `refused` 计数。
+     **用法前提：驱动轮离地。** 要跑行车闭环请用 `pc/main.py`，这个工具不是行车工具。
+
+**你敲的每一下都会让桥自己注一条 ESTOP**（09-30 复审 I-2，读 STATUS 前先知道）：
+`vehicle/bridge.py:24` `LINK_TIMEOUT_MS=500`、`:30` `SEEN_WINDOW_MS=60000`、`:206`
+`auto_on=True` 是硬编码 ⇒ 任何**一条**真帧（`!beat`/`!tool`/`!auto` 都算，不只是 NAV）
+都会把 PC 标成"在用"，**500 ms 后桥自己往串口注一条 ESTOP**。而 `retrofit_clear_estop()`
+全工程没有调用点（台账 **Fw-14**），`!clear` 发的 `TYPE_MODE` 在**现固件**的 switch 里
+根本没有分支（`retrofit.c:60-75`）——所以这个锁存**只能把板子断电清**。
+后果很具体：边发边记（场景 ②③⑧）时，你回头在 STATUS 里看到的 ESTOP，很可能是**你自己
+敲键的节奏**造成的，不是被测机制的反应；把它当成机制结论就是假证据。要连续观察就得
+**连续发**——本工具暂无 `--every`，需要周期发送时用
+`python -B tools/link_probe.py nav 0 0 --every 0.2 --count 30 --host <X5>`。
+
 开机不用你自查的两件事（09-28 加，都是当天在现场真踩过才写进工具的）：
   · 启动时自动核对"本机是否真的有 `vehicle/config.yaml` 里那个 pc_ip"——不是就直接说出
     该怎么改，不再让你拿 `ipconfig` 的输出自己猜；
@@ -62,6 +85,8 @@ except AttributeError:                 # pragma: no cover - py<3.7
 
 from pc.status_rx import StatusReceiver          # noqa: E402
 from common import protocol as P                 # noqa: E402
+# 台架 NAV 限速与判定逻辑都在这里（与 tools/link_probe.py 共用同一个出处，09-30 复审 I-1）。
+from tools.bench_limits import NAV_BENCH_LIMIT_MPS, nav_exceeds_bench_limit   # noqa: E402
 
 # 固件 retrofit.h:11-13 只有这三个值（pl[13]=mode，没有第四态）。
 # 这里不列的编号会原样打印数字——宁可看见"3"，也不要工具替它编一个名字。
@@ -102,20 +127,25 @@ def configured_pc_ip(root=None):
         return None
 
 
-def verdict(good, bad, out_of_order, resynced, rows, seconds, active=None,
-            tx_rows=0):
+def verdict(good, bad, out_of_order, resynced, seconds, *, rx_rows,
+            active=None, tx_rows=0):
     """把小结那几个计数器直接换成判据。
 
     纯函数 + 单测，理由是现场教训：09-28 那份小结里 `重启重同步 6` 已经写得很明白，
     但人要先把"6"翻译成"板子在复位"才知道不能往下做——今天差点就在复位循环上继续测
     场景了。判据该由工具给，不该留给车边上的人心算。
 
-    `rows` 是**收到的帧行数**（`BenchLog.rx_rows`），不是 CSV 的总行数：Task 8 之后
-    同一张表里还有 `tx_*`（发出去的）与 note/gap 行。`tx_rows` 只用来在"一帧都没收到"
-    时多说一句"但你发了 N 条"，它**不进任何分支的条件**——发出去的不是收到的证据，
-    拿它去把 `rows == 0` 那一支救活，就等于"因为我发了 NAV 所以链路算稳定"。
+    `rx_rows` 是**收到的帧行数**（`BenchLog.rx_rows`），不是 CSV 的总行数：Task 8 之后
+    同一张表里还有 `tx_*`（发出去的）与 note/gap 行。它做成**只能按关键字传**的参数，
+    不叫 `rows`（09-30 复审 M-6）：下一个调用方（Task 9 的 D1/D2）照字面传 `log.rows`
+    就把"一帧都没收到"那一支救活了，而那正是本工具明令防的事——名字骗人时至少让写法
+    当场 TypeError。
+
+    `tx_rows` 只用来在"一帧都没收到"时多说一句"但你发了 N 条"，它**不进任何分支的条件**——
+    发出去的不是收到的证据，拿它去把 `rx_rows == 0` 那一支救活，就等于"因为我发了 NAV
+    所以链路算稳定"。
     """
-    if rows == 0:
+    if rx_rows == 0:
         lines = ['判定：一行都没收到。**这不是"接线不通"的证据**，按顺序查发送端：'
                 'X5 上 bridge 在不在跑（`sh ~/qoder/vehicle/start_bridge.sh` 一条命令带过'
                 '清 cat + sudo）→ 本机有没有 config.yaml 里那个 pc_ip → 防火墙。']
@@ -328,8 +358,11 @@ def resolve_target(text, avoid_port=None):
     ②③⑧ 那类"PC 持续发的同时看 STATUS"的证据就是这么凭空变成假的。
 
     两类目标直接拒：
-      · 广播 / 组播 / 未指定（255.255.255.255、0.0.0.0、224–239.x.x）：一条命令对
-        整个网段下指令，那不等于"发个测试帧"，是发给**所有**听得见的板子；
+      · 广播 / 组播 / 未指定（255.255.255.255、0.0.0.0、224–239.x.x），**以及定向广播**
+        `x.x.x.255` 与网络号 `x.x.x.0`：一条命令对整个网段下指令，那不等于"发个测试帧"，
+        是发给**所有**听得见的板子。台架网段固定是 /24（PC 192.168.127.100、
+        X5 192.168.127.10），所以 192.168.127.255 就是本段的广播地址——它"看着像单播"
+        但后果与 255.255.255.255 一模一样（09-30 复审 M-3，选"拒"而不是"写明不拦"）。
       · 端口 = 本机正在收 STATUS 的那个端口：发出去打回自己，`StatusReceiver` 会把
         它们当坏帧计进 bad/ALARM，自己污染自己的判据（bridge 收帧端口是 9000）。
     主机名不在这里做解析（不调 getaddrinfo），所以"某个域名指到广播地址"不在拦截
@@ -355,6 +388,13 @@ def resolve_target(text, avoid_port=None):
         if host in ('255.255.255.255', '0.0.0.0') or 224 <= nums[0] <= 239:
             raise ValueError('--to 拒绝广播/组播/未指定地址（%r）：那是对整个网段上所有'
                              '板子下命令' % text)
+        if nums[3] == 255:
+            raise ValueError('--to 拒绝定向广播（%r）：台架网段是 /24，x.x.x.255 是本段的'
+                             '广播地址，一条命令会同时指挥所有听得见的板子——后果与 '
+                             '255.255.255.255 一样，不因为它"看着像单播"就放行' % text)
+        if nums[3] == 0:
+            raise ValueError('--to 拒绝网络号（%r）：/24 的 x.x.x.0 是网段本身，'
+                             '不是任何一台主机，发过去没有接收方' % text)
     if avoid_port is not None and port == avoid_port:
         raise ValueError('--to 的端口 %d 正是本机在收 STATUS 的端口：发出去会打回自己，'
                          '坏帧计数与 ALARM 就被自己污染了。桥收帧用的是 9000。' % port)
@@ -382,12 +422,18 @@ class TxSender:
         self.sent = 0
         self.errors = 0
         self.unparsed = 0
+        self.refused = 0          # 过了语法、没过限速（I-1 的闸）
 
     def send_line(self, line, profile_id, log):
-        """一行 stdin → 帧 → sendto → 落一行 tx_*。成功返回 (kind, seq)，否则 None。
+        """一行 stdin → 帧 → 限速闸 → sendto → 落一行 tx_*。成功返回 (kind, seq)，否则 None。
 
         只有**真的写出去了**才落 tx 行、才消耗序号：sendto 抛了还记一行 tx_nav，
         就是给"这帧上过线"造一条假证据；而序号不消耗，下一条接着用同一个号。
+
+        三类"什么都没发生"各有自己的出口，也都各有计数，不混在一起：
+          · 解析不了      -> `unparsed`（[TX SKIPPED]）
+          · 超出台架限速  -> `refused` （[TX REFUSED]，I-1）
+          · 发送失败      -> `errors`  （[TX FAILED]）
         """
         parsed = build_command(line, profile_id, self.seq)
         if parsed is None:
@@ -396,6 +442,18 @@ class TxSender:
                   '!tool mm lift | !beat | !auto | !manual | !clear)' % line)
             return None
         kind, frame = parsed
+        if kind == 'tx_nav':
+            # 速度硬闸（09-30 复审 I-1）。判的是**要上线的那对字节**，不是输入行上的字面量：
+            # 闸该拦的是帧，不是打字。现固件把一条 NAV 当进 AUTO 的钥匙并把速度钳到 ±1.0 m/s
+            # （firmware/retrofit.c:93-102），而斜率是 0.2 m/s²（:140）——0.9 的命令 4.5 秒
+            # 后真的会把车推到 0.9 m/s。同一个 bridge:9000 入口的两个 PC 侧发送器
+            # （这里与 tools/link_probe.py）必须共用一个数，所以常量在 tools/bench_limits.py。
+            vl, vr = P.unpack_nav(P.unpack_frame(frame)[2])[:2]
+            if nav_exceeds_bench_limit(vl, vr):
+                self.refused += 1
+                print('  [TX REFUSED] nav beyond %.2f m/s bench limit '
+                      '(nothing sent, nothing recorded)' % NAV_BENCH_LIMIT_MPS)
+                return None
         try:
             self.sock.sendto(frame, (self.host, self.port))
         except OSError as exc:
@@ -479,8 +537,14 @@ def _note_listener(log, stop, sender=None, profile_id=P.PROFILE_NONE):
                 continue
             t = log.note(line)
             print('  [标记 @%.3f] %s' % (t - log.t0, line))
-    except (EOFError, OSError):
-        pass
+    except (EOFError, OSError) as exc:
+        # 旧写法是 `pass`（09-30 复审 M-4）：磁盘满、CSV 被 Excel 占住、stdin 被别的
+        # 进程关掉，都会让这条线程**无声退出**——之后的每一次模式跳变、每一条场景标记、
+        # 每一条 !命令都不再进时间轴，而屏幕上什么都看不出来。本工具存在的理由就是
+        # "当时没注意回来就没了"，被它自己无声没收一次是最坏的结果。
+        # 正常的 stdin 结束走的是上面的 `if not line: return`，到不了这里。
+        print('  [NOTE LISTENER DEAD] %s: %s -- notes and !commands are NO LONGER '
+              'being recorded' % (type(exc).__name__, exc))
 
 
 def _during_note(ctr):
@@ -543,8 +607,12 @@ def build_argparser():
                     help='**opt-in**：往 X5 的 bridge 发送（例如 192.168.127.10:9000，'
                          '桥的收帧端口），stdin 上的 !nav/!tool/!beat/!auto/!manual/'
                          '!clear 才生效。**不填 = 彻底禁用发送**，一个字节都不外发。'
-                         '填了但写错（缺端口、端口非数字、广播/组播地址、端口正好是'
-                         '本机的收帧端口）会报错退出，不会静默降级成"只收"。')
+                         '填了但写错（缺端口、端口非数字、广播/组播/未指定地址、'
+                         '定向广播 x.x.x.255 与网络号 x.x.x.0、端口正好是本机的收帧端口）'
+                         '会报错退出，不会静默降级成"只收"。开启后驱动轮必须**离地**，'
+                         'NAV 有 %.2f m/s 的硬闸（与 tools/link_probe.py 同源，超了拒发）；'
+                         '另外桥会在单条命令 0.5 秒后自注 ESTOP，锁存只能断电清。'
+                         % NAV_BENCH_LIMIT_MPS)
     return ap
 
 
@@ -606,6 +674,19 @@ def main():
     else:
         print('send: ENABLED -> %s:%d  (own socket, own seq counter, profile=%d from '
               'the vehicle profile)' % (sender.host, sender.port, profile_id))
+        # 下面两行是 09-30 复审点出来的两个风险面（I-1 / I-2）。放这里而不是只放
+        # docstring：台架上没人翻文件，操作员只看开机这几行；而这两件事的后果
+        # 分别是"车自己开走"和"把自己的敲键读成机制结论"。
+        print('  bench only, drive wheels OFF the ground; nav is hard-capped at '
+              '%.2f m/s -- the flashed firmware enters AUTO on ONE nav frame and '
+              'clamps speed to +/-1.0 m/s (retrofit.c:93-102), slew 0.2 m/s^2 '
+              '(retrofit.c:140), so 0.9 takes about 4.5 s to actually move the '
+              'vehicle' % NAV_BENCH_LIMIT_MPS)
+        print('  the bridge injects its OWN ESTOP 0.5 s after any single frame '
+              '(bridge.py:24/30/206); that latch is cleared only by powering the '
+              'board down -- retrofit_clear_estop has no caller (Fw-14) and !clear '
+              'sends TYPE_MODE, which the flashed firmware does not handle. '
+              'To observe continuously, keep sending (this tool has no --every yet)')
     # 原来这里只是一句"请先去确认 pc_ip"的提示，等于把判断推给人做。09-28 改成自己查：
     # X5 是按 config.yaml 里的 pc_ip **单向投递**的，本机不是那个地址就一帧都收不到，
     # 而这在 CSV 里和"接线不通"长得一模一样——今天已经为此白拆过一次线。
@@ -661,18 +742,20 @@ def main():
         print('  行数 %d  好帧 %d  坏帧 %d  乱序 %d  重启重同步 %d'
               % (log.rows, rx.good, rx.bad, rx.out_of_order, rx.resynced))
         if sender is not None:
-            # 发出去多少、失败多少、以及"这些都不算收到的证据"（分开的两套计数）。
-            print('  TX sent=%d  send_errors=%d  unparsed_lines=%d  next_tx_seq=%d  '
-                  '(rx frame rows=%d / csv rows=%d)'
-                  % (sender.sent, sender.errors, sender.unparsed, sender.seq,
-                     log.rx_rows, log.rows))
+            # 发出去多少、被限速闸拦了多少、失败多少、以及"这些都不算收到的证据"
+            # （分开的两套计数）。refused 单列（I-1）：它既不是发送成功也不是解析失败，
+            # 混进任何一边都会让"我发了几条"这个问题在事后答不准。
+            print('  TX sent=%d  refused=%d  send_errors=%d  unparsed_lines=%d  '
+                  'next_tx_seq=%d  (rx frame rows=%d / csv rows=%d)'
+                  % (sender.sent, sender.refused, sender.errors, sender.unparsed,
+                     sender.seq, log.rx_rows, log.rows))
             sender.close()
         _active = (log.last_rx - log.first_rx) if log.first_rx else None
         # 分母是 rx_rows（**收到的**帧行），不是 rows：加了 tx_*/note/gap 行之后的
         # 总行数会把"一行都没收到"那一支救活，那正是"因为我发了所以算稳定"。
         for line in verdict(rx.good, rx.bad, rx.out_of_order, rx.resynced,
-                            log.rx_rows, time.time() - log.t0, active=_active,
-                            tx_rows=log.tx_rows):
+                            time.time() - log.t0, rx_rows=log.rx_rows,
+                            active=_active, tx_rows=log.tx_rows):
             print(line)
         print('  证据文件：%s' % csv_path)
         print('  下一步：把这份 CSV 的路径写进缺口清单 ② 板对应行的"证据"栏，'

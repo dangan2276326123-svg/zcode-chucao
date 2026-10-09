@@ -183,27 +183,27 @@ def test_local_has_ip_does_not_confuse_absent_with_present():
 def test_verdict_turns_counters_into_a_decision():
     """车边上不该用心算：4 个分支各自给一句能照着做的话。"""
     # 0 行：先查发送端，不许写成"接线不通"
-    v0 = bs.verdict(0, 0, 0, 0, 0, 60.0)[0]
+    v0 = bs.verdict(0, 0, 0, 0, 60.0, rx_rows=0)[0]
     assert '一行都没收到' in v0 and 'bridge' in v0
     # 有重同步：直接判"板子在复位"，并指到 Hw-26/Hw-27
-    v1 = bs.verdict(111, 0, 305, 6, 111, 20.0)
+    v1 = bs.verdict(111, 0, 305, 6, 20.0, rx_rows=111)
     assert any('序号反复回退' in l for l in v1) and any('Hw-26' in l for l in v1)
     # 帧率不足但没重同步：说明中间有静默段
-    v2 = bs.verdict(200, 0, 0, 0, 240, 60.0)          # 3.3 帧/秒
+    v2 = bs.verdict(200, 0, 0, 0, 60.0, rx_rows=240)      # 3.3 帧/秒
     assert any('断流' in l for l in v2)
     # 健康：才允许做场景实验
-    v3 = bs.verdict(1200, 0, 0, 0, 1200, 60.0)
+    v3 = bs.verdict(1200, 0, 0, 0, 60.0, rx_rows=1200)
     assert any('链路稳定' in l for l in v3)
 
 
 def test_verdict_does_not_pass_dirty_counters_or_trailing_loss():
     """09-30 复审给的两个反例，原样钉成回归（当时两者都输出"链路稳定"）。"""
     # 反例一：10 秒 201 帧，之后 60 秒什么都没有 —— 结尾断流必须算进结论
-    v = bs.verdict(201, 0, 0, 0, 201, 70.0, active=10.0)
+    v = bs.verdict(201, 0, 0, 0, 70.0, rx_rows=201, active=10.0)
     assert not any('链路稳定' in l for l in v), v
     assert any('断流' in l for l in v), v
     # 反例二：好帧够，但坏帧/旧序号一大堆 —— 计数不为零就不许放行
-    v2 = bs.verdict(201, 1000, 200, 0, 1401, 10.0, active=10.0)
+    v2 = bs.verdict(201, 1000, 200, 0, 10.0, rx_rows=1401, active=10.0)
     assert not any('链路稳定' in l for l in v2), v2
     assert any('坏帧 1000' in l for l in v2), v2
 
@@ -212,13 +212,13 @@ def test_verdict_rates_over_the_frame_stream_not_the_wall_clock():
     """09-29 现场：启动后 49 秒才有第一帧，之后 135 秒是标准 20Hz。
     按"总时长"算出 14.6 帧/秒，于是判定叫我们去看根本不存在的 gap 行——分母用错，
     判据自己打自己脸，还把注意力从"链路其实是好的"引开。钉住分母。"""
-    v = bs.verdict(2703, 0, 0, 0, 2703, 185.0, active=135.1)
+    v = bs.verdict(2703, 0, 0, 0, 185.0, rx_rows=2703, active=135.1)
     assert any('20.0 帧/秒' in l for l in v), v
     assert any('落在帧流之外' in l for l in v), v
     # 09-30 修正：窗口外的沉默**不再被豁免**，它照样是断流，只是不污染平均速率
     assert any('断流' in l for l in v), '开机等待可以剔除，结尾/开头的长断流必须仍然报警'
     # 没传 active 时退回旧行为（总时长），不能因为加了参数就静默改判据
-    v0 = bs.verdict(2703, 0, 0, 0, 2703, 185.0)
+    v0 = bs.verdict(2703, 0, 0, 0, 185.0, rx_rows=2703)
     assert any('14.6 帧/秒' in l for l in v0), v0
 
 
@@ -492,18 +492,29 @@ def test_tx_socket_is_a_second_socket_that_is_never_bound(tmp_path, monkeypatch)
     log.close()
 
 
-def test_note_listener_routes_bang_lines_to_tx_and_others_to_notes(tmp_path, monkeypatch):
-    """stdin 的分派是这轮唯一的入口：! 开头 = 组帧发出，其它行仍然当场景标记。"""
+def test_note_listener_routes_bang_lines_to_tx_and_others_to_notes(tmp_path, monkeypatch,
+                                                                   capsys):
+    """stdin 的分派是这轮唯一的入口：! 开头 = 组帧发出，其它行仍然当场景标记。
+
+    尾部必须再喂一条**普通标记**：原来 `!nope` 排在最后，线程就算在那一行被打死，
+    前面两行也已经落账，断言照样绿——"线程还活着"这件事从来没被证明过。现在
+    `!nope` 与越界的 `!tool 0 256` 都排在尾部标记之前，线程一死最后那条 note 就没了。
+    """
     log = _mklog(tmp_path)
     sock = _FakeSock()
     s = bs.TxSender('192.168.127.10', 9000, sock=sock)
     monkeypatch.setattr(sys, 'stdin', io.StringIO(
-        '!nav 0.14 0.12\n场景标记\n!nope\n\n'))
+        '!nav 0.14 0.12\n场景标记\n!nope\n!tool 0 256\n\n尾部标记\n'))
     bs._note_listener(log, threading.Event(), s, 1)
     rows = _rows(log)
-    assert [r['kind'] for r in rows] == ['tx_nav', 'note'], '解析不了的 ! 行不该变成标记'
-    assert rows[0]['seq'] == '0' and rows[1]['note'] == '场景标记'
+    assert [r['kind'] for r in rows] == ['tx_nav', 'note', 'note'], \
+        '解析不了的 ! 行不该变成标记，但线程必须活到下一行'
+    assert rows[-1]['note'] == '尾部标记', '最后一条必须是标记——它证明线程没被打死'
+    assert rows[1]['note'] == '场景标记'
+    assert rows[0]['seq'] == '0'
     assert len(sock.sent) == 1 and sock.sent[0][1] == ('192.168.127.10', 9000)
+    assert s.unparsed == 2, '!nope 与越界的 !tool 0 256 都该计入 unparsed'
+    assert s.sent == 1 and s.seq == 1
     log.close()
 
 
@@ -511,17 +522,18 @@ def test_tx_rows_are_not_evidence_of_reception():
     """安全面第三条：verdict 的结论不许因为"我发了"而变松。
     ①发了 40 条一帧没收到 ⇒ 仍然必须是"一行都没收到、先查发送端"那一支；
     ②真有帧流时，带不带 tx 行数给出的判据**逐行相同**（tx 不参与任何分支）。"""
-    v = bs.verdict(0, 0, 0, 0, 0, 30.0, tx_rows=40)
+    v = bs.verdict(0, 0, 0, 0, 30.0, rx_rows=0, tx_rows=40)
     assert any('一行都没收到' in l for l in v), v
     assert not any('链路稳定' in l for l in v), v
     assert any('发出' in l for l in v), '要说清那 40 条只是发出去的，不是收到的'
 
-    healthy = bs.verdict(1200, 0, 0, 0, 1200, 60.0)
+    healthy = bs.verdict(1200, 0, 0, 0, 60.0, rx_rows=1200)
     assert any('链路稳定' in l for l in healthy)
-    assert bs.verdict(1200, 0, 0, 0, 1200, 60.0, tx_rows=500) == healthy
+    assert bs.verdict(1200, 0, 0, 0, 60.0, rx_rows=1200, tx_rows=500) == healthy
     # 脏计数不会因为"有发送"而放过
     assert not any('链路稳定' in l
-                   for l in bs.verdict(201, 1000, 200, 0, 1401, 10.0, tx_rows=9))
+                   for l in bs.verdict(201, 1000, 200, 0, 10.0, rx_rows=1401,
+                                       tx_rows=9))
 
 
 def test_rx_rows_count_only_accepted_frames(tmp_path):
@@ -537,7 +549,7 @@ def test_rx_rows_count_only_accepted_frames(tmp_path):
     log.frame(rx.handle(_status_frame(seq=1)), peer='x')
     log.frame(rx.handle(_status_frame(seq=2)), peer='x')
     assert log.rx_rows == 2 and log.rows == 4
-    lines = bs.verdict(2, 0, 0, 0, log.rx_rows, 30.0, tx_rows=log.tx_rows)
+    lines = bs.verdict(2, 0, 0, 0, 30.0, rx_rows=log.rx_rows, tx_rows=log.tx_rows)
     assert not any('一行都没收到' in l for l in lines), lines
     assert any('好帧 2' in l for l in lines), lines
     log.check_gap(now=log.last_rx + 5.0)
@@ -569,3 +581,208 @@ def test_every_row_write_holds_the_log_lock(tmp_path):
     log.check_gap(now=log.last_rx + 5.0)
     assert log._lock.entered == 4, '每一行都必须整体在锁里写'
     log.close()
+
+
+# ============ fix round 1：审查发现的 I-1 / I-2 / M-1 / M-3 / M-4 / M-6 ============
+
+
+def _rows_at(path):
+    import csv
+    with open(str(path), encoding='utf-8') as f:
+        return list(csv.DictReader(f))
+
+
+def _install_wiring(monkeypatch, lines):
+    """把 `socket.socket` 换成记账假对象、stdin 换成脚本行，返回"被创建过的 socket"。
+
+    两个细节都是为了让断言不赌时序：
+      · `recvfrom` 先等 stdin 那条线程把行喂完（drained 事件）再抛 KeyboardInterrupt，
+        这正是按 Ctrl-C 时主线程发生的事；线程若半路死了，事件不来，2 秒后照样收尾，
+        那种情况会被"某一行的 kind 不见了"抓到，而不是把测试挂住。
+      · pc_ip 自检另开一只 socket 去 bind 试探，与本判据无关，直接让它不参与——
+        这样"只创建了 N 只 socket"才是干净的断言。
+    """
+    made = []
+    drained = threading.Event()
+
+    class _Sock:
+        def __init__(self, *args, **kwargs):
+            self.calls = []
+            made.append(self)
+
+        def bind(self, addr):
+            self.calls.append(('bind', addr))
+
+        def setsockopt(self, *args):
+            self.calls.append(('setsockopt',) + args)
+
+        def settimeout(self, value):
+            self.calls.append(('settimeout', value))
+
+        def sendto(self, frame, addr):
+            self.calls.append(('sendto', frame, addr))
+            return len(frame)
+
+        def recvfrom(self, bufsize):
+            drained.wait(2.0)
+            raise KeyboardInterrupt
+
+        def close(self):
+            self.calls.append(('close',))
+
+    class _Stdin:
+        def __init__(self, scripted):
+            self.lines = list(scripted)
+            self.i = 0
+
+        def readline(self):
+            if self.i >= len(self.lines):
+                drained.set()
+                return ''
+            line = self.lines[self.i]
+            self.i += 1
+            return line
+
+    monkeypatch.setattr(socket, 'socket', _Sock)
+    monkeypatch.setattr(sys, 'stdin', _Stdin(lines))
+    monkeypatch.setattr(bs, 'configured_pc_ip', lambda root=None: None)
+    return made
+
+
+def _run_main(monkeypatch, argv):
+    monkeypatch.setattr(sys, 'argv', ['bench_status.py'] + argv)
+    bs.main()
+
+
+def test_main_without_to_flag_never_builds_a_sending_socket(tmp_path, monkeypatch, capsys):
+    """M-1：把 %TEMP% 那组冒烟的形状搬进仓库，"默认禁用"从此有**接线层**的证明。
+    以前只问到 `sender_from_target(None) is None`——那是构造函数；main() 真的只用
+    收帧那一只、一个字节都不 sendto，这件事在仓库里没有证据。"""
+    made = _install_wiring(monkeypatch, ['场景标记\n', '!nav 0.14 0.12\n'])
+    _run_main(monkeypatch, ['--out', str(tmp_path / 'run')])
+    out = capsys.readouterr().out
+    assert len(made) == 1, '不带 --to 时 main 不该再开第二只 socket'
+    names = [c[0] for c in made[0].calls]
+    assert 'sendto' not in names, '一个字节都不许外发'
+    assert ('bind', ('0.0.0.0', 9100)) in made[0].calls
+    assert 'send: DISABLED' in out
+    assert '[TX DISABLED]' in out, '那句 !nav 要有可见的解释，不能静默吞掉'
+    rows = _rows_at(tmp_path / 'run' / 'bench_log.csv')
+    assert [r['kind'] for r in rows] == ['note'], '没上线的帧不许落 tx 行'
+
+
+def test_send_enabled_banner_states_the_bench_hazards(tmp_path, monkeypatch, capsys):
+    """I-2 + I-1 的操作员可见面：开机那行是台架上唯一会被读的风险说明，必须带上
+    限速、轮子离地、以及桥那条"单条命令 0.5 秒后自注 ESTOP"。
+    顺带在接线层验一次速度闸：0.9 的 !nav 根本到不了 socket。"""
+    made = _install_wiring(monkeypatch, ['!nav 0.9 0\n'])
+    _run_main(monkeypatch, ['--to', '127.0.0.1:19123', '--out', str(tmp_path / 'run')])
+    out = capsys.readouterr().out
+    assert len(made) == 2, '给了 --to 才是两只：收帧那只 + 发送那只'
+    # 按"谁 bind 了"来分，不按创建顺序——main() 在绑端口**之前**就把发送那只建出来了
+    # （--to 写错要在碰任何资源之前退出），所以列表顺序根本不是"收帧那只在前"。
+    bound = [s for s in made if any(c[0] == 'bind' for c in s.calls)]
+    assert len(bound) == 1, '只有收帧那一只许 bind'
+    assert ('bind', ('0.0.0.0', 9100)) in bound[0].calls
+    tx = [s for s in made if s is not bound[0]][0]
+    assert [c[0] for c in tx.calls] == ['close'], '发送那只不 bind，也没发出任何东西'
+    assert not any(c[0] == 'sendto' for s in made for c in s.calls), \
+        '0.9 的 NAV 被限速闸拦下，一个字节都不该到 socket'
+    assert 'send: ENABLED' in out
+    assert 'wheels OFF the ground' in out
+    assert '0.20 m/s' in out, '限速要写在开机行上，不只是写在 docstring 里'
+    assert 'ESTOP' in out and '0.5' in out
+    assert 'TX REFUSED' in out and 'refused=1' in out
+
+
+def test_nav_beyond_bench_limit_is_refused_not_sent(tmp_path, capsys):
+    """I-1：现在烧在板上的固件，一条 NAV 就是 `mode = MODE_AUTO` 且把 cmd_vl/cmd_vr
+    钳到 **±1.0 m/s**（firmware/retrofit.c:93-102），行走斜率 SLEW_ACC=0.2 m/s²（:140）
+    ⇒ 一条 0.9 的命令 4.5 秒后真的把车推到 0.9 m/s。兄弟发送器 `tools/link_probe.py:377`
+    早就把 0.20 写成硬闸——同一个 bridge:9000 入口，两个 PC 侧发送器不许一个有闸一个没闸。"""
+    log = _mklog(tmp_path)
+    sock = _FakeSock()
+    s = bs.TxSender('192.168.127.10', 9000, sock=sock)
+    for line in ('!nav 0.9 0', '!nav -0.9 0', '!nav 0.0 1.5'):
+        assert s.send_line(line, 1, log) is None, line
+    out = capsys.readouterr().out
+    assert 'TX REFUSED' in out and 'bench limit' in out and 'nothing sent' in out
+    assert sock.sent == [] and s.sent == 0
+    assert s.refused == 3 and s.errors == 0 and s.unparsed == 0
+    assert s.seq == 0, '拒发不消耗发送序号，也不许占号'
+    assert _rows(log) == [] and log.rows == 0 and log.tx_rows == 0
+    # 限值以内照发，含"正好等于 0.20"这条边界（与 link_probe 的 `> 0.20` 同一口径）
+    assert s.send_line('!nav 0.2 0.2', 1, log) is not None
+    assert s.send_line('!nav -0.199 0.199', 1, log) is not None
+    assert s.sent == 2 and s.refused == 3 and len(sock.sent) == 2
+    # 闸只管 NAV；TOOL/BEAT/MODE 的权限在板上，不在这里悄悄扩权
+    for line in ('!tool 5 1', '!beat', '!auto'):
+        assert s.send_line(line, 1, log) is not None
+    assert s.sent == 5 and s.refused == 3
+    log.close()
+
+
+def test_nav_bench_limit_is_one_shared_constant():
+    """0.20 只能有一个出处（AGENTS 清单第 6 条：消灭单一事实源漂移）。
+    两个发送器各写一份字面量，下一次就是改了一份没改另一份。"""
+    from tools import bench_limits as BL
+    from tools import link_probe as LP
+    assert BL.NAV_BENCH_LIMIT_MPS == 0.20
+    assert bs.NAV_BENCH_LIMIT_MPS is BL.NAV_BENCH_LIMIT_MPS
+    assert LP.NAV_BENCH_LIMIT_MPS is BL.NAV_BENCH_LIMIT_MPS
+
+
+def test_directed_broadcast_and_network_targets_are_refused():
+    """M-3：`192.168.127.255` 在台架那个 /24 上就是**定向广播**（PC .100、X5 .10），
+    后果与被拒的 255.255.255.255 完全一样——一条命令对整个网段上所有会动的板子下指令，
+    不能因为它"看着像单播"就放行。`a.b.c.0` 是网络号，不是任何一台主机。"""
+    for bad in ('192.168.127.255:9000', '10.0.0.255:9000'):
+        with pytest.raises(ValueError) as e:
+            bs.resolve_target(bad)
+        assert '定向广播' in str(e.value), str(e.value)
+    for bad in ('192.168.127.0:9000', '10.0.0.0:9000'):
+        with pytest.raises(ValueError) as e:
+            bs.resolve_target(bad)
+        assert '网络号' in str(e.value), str(e.value)
+    for ok in ('192.168.127.10:9000', '192.168.127.100:9000', '127.0.0.1:19124'):
+        assert bs.resolve_target(ok) is not None, ok
+
+
+def test_note_listener_announces_its_own_death(tmp_path, monkeypatch, capsys):
+    """M-4：旧写法 `except (EOFError, OSError): pass` 包住整个循环 ⇒ 磁盘满、文件被
+    占住时线程**无声退出**，之后的模式跳变与场景标记全丢，而屏幕上什么都看不出来。
+    至少喊一声再退（异常本身也不许抛出去吓到人）。"""
+    log = _mklog(tmp_path)
+
+    class _Boom:
+        def __init__(self):
+            self.n = 0
+
+        def readline(self):
+            self.n += 1
+            if self.n == 1:
+                return '场景标记\n'
+            raise OSError(28, 'No space left on device')
+
+    monkeypatch.setattr(sys, 'stdin', _Boom())
+    bs._note_listener(log, threading.Event(), None, 1)      # 不该把异常抛给调用方
+    out = capsys.readouterr().out
+    assert 'NOTE LISTENER DEAD' in out, out
+    assert 'OSError' in out, '要带上是哪类异常，否则下次还得猜'
+    assert '场景标记' in _rows(log)[0]['note'], '死之前那一条要已经落账'
+    log.close()
+
+
+def test_verdict_denominator_is_a_named_keyword():
+    """M-6：旧签名第 5 个位置参数叫 `rows`，语义却已经是"**收到的**帧行数"。
+    下一个调用方（Task 9 的 D1/D2）照字面传 log.rows（CSV 总行数，含 tx_*/note/gap）
+    就会把"一帧都没收到"那一支救活——正是本任务明令防的那件事。
+    改名 + 只能按关键字传：写法一错，当场 TypeError，而不是静默给出一条错判据。"""
+    import inspect
+    params = inspect.signature(bs.verdict).parameters
+    assert 'rows' not in params
+    assert params['rx_rows'].kind is inspect.Parameter.KEYWORD_ONLY
+    with pytest.raises(TypeError):
+        bs.verdict(0, 0, 0, 0, 0, 30.0)          # 旧写法：把行数按位置塞进来
+    v = bs.verdict(0, 0, 0, 0, 30.0, rx_rows=0, tx_rows=40)
+    assert any('一行都没收到' in l for l in v), v

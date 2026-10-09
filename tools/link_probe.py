@@ -83,6 +83,12 @@ except AttributeError:
     pass
 
 from common import protocol as P          # noqa: E402
+# 台架 NAV 限速的唯一出处（09-30 复审 I-1：`bench_status --to` 与本文件是同一个
+# bridge:9000 入口的两个发送器，一个有闸一个没闸就是不一致的安全不变量）。
+# 这里只改 import 与下面那一处判定，不改第 4 行那句"只收不发"的旧口径——那是
+# Task 10 的文档同步项（M-8），不属于本批。
+from tools.bench_limits import (NAV_BENCH_LIMIT_MPS,          # noqa: E402,F401
+                                nav_exceeds_bench_limit)
 
 # 与固件 retrofit.h:11-13 及 spec §3.1 一致（TELEOP 是 E3 加的位，批 2 才实现）；
 # 不在这四个值里的原样打印数字，不替它编名字。
@@ -374,8 +380,9 @@ def main():
         sys.exit('nav 需要两个速度参数，例如：nav 0.05 0.05')
     if a.kind == 'tool' and len(a.args) != 2:
         sys.exit('tool 需要 <横移mm> <lift位>，例如：tool 0 7')
-    if a.kind == 'nav' and max(abs(float(x)) for x in a.args) > 0.20:
-        sys.exit('探针限速 0.20 m/s，别拿它当行车工具——要跑闭环请用 pc/main.py')
+    if a.kind == 'nav' and nav_exceeds_bench_limit(*a.args):
+        sys.exit('探针限速 %.2f m/s，别拿它当行车工具——要跑闭环请用 pc/main.py'
+                 % NAV_BENCH_LIMIT_MPS)
     # MODE 三条的参数只有一个 profile 号，而它**必须**来自车辆档案：让用户在命令行
     # 上敲一个档案号，等于允许拿另一台车的权限去申请无人（spec §6）。
     if a.kind in MODE_REQUEST_KINDS and a.args:
