@@ -31,6 +31,11 @@
     边看 STATUS 的持停段**——睡过去的 1 秒里 PC 一个字节都不发，桥就正好注一条 ESTOP，
     阶跃到板子时已经锁存（`retrofit.c:93` 直接 return），后面每一轮都只会超时，
     而板子还得断电。工具不许自己成为它正在诊断的那个症状。
+    **`--keepalive 0`（= 把续发关掉）在命令行上直接拒**（10-08 第 2 轮复审 NEW-1）：0 一放开，
+    两个阶段就退回"发一条、然后静默到窗口结束"，上面那条 bug 从参数的后门原样回来。
+    API 层仍然允许 0（单测用它当"不建模续发"的简写，那条路一个字都不上线），但那里的
+    静默是真的，所以 `estop_caution()` 与 `report()` 各自带 `keepalive_s == 0` 的分支，
+    只许说"这一跑法不补发"，不许照着默认值说"持停到看见停住"。
     **续发一律重新 `pack_frame` 取新序号**，不是把同一个字节串冻结重传：现固件不读 NAV 的
     seq 所以今天无害，但批 2 要给指令带 seq 并让单片机回传"最后执行到的 seq"（spec §7.2），
     那时重传与原帧不可区分，而本文件自己承诺过"线上日志分得清是谁发的"。
@@ -40,6 +45,11 @@
     那是与本文件防 TIM3 混叠同一种东西：**自洽但不存在**的数（见 `MIN_THRESHOLD` 那条）。
     `--settle` 因此可以误调而不产坏数：停不下来的那些轮次一律不计样本，只把
     "没停住"这件事记进 `not_rearmed`（`timeouts` 仍记"这一轮没有样本"）。
+    `not_rearmed` 混着两类轮次：**持停段没挣到证据所以一条阶跃都没发**的，与**发了阶跃
+    但门始终没开**的。分开它们靠 `rounds_step_commanded`，`cross_read()` 的归属句按
+    "这一跑到底发过阶跃没有"来分——一次阶跃都没发的 n=0 讲的是**本工具的 pacing**，
+    发过阶跃却从没越阈才轮到执行面（Fw-21）说话（10-08 第 2 轮复审 NEW-3 同族项；
+    把它们合并计数，等于把症状整条推给别人，那是"把症状推给别人"的镜像）。
 
 D1 那条**做不到**同样地喂桥：它的语义就是"发一条 MODE，然后等回显"，中途补发同一条
 MODE 会把一次往返改成两次请求，所以每轮的 `--timeout-d1`（默认 2.0 秒）就是一段真实的
@@ -74,9 +84,11 @@ PC 静默 > 500 ms。后果要写进台架规程而不是藏在注释里：在�
 把所有轮次记成超时（那会把"没开发送"伪装成"链路有问题"）。目标地址的校验复用
 `tools/bench_status.resolve_target`——广播/组播/网络号/正好打在监听端口上，四样都拒。
 D1/D2 的**入参闸门在 `plan()` 里预跑一遍**（`_preflight_inputs`）：`--threshold 0.01`、
-`--step nan`、`--keepalive 0.6`、`--settle -1`、`--repeats 0` 这些都在**建 socket、绑端口
+`--step nan`、`--keepalive 0.6`、`--keepalive 0`（关掉续发 = 桥的静默后门，见 NEW-1）、
+`--settle -1`、`--repeats 0` 这些都在**建 socket、绑端口
 之前**变成一行 ASCII 退出，而不是等 D1 发满 30 条之后抛 traceback——与 `--to` 同一条纪律。
-`measure_d2()` 里那道闸**不撤**：直接调用 API 的人（单测、别的脚本）也要撞上它。
+`measure_d2()` 里那道闸**不撤**：直接调用 API 的人（单测、别的脚本）也要撞上它；
+`keepalive_s == 0` 只有命令行拒、API 不拒（理由见 `_cli_keepalive`）。
 `--listen` 与记录器一样独占 9100：`pc/main.py --live` 或 `tools/bench_status.py` 开着的时候
 先关掉一个（同一时刻只能有一个收帧的人），本脚本退出时会把这一点说明白。
 
@@ -304,8 +316,9 @@ def _check_d2_inputs(step_v, threshold, keepalive_s):
                          % (step, NAV_BENCH_LIMIT_MPS))
     ka = _finite('keepalive_s', keepalive_s)
     if ka < 0:
-        raise ValueError('keepalive_s must be >= 0 (0 disables re-sending), got %r'
-                         % (keepalive_s,))
+        raise ValueError('keepalive_s must be >= 0 (0 disables re-sending; the command '
+                         'line refuses that one, see --keepalive and _cli_keepalive), '
+                         'got %r' % (keepalive_s,))
     if ka >= BRIDGE_ESTOP_AFTER_S:
         raise ValueError('keepalive_s %.3f s >= the bridge ESTOP window %.1f s '
                          '(vehicle/bridge.py:24): the board would be latched in '
@@ -313,6 +326,33 @@ def _check_d2_inputs(step_v, threshold, keepalive_s):
                          'that latch is cleared only by powering the board down '
                          '(Fw-14)' % (ka, BRIDGE_ESTOP_AFTER_S))
     return step, thr, ka
+
+
+def _cli_keepalive(value):
+    """命令行层的额外一道闸：`--keepalive 0` 拒（10-08 第 2 轮复审 NEW-1）。
+
+    为什么只在 CLI 层拒、API 层继续允许 0：
+      · 命令行是唯一会把帧送到大板的路。0 = 关掉续发，于是持停段从 `NAV(0,0)` 到阶跃
+        之间**一个字都不发**（最长静默整个 `--settle` 窗口，默认 1.0 s），阶跃段同理
+        静默到窗口结束——都超过桥的 500 ms 窗口 ⇒ 桥注 ESTOP 并锁存，只能断电清
+        （Fw-14）。上一轮刚修掉的"工具自己造静默"正是从这个参数后门回来的：只改打印
+        而不堵静默本身，等于把假话换成真话但症状照旧。
+      · 单测与别的 API 调用不碰板子，`keepalive_s=0` 是它们"不建模续发"的简写，
+        挡了只会逼人绕过 CLI 去写测试。那条路上的静默是**真的**，所以 `estop_caution()`
+        与 `report()` 各自带 `keepalive_s == 0` 的分支，不许再说"re-sent often enough"。
+    """
+    ka = _finite('keepalive_s', value)
+    if ka == 0:
+        raise ValueError(
+            'keepalive_s 0 turns re-sending off, and the re-send is what keeps BOTH D2 '
+            'phases fed: the hold would send one NAV(0,0) and then say nothing until '
+            'its --settle window ends, which is longer than the bridge ESTOP window of '
+            '%.1f s (vehicle/bridge.py:24/30/206), so the bridge injects an ESTOP that '
+            'only a power cycle clears (Fw-14) before the wheels ever move. Pass a '
+            'cadence under %.1f s (default %.2f s), or drive measure_d2() from the API '
+            'if you really mean "no re-sending" (that path never reaches the board).'
+            % (BRIDGE_ESTOP_AFTER_S, BRIDGE_ESTOP_AFTER_S, DEFAULT_KEEPALIVE_S))
+    return ka
 
 
 def _speed_or_none(st):
@@ -361,9 +401,20 @@ def measure_d2(send_fn, recv_iter, step_v=DEFAULT_STEP_MPS, threshold=MIN_THRESH
     NAV 的 seq），但批 2 要让指令带 seq、单片机回传最后执行到的 seq（spec §7.2），
     那时"重传"与"原帧"就分不开了，而本文件承诺过线上日志分得清是谁发的。
 
+    `keepalive_s == 0` 在这里仍然合法（单测用它当"不建模续发"的简写），但那是**真的静默**：
+    两段各发一条就不出声了，桥 500 ms 就注 ESTOP。命令行那条路被 `_cli_keepalive()` 挡死，
+    所以只有直接调 API 的人会遇到它——`estop_caution()` 与 `report()` 对它各有专门的分支。
+
     ⚠️ 续发节奏是**由到达的 STATUS 驱动**的：STATUS 停下（比 `keepalive_s` 还慢或干脆断流）
-    时，节奏跟着停，PC 就又静默了。这是本轮已记台账的遗留项（审查发现 M-3），
-    不是已解决的口子；`_diagnostics()` 里的 `reader_error`/`rx` 计数就是给这个场景看的。
+    时，节奏跟着停，PC 就又静默了。这是本轮**没修、也还没进台账**的遗留项（审查发现 M-3）：
+    登记位置见 task-9 报告 §F9，`docs/参数差异台账.md` 里目前**没有**这一条（10-08 实测
+    `docs/` 全目录 grep `M-3` 零命中）。它不是已解决的口子；`_diagnostics()` 里的
+    `reader_error`/`rx` 计数就是给这个场景看的。
+
+    计数 `rounds_step_commanded` = **真的发过阶跃**的轮次数。`not_rearmed` 混着两类轮次
+    （持停段没挣到静止证据、一条阶跃都没发 / 发了阶跃但门始终没开），归因要靠上面那个数
+    把它们分开：一次都没发的 n=0 讲的是本工具的 pacing，发过阶跃却从没越阈才轮到执行面
+    （Fw-21）说话——见 `cross_read()`。
 
     `seq_start`/`next_seq` 与 `measure_d1` 同义：发送序号整进程一条线（spec 无关，
     但线上日志分得清是谁发的，是取证的基本要求）。
@@ -376,7 +427,7 @@ def measure_d2(send_fn, recv_iter, step_v=DEFAULT_STEP_MPS, threshold=MIN_THRESH
 
     samples = []
     timeouts = sent = keepalive = bad_speed = 0
-    not_rearmed = pre_arm_above = 0
+    not_rearmed = pre_arm_above = step_rounds = 0
 
     def nav(v):
         """发一条 NAV：每次调用都重新组帧并**占一个新序号**（见上面 M-1 那段）。"""
@@ -408,12 +459,15 @@ def measure_d2(send_fn, recv_iter, step_v=DEFAULT_STEP_MPS, threshold=MIN_THRESH
             if not armed:
                 # 没有静止证据就把轮子叫起来，量到的越阈可能是上一轮的余速：
                 # 这一轮什么都不证明，所以只计超时不产样本。
+                # `not_rearmed` 的**第 1 类**：这一轮连阶跃都没发（step_rounds 不加），
+                # 所以"没样本"讲的是本工具的 pacing，与板子的执行面无关。
                 timeouts += 1
                 if finite_seen:
                     not_rearmed += 1
                 continue
         # ---- 第 2 段：阶跃。
         nav(step)
+        step_rounds += 1     # 这一轮真的叫过轮子：归属句按这条分（见 cross_read）
         next_due = ka
         got = False
         for t, st in recv_iter(window):
@@ -438,11 +492,15 @@ def measure_d2(send_fn, recv_iter, step_v=DEFAULT_STEP_MPS, threshold=MIN_THRESH
                 next_due += ka
         if not got:
             timeouts += 1
+            # `not_rearmed` 的**第 2 类**：阶跃**已经发过**（step_rounds 计了这一轮），
+            # 窗口里却没见过一帧低于阈值——这类轮次仍然是执行面的嫌疑人，别让
+            # `cross_read()` 把它一起说成"pacing 的产物"。
             if finite_seen and not armed:
                 not_rearmed += 1
     out = _summary(samples, timeouts, sent,
                    {'keepalive_sends': keepalive, 'bad_speed_frames': bad_speed,
                     'not_rearmed': not_rearmed,
+                    'rounds_step_commanded': step_rounds,
                     'pre_arm_above_frames': pre_arm_above,
                     'wait_s': window, 'settle_s': settle, 'keepalive_s': ka,
                     'repeats': reps})
@@ -476,6 +534,9 @@ def _count_bits(d):
     if d.get('not_rearmed'):
         # re-arm 门：这些轮次从未看见轮子停下来，所以一次样本都不产（见 measure_d2）。
         bits.append('rounds_never_rearmed=%d' % d['not_rearmed'])
+    if d.get('rounds_step_commanded'):
+        # 归属用的分母：这些轮次真的叫过轮子，所以"没样本"不能整条推给 pacing。
+        bits.append('rounds_step_commanded=%d' % d['rounds_step_commanded'])
     if d.get('pre_arm_above_frames'):
         bits.append('above_threshold_before_standing_still=%d'
                     % d['pre_arm_above_frames'])
@@ -496,6 +557,72 @@ def _fmt_counts(d):
                      + bits)
 
 
+def _d2_phase_lines(d2):
+    """D2 那几句**节奏**文案：跟着**这一跑的实参**走，不跟着默认值走（NEW-2）。
+
+    为什么这是"说真话"而不是排版问题：`--settle 0` 的跑法根本没有持停段（re-arm 门挪进
+    阶跃窗口里），`--keepalive 0` 更是把续发整个关掉；把默认参数的行为印成无条件事实，
+    现场读到的就是一句关于**没发生过的事**的陈述——而它恰好掩盖了"这一跑会静默到锁存"。
+    `measure_d2()` 的返回值本来就带 `settle_s`/`keepalive_s`/`pre_arm_above_frames`，
+    所以这里没有理由不读它们。结果字典里**没有**这些键时（手写 dict、或 D2 被跳过），
+    一句关于本跑节奏的话都不说。
+    """
+    thr = d2.get('threshold_mps', MIN_THRESHOLD)
+    settle = d2.get('settle_s')
+    ka = d2.get('keepalive_s')
+    pre_arm = d2.get('pre_arm_above_frames') or 0
+    out = ['   D2 = D1 plus the slew limiter, PWM, motor, drivetrain and tyre.']
+    if d2.get('skipped'):
+        out.append('   D2 never ran in this session (--skip-d2): there was no hold and '
+                   'no step, so nothing below claims how the two phases were paced.')
+        return out
+    if settle is None or ka is None:
+        out.append('   this result carries no settle_s/keepalive_s, so this report '
+                   'makes no claim about how its rounds were paced (--help and '
+                   'measure_d2 describe the two phases).')
+        return out
+    if settle > 0 and ka > 0:
+        out.append('   this run: each round holds NAV(0,0) for up to %.2f s, re-sent '
+                   'every %.2f s (on arriving STATUS) so the bridge never sees %.1f s '
+                   'of PC silence (vehicle/bridge.py:24, Fw-14),'
+                   % (settle, ka, BRIDGE_ESTOP_AFTER_S))
+        out.append('   until STATUS shows a finite speed under %.2f m/s, THEN command '
+                   'the step; t=0 is that step frame.' % thr)
+    elif settle > 0:                      # ka == 0：持停段一个字都不补发
+        out.append('   this run RE-SENDS NOTHING (--keepalive 0): the hold sends one '
+                   'NAV(0,0) and then the PC goes silent until its %.2f s window ends, '
+                   'which is longer than the bridge ESTOP window of %.1f s '
+                   '(vehicle/bridge.py:24/30/206) - the bridge injects an ESTOP that '
+                   'only a power cycle clears (Fw-14), and retrofit.c:93 then drops '
+                   'the step. A round still waits for a finite speed under %.2f m/s '
+                   'before commanding it; t=0 is that step frame.'
+                   % (settle, BRIDGE_ESTOP_AFTER_S, thr))
+    elif ka > 0:                          # settle == 0：没有持停段
+        out.append('   this run has NO hold phase (--settle 0): the step is commanded '
+                   'at once and the re-arm gate sits inside the step window - a finite '
+                   'frame under %.2f m/s must appear there before any crossing counts. '
+                   'Re-sends run every %.2f s, so the bridge still never sees %.1f s '
+                   'of PC silence (Fw-14); t=0 is that step frame.'
+                   % (thr, ka, BRIDGE_ESTOP_AFTER_S))
+    else:                                 # settle == 0 且 ka == 0
+        out.append('   this run RE-SENDS NOTHING and has no hold phase (--settle 0 '
+                   '--keepalive 0): each window sends one frame then falls silent, so '
+                   'the bridge injects an ESTOP after %.1f s (vehicle/bridge.py:24, '
+                   'Fw-14, power cycle only). t=0 is the step frame and a sample still '
+                   'needs a finite frame under %.2f m/s first.'
+                   % (BRIDGE_ESTOP_AFTER_S, thr))
+    if pre_arm:
+        out.append('   a crossing seen before the wheels were seen standing still is '
+                   'residual speed from the previous round, not a sample - it is '
+                   'counted above as above_threshold_before_standing_still=%d.'
+                   % pre_arm)
+    else:
+        out.append('   no crossing was ignored as residual speed this run, so '
+                   'above_threshold_before_standing_still is not printed above (zero '
+                   'counts are not printed).')
+    return out
+
+
 def report(d1, d2):
     """把两条结果写成**两段**，中间不出现"一个总延迟"这种东西。
 
@@ -503,6 +630,10 @@ def report(d1, d2):
       · 链路延迟 = D1；机械响应 ≈ D2 − D1（后者标着 derived，不是第三个测得的数）；
       · D2 里斜坡限幅（SLEW_ACC=0.2 m/s^2，0→0.14 m/s 约 0.7 s）把百毫秒级掩盖掉了；
       · 分辨率 ±50 ms（STATUS 20 Hz 量化），低速段（< MIN_THRESHOLD）不可信。
+
+    D2 那几句"这一轮是怎么喂着跑的"（持停/续发/t=0/被忽略的余速）**全部由 `_d2_phase_lines`
+    按结果字典里的实参生成**，不印默认值（NEW-2）：`--settle 0` 没有持停段、
+    `--keepalive 0` 干脆不补发，把默认参数的行为写成无条件事实就是对现场说假话。
     """
     thr = d2.get('threshold_mps', MIN_THRESHOLD)
     step = d2.get('step_mps', DEFAULT_STEP_MPS)
@@ -520,16 +651,8 @@ def report(d1, d2):
         # 派生量，不是第三个测出来的数：标签写死"derived (not measured)"。
         lines.append('   derived (not measured): mechanical response ~= D2 - D1 = '
                      '%.1f ms' % (d2['p50_ms'] - d1['p50_ms']))
+    lines.extend(_d2_phase_lines(d2))
     lines.extend([
-        '   D2 = D1 plus the slew limiter, PWM, motor, drivetrain and tyre.',
-        '   each round is two phases: hold NAV(0,0), re-sent often enough that the',
-        '   bridge never sees %.1f s of PC silence (vehicle/bridge.py:24, Fw-14),'
-        % BRIDGE_ESTOP_AFTER_S,
-        '   until STATUS shows a finite speed under %.2f m/s, THEN command the step;'
-        % thr,
-        '   t=0 is that step frame. A crossing seen before the wheels were seen',
-        '   standing still is residual speed from the previous round, not a sample -',
-        '   it is counted above as above_threshold_before_standing_still instead.',
         '   SLEW_ACC=%.1f m/s^2 (retrofit.c:140) -> 0 to %.2f m/s alone takes about '
         '%.1f s,' % (SLEW_ACC, step, step / SLEW_ACC),
         '   which buries a hundred-millisecond link delay: D2 is NOT the link delay.',
@@ -572,13 +695,24 @@ def cross_read(d1, d2, rx):
         ⇒ D2 全超时而 STATUS 照常 20 Hz。**但这句不许被读成"板子的锅"**：D1 每轮发一帧
         之后要等 `--timeout-d1`（默认 2.0 s）而中途不发声，它本身就是 > 500 ms 的 PC
         静默——所以"锁存"这个症状的嫌疑人里必须先列上**这次运行自己**。D2 一侧已经改成
-        持停段续发，不再制造这种静默（`measure_d2`）。
+        持停段续发，不再制造这种静默（`measure_d2`；`--keepalive 0` 那条后门 10-08 起
+        在命令行上就被拒，见 `_cli_keepalive`）。
       · **re-arm 门**：本轮没见过"有限且低于阈值"的 speed 就不许把越阈帧当样本，
         否则上一轮的余速会被读成 50–200 ms 的机械响应。被拒的轮次计 `not_rearmed`，
-        这里把它单独说出来，不让它伪装成链路超时。
+        这里把它单独说出来，不让它伪装成链路超时。**但归属要按 `rounds_step_commanded`
+        分两半**（NEW-3 同族项）：一次阶跃都没发的 n=0 才是本工具 pacing 的产物；
+        发过阶跃却始终没越阈的那些轮次**仍然把执行面留在嫌疑人名单上**——把它们和前者
+        合并成一句"这不是链路故障"，是"把症状推给别人"的镜像。
     """
     lines = []
     d2_skipped = bool(d2.get('skipped'))
+    # 这一跑**到底叫过轮子没有**：None = 结果里没有这个计数（手写 dict / 老形状），
+    # 这时退回旧的保守读法（只看 not_rearmed），不假装知道。
+    step_rounds = d2.get('rounds_step_commanded')
+    if step_rounds is None:
+        wheels_never_asked = bool(d2.get('not_rearmed'))
+    else:
+        wheels_never_asked = (step_rounds == 0)
     if d1.get('n') and d2_skipped:
         # --skip-d2 时**不许**说"执行面有问题"：这条 NAV 根本没发过，没有东西可判。
         lines.append('D2 was skipped by request, so there is no mechanical-response '
@@ -586,7 +720,7 @@ def cross_read(d1, d2, rx):
                      'run without --skip-d2 (wheels off the ground) before saying '
                      'anything about the execution side')
     if (d1.get('n') and not d2.get('n') and not d2_skipped
-            and not d2.get('not_rearmed')):
+            and not wheels_never_asked):
         lines.append('D1 has samples but D2 has none: the request got through and '
                      'the echo came back, so the LINK is not the suspect. STATUS is '
                      'built in the TIM6 interrupt (retrofit.c:311/334) while the wheel '
@@ -623,15 +757,37 @@ def cross_read(d1, d2, rx):
                         'above' % (wait, BRIDGE_ESTOP_AFTER_S))
             lines.append(msg)
     if d2.get('not_rearmed') or d2.get('pre_arm_above_frames'):
-        lines.append('D2 refused %d rounds that never showed the wheels standing still '
-                     'before a crossing and ignored %d above-threshold frames as '
-                     'residual speed from the previous round: those counts are an '
-                     'artefact of how this run was paced, not a latency figure and not '
-                     'a link fault - the 50-200 ms those frames would have produced '
-                     'describes a mechanical response that never happened. Let each '
-                     'round re-arm (raise --settle) before quoting any D2 number'
-                     % (d2.get('not_rearmed', 0),
-                        d2.get('pre_arm_above_frames', 0)))
+        if step_rounds:
+            # 混合轮次：有些轮**真的叫过轮子**却仍没越阈，那半句话不许被 pacing 抹掉。
+            lines.append('D2 refused %d rounds that never showed the wheels standing '
+                         'still before a crossing and ignored %d above-threshold frames '
+                         'as residual speed from the previous round - but it DID command '
+                         'the step in %d rounds, and those rounds asked the wheels to '
+                         'turn and still never showed a crossing after standing still: '
+                         'that part is the execution side (Fw-21 shape), not pacing, so '
+                         'do not read these counts as explaining the whole n=0. The '
+                         'ignored frames would have produced a 50-200 ms mechanical '
+                         'response that never happened; raise --settle so every round '
+                         're-arms, then quote what is left'
+                         % (d2.get('not_rearmed', 0),
+                            d2.get('pre_arm_above_frames', 0), step_rounds))
+        else:
+            msg = ('D2 refused %d rounds that never showed the wheels standing still '
+                   'before a crossing and ignored %d above-threshold frames as '
+                   'residual speed from the previous round: those counts are an '
+                   'artefact of how this run was paced, not a latency figure and '
+                   'not a link fault - the 50-200 ms those frames would have '
+                   'produced describes a mechanical response that never happened. '
+                   'Let each round re-arm (raise --settle) before quoting any D2 '
+                   'number'
+                   % (d2.get('not_rearmed', 0), d2.get('pre_arm_above_frames', 0)))
+            if step_rounds is not None:
+                # 这条只有在这一跑的计数**确实读到**时才说：一次阶跃都没发过，
+                # 所以本跑对执行面一个字都不许说（这才是"pacing 的产物"那种情况）。
+                msg += (' (rounds_step_commanded=%d: no round ever sent a step, so this '
+                        'run never asked the wheels to turn and it says nothing about '
+                        'the execution side)' % step_rounds)
+            lines.append(msg)
     if getattr(rx, 'resynced', 0):
         lines.append('the receiver saw %d reboot re-syncs (Hw-26 signature, about one '
                      'every 2.95 s on the 09-28 bench): mode resets to MANUAL and '
@@ -856,7 +1012,11 @@ def build_argparser():
                          'hold, the step NAV while waiting); must stay under the '
                          'bridge ESTOP window of %.1f s '
                          '(vehicle/bridge.py:24/30/206, latch cleared only by a '
-                         'power cycle - Fw-14)' % BRIDGE_ESTOP_AFTER_S)
+                         'power cycle - Fw-14). 0 turns re-sending off, which puts '
+                         'both phases back to "one frame then silence until the '
+                         'window ends", so it is refused here even though the '
+                         'measure_d2() API still accepts it for tests.'
+                         % BRIDGE_ESTOP_AFTER_S)
     ap.add_argument('--settle', type=float, default=1.0,
                     help='max seconds per D2 round spent HOLDING NAV(0,0) - re-sent '
                          'every --keepalive, not slept through - while watching '
@@ -883,6 +1043,11 @@ def estop_caution(timeout_d1_s, keepalive_s=DEFAULT_KEEPALIVE_S, settle_s=0.0):
         一次往返了），所以这段静默 > 500 ms 是这条测法固有的代价，改不掉，只能说明白；
       · D2 —— 已经改成持停段续发，不再制造静默；但续发节奏由**到达的 STATUS** 驱动，
         STATUS 断了节奏也跟着停（本轮未收的遗留项，审查发现 M-3）。
+
+    `keepalive_s` 的两个非默认值各说各的话，不许照着默认值念（10-08 第 2 轮复审 NEW-1）：
+      · `0`（API 层合法、命令行被 `_cli_keepalive` 拒）——续发关掉 ⇒ 两段都静默到窗口结束，
+        这句**必须**明说会触发桥的 ESTOP 注入，而不是印一句"每 0.00 秒续发"的假话；
+      · `None`（`--skip-d2`）——D2 一条都不发，所以对它的节奏一个字都不说。
     """
     lines = []
     if timeout_d1_s is not None and timeout_d1_s > BRIDGE_ESTOP_AFTER_S:
@@ -897,7 +1062,20 @@ def estop_caution(timeout_d1_s, keepalive_s=DEFAULT_KEEPALIVE_S, settle_s=0.0):
             'TYPE_MODE too, so it does not work on the flashed firmware either. '
             'Bench procedure: power-cycle the board after this run, before any other '
             'bench action.' % (timeout_d1_s, BRIDGE_ESTOP_AFTER_S))
-    if settle_s > 0:
+    if keepalive_s == 0:
+        where = ('the hold sends ONE NAV(0,0) and then says nothing until its %.2f s '
+                 'window ends, and the step window is fed the same way' % settle_s
+                 if settle_s > 0 else
+                 'there is no hold phase (--settle 0) and the step window gets a '
+                 'single frame too: each window runs silent after its one frame')
+        lines.append(
+            'D2 re-sending is OFF in this run (keepalive 0): %s, so the bridge injects '
+            'an ESTOP after %.1f s of silence (vehicle/bridge.py:24/30/206) and the '
+            'step is then dropped by retrofit.c:93 - that latch is cleared only by '
+            'powering the board down (Fw-14). The command line refuses this value '
+            '(_cli_keepalive); reaching it means D2 was driven straight from the API, '
+            'and the silence is real either way.' % (where, BRIDGE_ESTOP_AFTER_S))
+    elif settle_s > 0 and keepalive_s:
         lines.append(
             'D2 does NOT sleep through its %.2f s settle: it re-sends NAV(0,0) every '
             '%.2f s and reads STATUS until the wheels are seen below the threshold, '
@@ -916,11 +1094,13 @@ def _preflight_inputs(a):
 
     为什么必须提前：`measure_d1/measure_d2` 里的闸门一个都没撤，但它们跑在
     `bind_listener` 之后——`--threshold 0.01`、`--step nan`、`--keepalive 0.6`、
-    `--settle -1`、`--repeats 0` 在旧顺序下要等 socket 建好、端口绑上、D1 发满 30 条
-    之后才炸出一个 traceback，那等于"先把 30 条指令发上线、再告诉你参数写错了"，
+    `--keepalive 0`、`--settle -1`、`--repeats 0` 在旧顺序下要等 socket 建好、端口绑上、
+    D1 发满 30 条之后才炸出一个 traceback，那等于"先把 30 条指令发上线、再告诉你参数写错了"，
     而这次发送换来的只是超时。`--to` 早就有这条纪律（两条拒绝都不建 socket），
     入参没理由享受更低的标准（AGENTS 清单第 6 条：同一份规则不许有两个版本——
     这里复用的正是 `measure_*` 用的那几个谓词，不是第二份校验）。
+    `--keepalive 0` 是这条纪律里**唯一 CLI 有、API 无**的一道：理由见 `_cli_keepalive`
+    （只有命令行会把帧送到大板，而 0 一上线就是"持停段与阶跃段都不出声"）。
     """
     checks = [lambda: _positive_int('repeats', a.repeats),
               lambda: _window('timeout-d1', a.timeout_d1),
@@ -930,6 +1110,7 @@ def _preflight_inputs(a):
         # 但 d2-repeats/timeout-d2/settle/step/threshold/keepalive 真要跑 D2 时全在这里挡。
         checks += [lambda: _positive_int('d2-repeats', a.d2_repeats),
                    lambda: _check_d2_inputs(a.step, a.threshold, a.keepalive),
+                   lambda: _cli_keepalive(a.keepalive),
                    lambda: _window('timeout-d2', a.timeout_d2),
                    lambda: _window('settle', a.settle)]
     for check in checks:
@@ -1029,7 +1210,10 @@ def main(argv=None):
     # 09-30 复审 Important-1：谁制造的静默谁说清楚。D2 已经不睡空窗了，D1 的等待
     # 改不掉（补发就不是往返），所以把它固有可能锁存板子这件事印在开工行里——
     # 连 --skip-d2 也要印，那一半静默正是 D1 自己的。
-    for line in estop_caution(a.timeout_d1, keepalive_s=a.keepalive,
+    # 10-08 第 2 轮 NEW-1：--skip-d2 时 D2 的 keepalive 传 **None**（不是 a.keepalive），
+    # 因为那一跑 D2 一个字都不发，打印面不许对它作任何"会不会静默"的陈述。
+    for line in estop_caution(a.timeout_d1,
+                              keepalive_s=None if a.skip_d2 else a.keepalive,
                               settle_s=0.0 if a.skip_d2 else a.settle):
         print('caution: %s' % line)
 

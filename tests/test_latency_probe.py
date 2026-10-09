@@ -29,11 +29,19 @@
 7. **续发是重新组帧的新帧**（fix round 1，M-1）：每次续发占一个新发送序号。
 8. **入参早拒**（fix round 1，M-2）：`--threshold 0.01` 这类在建 socket、绑端口之前就该退出，
    而不是等 D1 把 30 条 MODE 发满之后抛 traceback。
+9. **打印面与归属句不许照着默认值说**（fix round 2，NEW-1/NEW-2/NEW-3 + 一条计数器）：
+   `--keepalive 0` 在命令行上拒（0 = 关掉续发 ⇒ 两段静默到窗口结束，Important-1 的后门），
+   `estop_caution()`/`report()` 在 `settle 0` / `keepalive 0` 下各说各的话而不是念默认参数，
+   "台账上已经有这一条"那类没有落盘对应的措辞做成静态断言（读源码文本，命中即红），
+   而 `cross_read()` 的归属按 `rounds_step_commanded`（这一跑到底发过阶跃没有）分——
+   发过阶跃却没越阈的轮次仍然把执行面留在嫌疑人名单上，不许整条推给 pacing。
 
 不需要硬件也不需要网口：收发都是假函数（`send_fn` 记账、`recv_iter` 按脚本给
 `(t, status_dict)`）。`t` 是**距本次请求发出的相对秒数**，这个契约由
 `StatusStream.recv_iter` 实现，并由 `test_stream_*` 几条钉住。
 """
+import io
+import os
 import threading
 
 import pytest
@@ -676,6 +684,36 @@ def test_d2_a_non_finite_speed_is_not_evidence_of_standing_still():
     assert out2['not_rearmed'] == 0 and out2['timeouts'] == 1
 
 
+# -------------------------------------------------- D2：到底发过阶跃没有（fix round 2 的计数器）
+
+
+def test_d2_counts_the_rounds_that_actually_commanded_a_step():
+    """`rounds_step_commanded`：把"没挣到资格所以没发阶跃"与"发了阶跃但门没开"分开（NEW-3 同族）。
+
+    `not_rearmed` 一个键混着这两类，而它们的归属完全不同：前者是本工具的 pacing，
+    后者是**问过了轮子、轮子没答**。合并计数会让混合轮次（3 轮没发 + 7 轮发了从不越阈）
+    把执行面整条抹掉——那是"把症状推给别人"的镜像。旧实现没有这个键 ⇒ KeyError 红。
+    """
+    # 两轮世界：第 1 轮持停挣到证据并发了阶跃，第 2 轮全程余速、一条阶跃都没发。
+    _world, out = _two_round_world()
+    assert out['not_rearmed'] == 1 and out['timeouts'] == 1
+    assert out['rounds_step_commanded'] == 1
+    # `settle_s == 0`：门挪进阶跃窗口内，每一轮都真的叫过轮子（分母 = repeats）。
+    def all_residual(deadline):
+        for k in range(20):
+            yield 0.05 * (k + 1), {'speed_mps': 0.08}
+
+    out2 = LP.measure_d2(lambda f: None, all_residual, step_v=0.14, threshold=0.05,
+                         timeout_s=1.0, repeats=3, keepalive_s=0)
+    assert out2['n'] == 0 and out2['not_rearmed'] == 3
+    assert out2['rounds_step_commanded'] == 3
+    # 计数行：非零才印（与 `_count_bits` 的"不印 =0 凑数"同一条纪律）。
+    line = LP._fmt_counts(out)
+    assert 'rounds_step_commanded=1' in line, line
+    assert 'rounds_step_commanded' not in LP._fmt_counts(
+        {'n': 0, 'timeouts': 1, 'frames_sent': 2, 'rounds_step_commanded': 0})
+
+
 # -------------------------------------------------- D2：续发的序号不许冻结（Minor M-1）
 
 
@@ -946,6 +984,35 @@ def test_cross_read_keeps_no_status_and_no_echo_apart():
                       _Rx(good=120)))
 
 
+def test_cross_read_keeps_the_execution_side_suspect_when_some_rounds_stepped():
+    """**混合轮次**（3 轮没发阶跃 + 7 轮发了却从不越阈）不许把执行面整条抹掉（NEW-3 同族）。
+
+    旧实现只按 `not_rearmed` 挡 Fw-21 那句，并把全部 n=0 说成"pacing 的产物、不是链路
+    故障"——那等于把"我问过轮子、轮子没答"洗成"我没问"。旧实现下这条红（它连
+    `rounds_step_commanded` 这个键都没有，Fw-21 也被合并计数挡掉了）。
+    """
+    mixed = _d(n=0, timeouts=10, not_rearmed=3, pre_arm_above_frames=12,
+               rounds_step_commanded=7, wait_s=5.0, settle_s=1.0, keepalive_s=0.2)
+    text = '\n'.join(LP.cross_read(_d(n=5), mixed, _Rx(good=300)))
+    assert 'Fw-21' in text, 'the rounds that did command a step must stay a suspect'
+    assert 'DID command the step in 7 rounds' in text
+    assert 'artefact of how this run was paced' not in text
+    # 计数行里这一跑的分母看得见（操作员不用读源码也知道 7 轮叫过轮子）
+    assert 'rounds_step_commanded=7' in LP.report(_d(n=5), mixed)
+
+    # 反面：一次阶跃都没发 ⇒ 这才是"本跑的 pacing"，执行面一个字都不许说。
+    never = _d(n=0, timeouts=10, not_rearmed=10, rounds_step_commanded=0, wait_s=5.0)
+    text2 = '\n'.join(LP.cross_read(_d(n=5), never, _Rx(good=300)))
+    assert 'Fw-21' not in text2
+    assert 'artefact of how this run was paced' in text2
+    assert 'rounds_step_commanded=0: no round ever sent a step' in text2
+
+    # 老形状（结果里没有这个键）不许被新分支误伤：仍按 `not_rearmed` 的旧读法走。
+    legacy = _d(n=0, timeouts=10, not_rearmed=2)
+    assert 'Fw-21' not in '\n'.join(LP.cross_read(_d(n=5), legacy, _Rx(good=300)))
+    assert text.isascii() and text2.isascii()
+
+
 def test_cross_read_refuses_to_call_a_dirty_stream_a_link_quality():
     lines = '\n'.join(LP.cross_read(_d(n=5), _d(n=5), _Rx(good=100, bad=7,
                                                           out_of_order=4)))
@@ -1034,9 +1101,25 @@ def test_everything_this_script_prints_is_ascii():
                '\n'.join(LP.estop_caution(0.4)),
                LP.report(_d(n=3), _d(n=0, timeouts=2, not_rearmed=1,
                                     pre_arm_above_frames=7, keepalive_sends=11,
-                                    wait_s=2.0, settle_s=1.0)),
+                                    wait_s=2.0, settle_s=1.0, keepalive_s=0.2)),
                '\n'.join(LP.cross_read(_d(n=3), _d(n=0, timeouts=2, not_rearmed=2,
                                                    pre_arm_above_frames=9, wait_s=2.0),
+                                        _Rx(good=60))),
+               # 第 2 轮新增的打印面：keepalive 关掉时的两句 + 四种节奏 + 混合轮次归属
+               '\n'.join(LP.estop_caution(2.0, keepalive_s=0, settle_s=1.0)),
+               '\n'.join(LP.estop_caution(2.0, keepalive_s=0, settle_s=0.0)),
+               '\n'.join(LP.estop_caution(2.0, keepalive_s=None, settle_s=0.0)),
+               LP.report(_d(n=3), _d(n=0, settle_s=0.0, keepalive_s=0.2)),
+               LP.report(_d(n=3), _d(n=0, settle_s=1.0, keepalive_s=0.0)),
+               LP.report(_d(n=3), _d(n=0, settle_s=0.0, keepalive_s=0.0)),
+               LP.report(_d(n=3), _d(n=0, timeouts=1, rounds_step_commanded=0,
+                                    settle_s=1.0, keepalive_s=0.2)),
+               '\n'.join(LP.cross_read(_d(n=3), _d(n=0, timeouts=10, not_rearmed=3,
+                                                   pre_arm_above_frames=12,
+                                                   rounds_step_commanded=7),
+                                        _Rx(good=60))),
+               '\n'.join(LP.cross_read(_d(n=3), _d(n=0, timeouts=10, not_rearmed=10,
+                                                   rounds_step_commanded=0),
                                         _Rx(good=60)))]
     for exc in (lambda: LP.measure_d2(lambda f: None, _no_frames, threshold=0.01),
                 lambda: LP.measure_d2(lambda f: None, _no_frames,
@@ -1046,7 +1129,8 @@ def test_everything_this_script_prints_is_ascii():
             exc()
         targets.append(str(info.value))
     # 早拒时打印的那一行也是打印面
-    for extra in (['--threshold', '0.01'], ['--step', 'nan'], ['--keepalive', '0.9']):
+    for extra in (['--threshold', '0.01'], ['--step', 'nan'], ['--keepalive', '0.9'],
+                  ['--keepalive', '0']):
         with pytest.raises(SystemExit) as info:
             LP._preflight_inputs(LP.build_argparser().parse_args(extra))
         targets.append(str(info.value))
@@ -1160,6 +1244,97 @@ def test_estop_caution_says_which_phase_is_silent_and_what_the_bench_must_do():
     assert len(LP.estop_caution(2.0, settle_s=0.0)) == 1
 
 
+def test_estop_caution_with_re_sending_off_says_the_run_goes_silent():
+    """`keepalive_s == 0` 时那句告警不许念默认参数（NEW-1 的"不许只改打印"那一半）。
+
+    旧实现无条件下印 `it re-sends NAV(0,0) every 0.00 s`——而 0 就是"不续发"，那句话对
+    现场是一句假话，且掩盖了"持停与等待两段都会静默到窗口结束 ⇒ 桥注 ESTOP"这个真事实。
+    命令行现在根本到不了这个值（`test_keepalive_zero_is_refused_…`），但 API 那条路还在，
+    所以打印面自己也得说真话。旧实现下前两条断言就红。
+    """
+    text = '\n'.join(LP.estop_caution(2.0, keepalive_s=0, settle_s=1.0))
+    assert 'every 0.00 s' not in text
+    assert 'does NOT sleep' not in text
+    assert 'D2 re-sending is OFF' in text
+    assert '1.00 s window' in text and 'injects an ESTOP' in text
+    assert 'Fw-14' in text and 'power' in text.lower()
+    # settle 也关掉时，不许凭空描述一个不存在的持停段
+    t2 = '\n'.join(LP.estop_caution(2.0, keepalive_s=0, settle_s=0.0))
+    assert 'no hold phase' in t2 and 'every 0.00 s' not in t2
+    # keepalive_s=None（main 在 --skip-d2 时传的就是它）：D2 一个字都不发，
+    # 于是关于它的节奏一句都不许说——只有 D1 那句。
+    lines = LP.estop_caution(2.0, keepalive_s=None, settle_s=0.0)
+    assert len(lines) == 1 and 'D2' not in lines[0]
+    # 正常跑法（0 < keepalive < 桥窗口）仍说"不睡空窗"，并带上 M-3 那句未修的话
+    t3 = '\n'.join(LP.estop_caution(2.0, keepalive_s=0.2, settle_s=1.0))
+    assert 'does NOT sleep' in t3 and 'every 0.20 s' in t3 and 'M-3' in t3
+    # 这句也跟着**实参**走（同一处把默认值印成事实也是假话）
+    t4 = '\n'.join(LP.estop_caution(2.0, keepalive_s=0.1, settle_s=0.35))
+    assert '0.35 s settle' in t4 and 'every 0.10 s' in t4
+    for t in (text, t2, t3, t4):
+        assert t.isascii()
+
+
+def test_main_does_not_describe_d2_pacing_when_d2_was_skipped(monkeypatch, capsys):
+    """`--skip-d2 --keepalive 0`：D2 从未上线，开工行与报告都不许描述它的节奏。
+
+    这是 NEW-1 修法①的**反向保险**：挡 0 之后，`--skip-d2` 仍走豁免（那一跑 D2 一条都不发），
+    于是 `main()` 传给 `estop_caution()` 的必须是 `None` 而不是 `a.keepalive`——否则
+    "0 = 会静默"那句会被印在一个**什么都没发**的跑法上，同一类假话换了个方向。
+    """
+    sender = _FakeSender()
+    monkeypatch.setattr(LP, 'plan', lambda a: (sender, 2))
+    monkeypatch.setattr(LP, 'bind_listener', lambda port: _BoomSock())
+    monkeypatch.setattr(LP, 'measure_d1',
+                        lambda *a, **k: {'samples_ms': [], 'n': 0, 'timeouts': 1,
+                                         'p50_ms': None, 'p95_ms': None,
+                                         'frames_sent': 1, 'next_seq': 1,
+                                         'wait_s': 2.0})
+    assert LP.main(['--to', '192.168.127.10:9000', '--warmup', '0',
+                    '--skip-d2', '--keepalive', '0']) == 0
+    out = capsys.readouterr().out
+    assert 'caution: D1 will be SILENT' in out          # D1 那句照印
+    assert 're-sending is OFF' not in out               # D2 一句都不许说
+    assert 'every 0.00 s' not in out
+    assert 'never ran in this session' in out           # 报告里也不作节奏声明
+    assert 're-sent often enough' not in out
+    assert out.isascii()
+
+
+def test_keepalive_zero_is_refused_on_the_command_line_before_any_socket(monkeypatch):
+    """`--keepalive 0` 在 CLI 层拒（NEW-1 选的修法①）——静默事实本身被堵住，不只是改口。
+
+    0 = 关掉续发，于是持停段从 `NAV(0,0)` 到阶跃**一个字都不发**（默认 `--settle 1.0`），
+    阶跃段也一样静默到窗口结束：都 > 桥的 500 ms ⇒ 桥注 ESTOP 并锁存，只能断电清（Fw-14）。
+    那正是上一轮 Important-1 的症状从参数后门回来。API 层继续允许 0（单测用它当"不建模
+    续发"的简写，那条路不碰板子），`--skip-d2` 也照旧豁免（D2 一条都不上线）。
+    旧实现下这条红：0 过闸 → `make_sender` 建 socket → AssertionError，而且不是 SystemExit。
+    """
+    created = []
+
+    def _no_sockets(*args, **kwargs):
+        created.append((args, kwargs))
+        raise AssertionError('a socket was created for --keepalive 0')
+
+    monkeypatch.setattr(LP.socket, 'socket', _no_sockets)
+    with pytest.raises(SystemExit) as info:
+        LP.main(['--to', '192.168.127.10:9000', '--keepalive', '0'])
+    assert created == [], 'a socket was built before --keepalive 0 was refused'
+    text = str(info.value)
+    assert text.isascii() and 'nothing was sent' in text
+    assert 'keepalive_s 0' in text and 'ESTOP' in text and 'Fw-14' in text
+    assert 'vehicle/bridge.py:24/30/206' in text
+    # API 层不拒：挡了它等于把 40 多条单测一起打死，而那条路一个字都不上线。
+    out = LP.measure_d2(lambda f: None, _no_frames, keepalive_s=0, repeats=1,
+                        timeout_s=0.01)
+    assert out['n'] == 0 and out['rounds_step_commanded'] == 1
+    # --skip-d2 的豁免照旧（那些值一条都不上线），正常参数照常放行。
+    LP._preflight_inputs(LP.build_argparser().parse_args(
+        ['--skip-d2', '--keepalive', '0']))
+    LP._preflight_inputs(LP.build_argparser().parse_args(
+        ['--to', '192.168.127.10:9000', '--keepalive', '0.2']))
+
+
 class _BoomSock:
     """假监听 socket：一读就报错，让读线程立刻带着 `reader_error` 退出来。"""
 
@@ -1224,13 +1399,18 @@ def test_report_shows_why_a_run_produced_no_sample():
     """n=0 那一行必须带上"为什么"：被 re-arm 门拒掉的轮次与链路不通不是一件事。"""
     d1 = {'samples_ms': [100.0], 'n': 1, 'timeouts': 0, 'p50_ms': 100.0,
           'p95_ms': 100.0, 'frames_sent': 1}
+    # 键按 `measure_d2()` 的真实输出形状给（它每一跑都带 settle_s/keepalive_s/
+    # rounds_step_commanded）：报告里那几句节奏话现在**读这些实参**，不读默认值（NEW-2），
+    # 手写 dict 少了它们就只能得到"不作任何声明"那一句。
     d2 = {'samples_ms': [], 'n': 0, 'timeouts': 2, 'p50_ms': None, 'p95_ms': None,
           'frames_sent': 14, 'threshold_mps': 0.05, 'step_mps': 0.14,
-          'not_rearmed': 1, 'pre_arm_above_frames': 19, 'keepalive_sends': 11}
+          'not_rearmed': 1, 'pre_arm_above_frames': 19, 'keepalive_sends': 11,
+          'rounds_step_commanded': 0, 'settle_s': 1.0, 'keepalive_s': 0.2}
     text = LP.report(d1, d2)
     assert 'rounds_never_rearmed=1' in text
     assert 'above_threshold_before_standing_still=19' in text
     assert 'keepalive_re_sends=11' in text
+    assert 'rounds_step_commanded' not in text      # 0 不印（不印 =0 凑数）
     # 报告自己要把"两轮段"的口径说清：读者不看源码也知道 t=0 是**挣到资格之后**那条阶跃
     assert 'THEN command the step' in text and 'residual speed' in text
     read = '\n'.join(LP.cross_read(d1, d2, _Rx(good=300)))
@@ -1239,3 +1419,119 @@ def test_report_shows_why_a_run_produced_no_sample():
     # 就没挣到发阶跃的资格，与板子的主循环无关——这条归属守卫是审查清单第 2 条的形状。
     assert 'Fw-21' not in read
     assert text.isascii()
+
+
+def test_report_pacing_lines_follow_the_actual_settle_and_keepalive():
+    """节奏那几句跟着**实参**走，不跟着默认值走（NEW-2）。
+
+    `--settle 0` 的跑法没有持停段，`--keepalive 0` 更是关掉续发；旧实现把默认参数的
+    行为印成无条件事实（"re-sent often enough that the bridge never sees 0.5 s of PC
+    silence"），现场读到的是关于**没发生过的事**的陈述，而它正好掩盖了"这一跑会静默到
+    锁存"。⇒ 旧实现下这条在几处同时红。
+    """
+    d1 = {'samples_ms': [100.0], 'n': 1, 'timeouts': 0, 'p50_ms': 100.0,
+          'p95_ms': 100.0, 'frames_sent': 1}
+
+    def d2(**kw):
+        out = {'samples_ms': [], 'n': 0, 'timeouts': 0, 'p50_ms': None,
+               'p95_ms': None, 'frames_sent': 4, 'threshold_mps': 0.05,
+               'step_mps': 0.14}
+        out.update(kw)
+        return out
+
+    # 1) 非默认的实参必须被印出来（这就是"跟着默认值走"的反证）
+    t1 = LP.report(d1, d2(settle_s=0.35, keepalive_s=0.1))
+    assert '0.35 s' in t1 and 'every 0.10 s' in t1
+    assert 're-sent often enough' not in t1
+    # 2) --settle 0：没有持停段，不许说"holds NAV(0,0) ... until ..."
+    t2 = LP.report(d1, d2(settle_s=0.0, keepalive_s=0.2))
+    assert 'NO hold phase' in t2 and 're-sent often enough' not in t2
+    assert 'holds NAV(0,0) for up to' not in t2
+    # 3) --keepalive 0：句子必须是"会静默到锁存"，不是"re-sent often enough"
+    t3 = LP.report(d1, d2(settle_s=1.0, keepalive_s=0.0))
+    assert 'RE-SENDS NOTHING' in t3 and '1.00 s window' in t3
+    assert 'power cycle clears (Fw-14)' in t3
+    assert 're-sent often enough' not in t3 and 'holds NAV(0,0) for up to' not in t3
+    # 4) 两个都关掉
+    t4 = LP.report(d1, d2(settle_s=0.0, keepalive_s=0.0))
+    assert 'RE-SENDS NOTHING' in t4 and 'no hold phase' in t4
+    # 5) 被忽略的余速为 0 时，不许把读者指向一行**不存在**的东西（_count_bits 不印 0）
+    assert 'above_threshold_before_standing_still=' not in t3
+    assert 'is not printed above' in t3
+    t5 = LP.report(d1, d2(settle_s=1.0, keepalive_s=0.2, pre_arm_above_frames=6))
+    assert 'above_threshold_before_standing_still=6' in t5
+    # 6) D2 被跳过 / 结果里没有这两个键 ⇒ 关于本跑节奏一个字都不说
+    t6 = LP.report(d1, d2(skipped=True, settle_s=1.0, keepalive_s=0.2))
+    assert 'never ran in this session' in t6 and 're-sent' not in t6
+    t7 = LP.report(d1, d2())
+    assert 'carries no settle_s/keepalive_s' in t7
+    assert 're-sent often enough' not in t7
+    for text in (t1, t2, t3, t4, t5, t6, t7):
+        assert text.isascii()
+
+
+
+
+
+# ------------------------------------ 口径：不许说"台账上已经有这一条"（NEW-3，静态断言）
+
+# 这些词**用码点拼**，不写成字面量：本测试要扫的面里就包括 `tests/test_latency_probe.py`
+# 自己，把被禁的写法原样写在源码里，等于让这条检查永远命中自己（或者逼自己把它删掉）。
+#   U+5DF2 yi3 = "already"（注意不是 U+5DF1 ji3）；U+53F0 U+8D26 = "the ledger"。
+_YI = chr(0x5DF2)
+_LEDGER = chr(0x53F0) + chr(0x8D26)
+_LEDGER_CLAIMS = (
+    [_YI + v + _LEDGER for v in (chr(0x8BB0),                          # ji4  "logged"
+                                 chr(0x767B) + chr(0x8BB0),             # dengji
+                                 chr(0x8BB0) + chr(0x5165),             # jiru
+                                 chr(0x5199) + chr(0x5165),             # xieru
+                                 chr(0x8FDB),                           # jin4
+                                 chr(0x5F55))]                           # lu4
+    + [_LEDGER + _YI + v for v in (chr(0x767B) + chr(0x8BB0),
+                                   chr(0x66F4) + chr(0x65B0),
+                                   chr(0x8BB0))]
+    + [_YI + chr(0x767B) + chr(0x8BB0)])          # bare "already registered"
+
+
+def _ledger_claims_in(text):
+    """返回文本里出现的"已经落盘到台账"类声明（命中列表为空才算干净）。"""
+    return [c for c in _LEDGER_CLAIMS if c in text]
+
+
+def test_the_probe_never_claims_a_ledger_entry_that_was_never_written():
+    """源码/报告里不许写"这条已经进台账了"——除非台账里真有（NEW-3，AGENTS 第 1/第 5 条）。
+
+    被审那一版在 `measure_d2()` 文档串里把 M-3 说成"台账上有这一条"，而 `docs/` 全目录 grep
+    `M-3` **零命中**：那句话结构性为假，属"把没做的写成做了"。台账本轮不许动，所以
+    唯一正确的改法是改口（"见 task-9 报告 F9，台账待登记"）。这条把它做成静态断言。
+
+    非空性自检放在最后：**零命中要先怀疑自己写错了**，所以用同一批码点拼一个样本喂回去，
+    断言扫描器确实抓得住——不然"扫了个空"会被读成"扫过了、很干净"。
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    root = os.path.dirname(here)
+    paths = [os.path.join(root, 'tools', 'latency_probe.py'),
+             os.path.join(root, 'tests', 'test_latency_probe.py')]
+    report = os.path.join(root, '.superpowers', 'sdd',
+                          '2026-10-08-e3-batch-1b-pc-tools', 'task-9-report.md')
+    if os.path.exists(report):
+        paths.append(report)
+    scanned = 0
+    for path in paths:
+        text = io.open(path, encoding='utf-8').read()
+        assert len(text) > 500, 'empty read of %s is not a clean scan' % path
+        hits = _ledger_claims_in(text)
+        assert not hits, ('%s claims a ledger entry (%s) that has no landed '
+                          'counterpart: say where it is recorded, or say "pending"'
+                          % (os.path.basename(path),
+                             ', '.join(h.encode('ascii', 'replace').decode()
+                                       for h in hits)))
+        scanned += 1
+    assert scanned >= 2, scanned
+    # 反向自检：扫描器不是空转——被禁的写法它必须抓到（每种构形各验一次）
+    sample = (u'%s%s' % (_YI + chr(0x8BB0), _LEDGER),
+              u'%s%s%s' % (_YI, chr(0x767B) + chr(0x8BB0), _LEDGER),
+              u'%s%s%s' % (_LEDGER, _YI, chr(0x8BB0)))
+    for s in sample:
+        assert _ledger_claims_in(s), s.encode('unicode-escape').decode()
+    assert _ledger_claims_in(u'nothing suspicious here') == []
