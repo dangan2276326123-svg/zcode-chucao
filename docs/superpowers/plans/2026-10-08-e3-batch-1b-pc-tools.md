@@ -1187,6 +1187,8 @@ pytest 191 -> 192 passed。固件未动 —— 现在 PC 会对旧固件发 MODE
 EOF
 ```
 
+> **勘误（10-09，Task 10 文档收口）**：上面这条提交草稿写的"冒烟 CSV **24 列**"是**当时那一版**的读数，留原样不抹。Task 6 的 fix round 1（I-6：L1 降级事件计数）之后，`pc/wire.py:RUN_LOG_COLUMNS` 又在**末尾**追加了 `l1_events` ⇒ 现在是 **25 列**（追加在末尾是有意的：前面各列下标不变，按位置读日志的旧消费者不受影响）。**列数的权威是 `pc/wire.py:RUN_LOG_COLUMNS`**，读数用 `python -B -c "from pc import wire; print(len(wire.RUN_LOG_COLUMNS))"` 当场拿，别在任何文档里抄这个数（AGENTS 审查清单第 8 条）。判据本身没变，`tests/test_wire.py` 钉的是"表头 == 列名表 == 每一行的长度"三件一致，不钉具体数字——所以列再加一条时不会有一处文档"为了变绿"要改。
+
 ---
 
 ### Task 7: `tools/link_probe.py`——废掉"是否曾看到 AUTO"，按命令定义预期响应
@@ -1307,6 +1309,8 @@ def judge(kind, baseline_mode, seen_modes, reject_codes):
 ```
 
 `_run_serial()` 里把"是否曾看到 AUTO"那个判定换成调用 `judge()`，并在读取 STATUS 时额外收集 `reject`（v2 帧才有；v1 帧收到就打印一行"板上是 E3 之前的固件，mode_auto/clear 这两条测不了"）。`build()` 里加 `mode_auto`/`mode_manual`/`clear` 三种命令，分别打包 `P.pack_mode(P.MODE_REQ_AUTO, profile)` 等（`profile` 从 `pc.vehicle_profile.load()` 取，取不到就用 `P.PROFILE_NONE` 并打印警告）。
+
+> **勘误（10-09，Task 10 文档收口）**：上面 Step 3 片段里 tool/beat 那支的 PASS 文案「**收到 STATUS，且没有意外的权限变化**」**已被 Task 7 的实际实现换掉**，历史片段留原样不删。原因不是措辞：`want is None` 那两支**根本没检查 mode**，而"没有意外的权限变化"说的正是没检查的那件事——写上去就是越过证据说话（AGENTS 审查清单第 5 条）。实现现在的两句是分开的（`tools/link_probe.py:171` 与 `:175`）：nav 说"收到 STATUS，且 mode 相对发送前基线没有变化"（它确实比了基线），tool/beat 说"收到 STATUS；本命令不以 mode 变化为判据（mode 变没变本次没有检查）"。同一段里 `reject` 非零也不再算 FAIL——那是板子对某条请求的答复，链路是通的，要报中文原因而不是"链路不通"。
 
 - [ ] **Step 4: 跑测试确认通过**
 
@@ -1742,6 +1746,12 @@ EOF
 ```
 | 2026-10-08 | E3 批 1b（PC+工具） | Pc-8 从"AUTO 每周期命令落刀"改为"PC 侧已修：门 N 下 wire 只发 lift=0x07、tool_mm=0"；新增 `pc/wire.py` 承载线上语义 | `pc/wire.py`、`pc/state_machine.py`、`pc/main.py`、`pc/status_rx.py`、`common/protocol.py`、`tools/{link_probe,bench_status,latency_probe}.py` | `pytest -q` = 207 passed；回放模式冒烟：run_log.csv 24 列、列数与行长一致 | 用户+Qoder |
 ```
+
+> **勘误（10-09，Task 10 实际写入台账时按下面三条改口；草稿留原样）**：
+> 1. **"run_log.csv 24 列"→ 25 列**，且台账那一行不写死列数，指向 `pc/wire.py:RUN_LOG_COLUMNS` + 当场命令（理由见 Task 6 那条勘误）。
+> 2. **"`pytest -q` = 207 passed" 是计划期的预测值**（链条 159→166→…→207 见本文件 Self-Review 第 4 条）。九条任务之外还跑了多轮**复审返修**，每轮都在加回归用例，所以实际读数高于 207；台账里那条真记录写的是"**10-09 本行提交时 `python -B -m pytest tests/ -q -p no:cacheprovider` 当场 = 384 passed**"，同时写明"这是那次运行的读数，不是下一批该对上的目标"。
+> 3. **Step 3 让把 AGENTS 基线写成"10-08 = 207"——没照做**。AGENTS 那行的最终形态是"基线 = 命令的当场输出（附 10-09 读数与命令）"，历史链条保留不删；把它写成一个固定数字，就等于给检查器埋一条必红的检查项（`72d97ee` 那次订正踩过同源的路，AGENTS 审查清单第 8 条现在把这条写成了硬规则）。Step 2 让 ③-B 那句带"pytest 207 passed"同样按"当场实测为准"落。
+> 4. 实际进台账的比草稿多：Fw-21（`loop_stalled()` 的 PC 侧探测 + "**返回 False 不等于执行面活着**"那句必须写）、Fw-22/Fw-18（A12 定案"不改代码，改三处文字"里缺的两处补齐）、Fw-14（MODE(0x10) 的 PC 侧入口 + 现固件无分支 ⇒ 仍只能断电清）、**新增 Pc-9**（审查发现 M-3 的正式登记，草稿里没有这一条）。
 
 Pc-8 状态列**就地改写**（不删原文，按"就地撤回"的规矩加一段）：在原有 🔴 文案后面追加 `🟡 **10-08 PC 侧已修**（批 1b）：门 N 许可位下 wire 只发 lift=0x07、tool_mm=0，且有单测钉住；**固件侧那半（permit==GATE_N 强制提刀并忽略矛盾的 TOOL 位）要等批 1a**，两侧都到位才算关闭本行。`
 
