@@ -51,6 +51,19 @@ def dump():
         print('%-20s %3d B  %s' % (name, len(data), data.hex(' ')))
 
 
+def repack(data: bytes, seq: int) -> bytes:
+    """把一条对拍向量按它自身的帧类型重新打包，只换 seq。
+
+    纯函数（不开串口、不 sleep），所以 test_protocol 能直接把它对着旧逻辑跑。
+    帧类型必须来自 unpack_frame(data)：早期 sender() 是按向量名字前缀猜的
+    （nav*->NAV、tool*->TOOL、estop*->ESTOP、其余一律 HEARTBEAT），E3 的
+    mode_* 与 status_v2 都不匹配任何前缀 ⇒ 会被当心跳发出去，而固件见到心跳
+    是"AUTO 交回 MANUAL"，语义正好相反，台架对拍必错。
+    """
+    frame_type, _vector_seq, payload = P.unpack_frame(data)
+    return P.pack_frame(frame_type, payload, seq)
+
+
 def sender(port, baud=115200, interval=0.1):
     import serial  # pyserial
     ser = serial.Serial(port, baud, timeout=0.1)
@@ -60,11 +73,8 @@ def sender(port, baud=115200, interval=0.1):
         for name, data in build_vectors():
             if 'must_reject' in name:
                 continue
-            # 帧类型取自向量本身（unpack_frame），不再按名字前缀猜。
-            # 旧的猜测链只认 nav/tool/estop，mode_* 与 status_v2 会掉进最后的
-            # HEARTBEAT 分支——台架上就成了"发出去的是心跳"，对拍必错。
-            frame_type, _vector_seq, payload = P.unpack_frame(data)
-            frame = P.pack_frame(frame_type, payload, seq)
+            # 逐向量重新打包走 repack()（类型取自帧本身），不再按名字前缀猜。
+            frame = repack(data, seq)
             ser.write(frame)
             print('%s seq=%d %d B' % (name, seq, len(frame)))
             seq = (seq + 1) & 0xFFFF

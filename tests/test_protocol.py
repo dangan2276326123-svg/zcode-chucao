@@ -3,6 +3,14 @@ import pytest
 from common import protocol as P
 from common import uart_vectors as uv
 
+# 对拍向量名 -> 该向量的帧里写的帧类型。sender()/repack() 发出去的类型必须等于
+# 这一列，**不许**再由名字猜（旧猜测链把 mode_* 与 status_v2 都当 HEARTBEAT 发）。
+VECTOR_TYPES = {'heartbeat': P.TYPE_HEARTBEAT, 'nav_straight': P.TYPE_NAV,
+                'nav_turn': P.TYPE_NAV, 'nav_stop': P.TYPE_NAV,
+                'tool_offset_lift': P.TYPE_TOOL, 'estop': P.TYPE_ESTOP,
+                'mode_auto': P.TYPE_MODE, 'mode_clear': P.TYPE_MODE,
+                'status_v2': P.TYPE_STATUS}
+
 
 def test_crc_known_vectors():
     # CRC-16/CCITT-FALSE check values ("123456789" -> 0x29B1)
@@ -142,6 +150,9 @@ def test_uart_vectors_cover_mode_and_status_v2():
 
     sender() 旧逻辑按名字前缀猜帧类型，mode_/status_ 会掉进 HEARTBEAT 分支，
     即"发出去的是 NAV/HEARTBEAT"那种坑；这里钉住每个向量解出来的类型。
+    注意本条**不经过** sender()/repack()（build_vectors() 的帧本来就打包对了，
+    旧猜测链在这里也是绿的），sender() 那一条坑由
+    test_uart_vectors_repack_uses_frame_type_not_name_prefix 钉。
     """
     vecs = dict(uv.build_vectors())
     assert 'mode_auto' in vecs and 'mode_clear' in vecs and 'status_v2' in vecs
@@ -151,11 +162,7 @@ def test_uart_vectors_cover_mode_and_status_v2():
         P.TYPE_MODE, P.pack_mode(P.MODE_REQ_CLEAR_ESTOP, P.PROFILE_PREV), 10)
     assert len(vecs['status_v2']) == P.wire_len(P.STATUS_V2_LEN) == 28
     # 名字 -> 期望帧类型（sender() 用的就是这个名字表，不再猜）
-    expect = {'heartbeat': P.TYPE_HEARTBEAT, 'nav_straight': P.TYPE_NAV,
-              'nav_turn': P.TYPE_NAV, 'nav_stop': P.TYPE_NAV,
-              'tool_offset_lift': P.TYPE_TOOL, 'estop': P.TYPE_ESTOP,
-              'mode_auto': P.TYPE_MODE, 'mode_clear': P.TYPE_MODE,
-              'status_v2': P.TYPE_STATUS}
+    expect = VECTOR_TYPES
     for name, data in vecs.items():
         if 'must_reject' in name:
             continue
@@ -168,3 +175,29 @@ def test_uart_vectors_cover_mode_and_status_v2():
             assert P.unpack_status_any(payload)['v'] == 2
         if name.startswith('mode'):
             assert len(payload) == 2
+
+
+def test_uart_vectors_repack_uses_frame_type_not_name_prefix():
+    """回归钉（审查 Important #1）：sender() 逐向量重新打包的分派本身。
+
+    原始症状是 sender() 按向量**名字前缀**猜帧类型（nav*->NAV、tool*->TOOL、
+    estop*->ESTOP、其余一律 HEARTBEAT），于是 mode_auto/mode_clear/status_v2
+    会被当心跳发到台架上。把 sender() 里那一步抽成纯函数 repack() 之后，这条
+    测试才第一次真正执行那段分派逻辑：旧的猜测链下它必须红（idx 4 的类型位
+    会是 0x03 而不是 0x05/0x10），新的解帧实现下才绿。
+    """
+    vecs = dict(uv.build_vectors())
+    # mode_auto 重新打包：a5 5a | 07 00 (len=5+2) | 05 (TYPE_MODE)
+    assert uv.repack(vecs['mode_auto'], 0).hex(' ') == \
+        'a5 5a 07 00 05 00 00 01 01 cd e8'
+    assert uv.repack(vecs['mode_auto'], 0)[:5] == bytes.fromhex('a55a070005')
+    # 帧头 2 B + 长度 2 B 之后就是 type u8，即下标 4（下标 5/6 是 seq u16 LE）
+    assert uv.repack(vecs['status_v2'], 0)[4] == P.TYPE_STATUS
+    # 每个好帧：repack 只换 seq，类型取自帧本身、载荷原样
+    for name, data in vecs.items():
+        if 'must_reject' in name:
+            continue
+        _t, _s, payload = P.unpack_frame(data)
+        t2, seq2, p2 = P.unpack_frame(uv.repack(data, 0x1234))
+        assert t2 == VECTOR_TYPES[name], (name, t2)
+        assert seq2 == 0x1234 and p2 == payload, name
