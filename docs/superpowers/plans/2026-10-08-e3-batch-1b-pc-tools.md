@@ -14,7 +14,7 @@
 - 契约来源唯一：`docs/superpowers/specs/2026-10-08-e3-control-authority-design.md`（下称 spec）。数值与字段名以 spec §3 为准，**不得在本批自行改协议**。
 - STATUS 载荷：v1 = 14 字节 `'<fffBB'`，v2 = **19 字节** `'<fffBBBBBBB'`（3 个 f32 + 7 个 u8）；线上字节 = 载荷 + 9（2 头 + 2 长 + 1 型 + 2 序 + 2 CRC）⇒ v1 = 23、v2 = **28**。
 - `TYPE_MODE = 5`，载荷 `'<BB'` = request + profile，线上 11 字节。
-- 测试基线：当前 `python -B -m pytest tests/ -q -p no:cacheprovider` = **159 passed**。本批只增不减；每个任务结束时跑全量。
+- 测试基线：当前 `python -B -m pytest tests/ -q -p no:cacheprovider` = **159 passed**。本批只增不减；每个任务结束时跑全量。⚠️ **这句是计划期的值，别当现行基线读**：本批实际读数一路高于它（九条任务之外还有多轮复审返修在加用例），解释见本文件 :1752-1753 那条"勘误（10-09）"的第 2/3 项；**现行基线只在一处表达 = `AGENTS.md`『当前状态』里"测试基线 = 命令的当场输出"那一行**，本计划其余位置一律指向那里而不是各抄一个数（AGENTS 审查清单第 8 条）。
 - 只读仓禁区：不得触碰 `D:\JetBrains\chucao_prj`（唯一例外 `thesis_cau/`，本批不涉及）。
 - 编码：本批全是 UTF-8 的 Python 与 YAML，**不要动 `firmware/` 下任何文件**（那是批 1a）。
 - Windows 控制台是 cp936：脚本里**不要 `print` 中文/emoji**，要输出中文就写文件或加 `PYTHONIOENCODING=utf-8`。

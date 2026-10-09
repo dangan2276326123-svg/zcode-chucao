@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- **前置**：批 1b 必须已合入并跑通（`pytest -q` = 207 passed）。顺序反了台架当天字段错位（spec §3.5）。
+- **前置**：批 1b 必须已合入并跑通（判据 = 当场跑 `python -B -m pytest tests/ -q -p no:cacheprovider` **全量通过、0 failed / 0 error**；条数以那条命令的输出为准，**本计划不写固定数**，批 1a 不改 Python ⇒ 读数应与批 1b 收尾那次一致。现行基线在本仓只有一处表达：`AGENTS.md`『当前状态』里"测试基线 = 命令的当场输出"那一行）。顺序反了台架当天字段错位（spec §3.5）。
 - **只改 `firmware/大车proj/大车/` 里那份**。`firmware/` 根下的四份是影子副本，本批 Task 6 直接删（A13）。
 - **A12：不改厂商 `main.c` 的死等结构**（`:305` 那个 `while`、门限 800/1100、`:329` 握手块）。`main.c` 只允许两处**纯新增**：一句 `retrofit_notify_loop();`、一条 `regGroup[0]==1` 锁零分支。
 - **A14：`retrofit.c`/`retrofit.h`/`protocol.h` 当前是 UTF-8，本批 Task 6 转成 GBK**。转换只动注释字节 ⇒ **重编译后 Code 必须仍是转换前那次的值**（当前基线 44848，若 Task 3–5 已让 Code 变化，则以"转换前后两次编译 Code 相同"为准）。
@@ -893,12 +893,12 @@ EOF
 - 缺口清单 ② 的 B1 行加：`**新增判据**：拨杆后 STATUS 的 loop_alive 持续在变；HMI/STATUS 的 build_id 与台账认版行一致`
 - 缺口清单 ② 的 B2 行加：`记录器已能发帧（--to + !nav/!tool/!beat/!auto/!manual/!clear），②③⑧ 这类"边发边记"现在做得了；**但 FIELD_SW_CALIBRATED=0 时 ②③⑧ 需要真进无人，必须等 B2 填表**`
 - AGENTS "固件已重编译"那段：把 `09-21 UV4 -r：0 错误，60 警告，Code=44848` 之后**续写**（不删旧数字）：`→ 10-08 E3 批 1a：0 错误，〔实测〕警告，Code=〔实测〕，hex+map 已再生，map 内 retrofit_on_mode_frame@〔地址〕`
-- AGENTS ⑥：`spec 已成文、待作者审阅` → `spec 已批准，批 1b（PC+工具，pytest 207）与批 1a（协议+固件，已重编译）均已编码，**未台架**`
+- AGENTS ⑥：`spec 已成文、待作者审阅` → `spec 已批准，批 1b（PC+工具，pytest 全量通过）与批 1a（协议+固件，已重编译）均已编码，**未台架**`——**别在这句话里写条数**：现行基线只写在 AGENTS『当前状态』那一行，⑥ 这句指向它（AGENTS 审查清单第 8 条；10-10 收口波订正，本行原写"pytest 207"是计划期的预测值，早已不是任何一次实测）。
 
 - [ ] **Step 3: 跑检查器与全量测试**
 
 Run: `python tools/check_doc_invariants.py` → Expected: 退出码 **0**（工具自己比对 AGENTS 写的基线，命中数以工具输出为准，**不要手抄数字进本计划**）。本任务不得新增任何"圈号 + 短横 + 圈号"的区间记法——要引用场景区间就写"①到⑥ 加 ⑧到⑫"这种逐号形式，或者直接把场景号列出来。
-Run: `python -B -m pytest tests/ -q -p no:cacheprovider` → Expected: **207 passed**（批 1a 不改 Python）
+Run: `python -B -m pytest tests/ -q -p no:cacheprovider` → Expected: **全量通过（0 failed / 0 error）**；条数以这条命令的当场输出为准、**不许往本计划抄数**（AGENTS 审查清单第 8 条）。批 1a 不改 Python ⇒ 读数应与批 1b 收尾那次一致，现行基线唯一一处写在 `AGENTS.md`『当前状态』。
 
 - [ ] **Step 4: 提交**
 
@@ -917,7 +917,7 @@ git commit -F- --cleanup=verbatim <<'EOF'
 - F3 的 ⑧ 场景在台架无执行元件时是**恒真命题**，不算验过（09-22 已定级）。
 
 AGENTS 的编译数字续写不删历史；⑥ 的状态从"spec 待审"改为"两批均已编码、未台架"。
-check_doc_invariants 退出码 0（未新增区间记法）；pytest 207 passed。
+check_doc_invariants 退出码 0（未新增区间记法）；pytest 当场全量通过（条数以那条命令的输出为准，不抄进本计划——AGENTS 审查清单第 8 条；本行原写"207 passed"是计划期预测值）。
 EOF
 ```
 
