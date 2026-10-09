@@ -17,6 +17,19 @@
    而这个谓词对 NaN 比较恒假，所以非有限值必须在**本模块**的校验里拒掉
    （不改共享模块——那是最终审查后的收口项）。
 
+5. **D2 不许把自己锁进 ESTOP**（fix round 1，Important-1）。桥在最后一条 PC 帧 500 ms 后
+   自注 ESTOP，而锁存只能断电清（Fw-14）——所以"发一条停帧然后干等 `--settle` 秒"这种写法
+   会让工具**自己**成为它正在诊断的那个症状。测试用一把**收发共用的虚拟钟**（`_Feed`）把
+   整轮的发送时刻记下来，断言相邻两次发送的间隔从不越过那个窗口，并把发送序列**回放给
+   桥自己的判据** `vehicle/bridge.decide_forward`（不在测试里重抄一遍 500 ms 规则）。
+6. **re-arm 门**（fix round 1，Important-2）。本轮必须先见到一帧**有限且低于阈值**的 speed，
+   之后的首次越阈才算样本；在那之前的越阈帧是上一轮的余速，计 `pre_arm_above_frames` 并忽略。
+   没有这道门时，`--settle` 被调小就会产出 50–200 ms 的"机械响应"——本模块对 TIM3 混叠
+   明令防范的那种"自洽但不存在"的数。
+7. **续发是重新组帧的新帧**（fix round 1，M-1）：每次续发占一个新发送序号。
+8. **入参早拒**（fix round 1，M-2）：`--threshold 0.01` 这类在建 socket、绑端口之前就该退出，
+   而不是等 D1 把 30 条 MODE 发满之后抛 traceback。
+
 不需要硬件也不需要网口：收发都是假函数（`send_fn` 记账、`recv_iter` 按脚本给
 `(t, status_dict)`）。`t` 是**距本次请求发出的相对秒数**，这个契约由
 `StatusStream.recv_iter` 实现，并由 `test_stream_*` 几条钉住。
@@ -64,6 +77,107 @@ class _Ticks:
         v = self.values[min(self.i, len(self.values) - 1)]
         self.i += 1
         return v
+
+
+# --------------------------------------------------- 假世界：一条绝对时间轴 + 记账的发送
+
+STATUS_HZ = 20.0          # retrofit.c:334 (tick_ms % 50) == 0 -> status_report()
+
+
+def _frames(spec, interval=None):
+    """把 [(from_s, to_s, speed)] 摊成 `interval` 网格上的**到达时刻**序列。
+
+    网格从每段的 lo+interval 开始，这样段边界不会两处各产一条（重复到达=假帧）。
+    """
+    step = interval or (1.0 / STATUS_HZ)
+    out = []
+    for lo, hi, v in spec:
+        n = int(round((hi - lo) / step))
+        out.extend((round(lo + (i + 1) * step, 6), v) for i in range(n))
+    return sorted(out)
+
+
+class _Feed:
+    """假世界：STATUS 按**绝对时间轴**到达，`send_fn` 的时刻记在同一把虚拟钟上。
+
+    为什么需要一把共用钟：Important-1 说的是"PC 静默了多久"，这句话只有在一个能
+    **同时看见发送与接收时刻**的钟上才是可断言的。真实时钟帮不上忙（单测不该真等几秒），
+    而 `measure_d2` 的续发节奏是**由到达的帧驱动**的，所以收发必须一起建模。
+
+    `recv_iter(window)` 严格按 `StatusStream.recv_iter` 的契约演：
+      · epoch = 被调用那一刻的虚拟钟 ⇒ 产出相对秒数（`t` 从 0 起算）；
+      · 早于 epoch 的帧丢掉（真实现里是 `dropped_stale`）；
+      · 窗口里没有帧可给了，钟**走到窗口结束**才收口（真实现里就是 socket 超时到点）——
+        这一条是关键：它让"这段窗口 PC 一个字都没发"在钟上留下痕迹，而不是被跳过；
+      · 调用方提前 break（读到样本）时，钟停在那一帧的时刻，剩下的帧留给下一轮。
+    """
+
+    def __init__(self, frames):
+        self.arrivals = list(frames)
+        self.now = 0.0
+        self.sends = []              # [(绝对秒数, 原始帧字节)]
+        self.stale = 0
+
+    def send(self, frame):
+        self.sends.append((self.now, frame))
+
+    def recv_iter(self, window):
+        epoch = self.now
+        end = epoch + window
+        while self.arrivals and self.arrivals[0][0] <= end:
+            at, v = self.arrivals.pop(0)
+            if at < epoch:
+                self.stale += 1
+                continue
+            self.now = at
+            yield at - epoch, {'speed_mps': v}
+        self.now = max(self.now, end)
+
+    def decoded(self):
+        """[(绝对秒数, 指令速度, 发送序号)]：把记账的字节真解一遍（不信任实现写的注释）。"""
+        out = []
+        for ts, frame in self.sends:
+            ftype, seq, payload = P.unpack_frame(frame)
+            assert ftype == P.TYPE_NAV, 'D2 must only ever send NAV'
+            v_left, v_right, _flags = P.unpack_nav(payload)
+            assert v_left == v_right
+            out.append((ts, v_left, seq))
+        return out
+
+
+def _bridge_injection_ms(sends, poll_ms=2):
+    """把发送时刻**回放给桥自己的判据** `vehicle.bridge.decide_forward`。
+
+    为什么不在这儿重写一条 ">500 ms" 的规则：那条规则的权威版本在 `bridge.py`
+    （`LINK_TIMEOUT_MS=500`、`SEEN_WINDOW_MS=60000`、`auto_on=True` 硬编码在 :206），
+    测试里再抄一遍就成了第二个事实源（AGENTS 清单第 6 条）。回放还能顺手证明
+    "这个假世界真的会注入"——见 `test_the_d2_run_never_leaves_the_bridge…` 里那条前提断言。
+
+    返回第一次注入的毫秒时刻（相对第一条发送），没有注入给 None。
+    """
+    from vehicle import bridge as B
+    base = min(ts for ts, _frame in sends)
+    times = sorted(1000 + int(round((ts - base) * 1000.0)) for ts, _frame in sends)
+    if not times:
+        return None
+    # 1000 ms 的偏移不是装饰：`last_pc_ms == 0` 在桥里表示"这台 PC 从没露过面"
+    # （bridge.py:53-54 的 `last_pc_ms > 0` 条件，P0-5），从 0 开始回放会让假世界
+    # 永远处于"纯 RC 运行"那一支，注入判据根本不会被执行。
+    last_pc = last_inject = 0
+    i = 0
+    now = times[0]
+    end = times[-1]                      # 只看**这次运行之内**（收尾是台架规程的事）
+    while now <= end:
+        raw = b'x' if (i < len(times) and times[i] == now) else None
+        if raw is not None:
+            i += 1
+        _fwd, inject, last_pc, last_inject = B.decide_forward(
+            raw, now, last_pc, True, last_inject_ms=last_inject)
+        if inject:
+            return now - 1000
+        now += poll_ms
+    return None
+
 
 
 # ---------------------------------------------------------------- brief 给的 5 条
@@ -374,8 +488,12 @@ def test_d2_re_sends_the_step_while_waiting():
 
 
 def test_d2_does_not_sample_a_non_finite_speed():
-    """线上来的 speed 是 NaN/None 时不进样本、进计数：这种帧证明不了任何东西。"""
-    events = [(0.05, float('nan')), (0.10, None), (0.20, 0.06)]
+    """线上来的 speed 是 NaN/None 时不进样本、进计数：这种帧证明不了任何东西。
+
+    本轮开头那帧 0.02 是**给 re-arm 门的证据**（见 `test_d2_requires_a_sub_threshold_frame…`）：
+    没有它，这一轮本来就不该产样本，测试会把"被 re-arm 门拒掉"误报成"非有限值处理错了"。
+    """
+    events = [(0.02, 0.0), (0.05, float('nan')), (0.10, None), (0.20, 0.06)]
 
     def recv_iter(deadline):
         for t, v in events:
@@ -397,6 +515,190 @@ def test_d2_send_is_never_a_sample():
     assert out['timeouts'] == 10
     assert out['p95_ms'] is None
     assert len(sent) == 20                                   # 10 轮 x (停 + 阶跃)
+
+
+# -------------------------------------------------- D2：不许自己造出桥的静默窗口（Important-1）
+
+
+def _two_round_world():
+    """一条 20 Hz 的假时间轴，专门用来暴露"持停段是不是真的在发东西"：
+
+        0.00–0.80 s  speed 0.08  —— 上一轮的**余速**（高于阈值），本轮不许就此发阶跃
+        0.80–1.40 s  speed 0.00  —— 停住了：第 1 轮的 re-arm 证据
+        1.40 s 之后   speed 0.06  —— 阶跃引起的越阈；也是第 2 轮的余速（永不 re-arm）
+
+    取 `repeats=2`：第 2 轮整个持停段都没有停下来的证据，用来验"不发阶跃"这件事。
+    """
+    world = _Feed(_frames([(0.0, 0.8, 0.08), (0.8, 1.4, 0.0), (1.4, 3.2, 0.06)]))
+    out = LP.measure_d2(world.send, world.recv_iter, step_v=0.14, threshold=0.05,
+                        timeout_s=1.0, repeats=2, keepalive_s=0.2, settle_s=1.0)
+    return world, out
+
+
+def test_d2_keeps_the_pc_sending_through_the_settle():
+    """**默认参数下 D2 不再把自己锁进 ESTOP**：settle 那段是"边发 NAV(0,0) 边看 STATUS"，
+    不是"停一下再睡 1 秒"。睡的那 1 秒里 PC 一个字节都不发，而桥 500 ms 就注 ESTOP
+    （bridge.py:24/30/206），Fw-14 之后只能断电清——工具会把**自己**变成它正在诊断的症状。
+
+    旧实现下这条必红：`send stop; sleep(1.0); send step` 之间一条发送都没有，
+    于是"从第一次停到阶跃的跨度"是 0（假世界的钟被 sleep 跳过＝什么都没发生），
+    而"跨度 ≥ 一个桥窗口"和"这期间至少有 N 条续发"两条都过不了。
+    """
+    world, out = _two_round_world()
+    times = [ts for ts, _f in world.sends]
+    gaps = [b - a for a, b in zip(times, times[1:])]
+    assert gaps, 'D2 sent nothing at all'
+    # 1) 整个 D2 过程里，相邻两次 PC 发送的间隔不许超过桥的静默窗口
+    assert max(gaps) <= LP.BRIDGE_ESTOP_AFTER_S, 'max gap %.3f s' % max(gaps)
+    # 2) 第 1 轮的持停跨度真的跨过了一个桥窗口（不然上面的 1) 是空跑出来的）
+    decoded = world.decoded()
+    first_step = min(i for i, (_t, v, _s) in enumerate(decoded) if v > 0.0)
+    span = decoded[first_step][0] - decoded[0][0]
+    assert span >= LP.BRIDGE_ESTOP_AFTER_S
+    # 3) 这段跨度里每一拍都发了东西：停帧续发次数 >= 跨度/节奏 - 1（留 1 拍的边角余量）
+    re_sent = sum(1 for i in range(first_step) if decoded[i][1] == 0.0) - 1
+    assert re_sent >= int(span / 0.2) - 1
+    # 顺带钉住测量本身没被这次改动改坏：样本是**阶跃之后**第一次越阈那一帧
+    # （持停在 0.85 s 挣到证据 -> 阶跃 0.85 s -> 越阈 1.45 s -> 600 ms，不是 50 ms）
+    assert out['n'] == 1 and abs(out['samples_ms'][0] - 600.0) < 1e-6
+
+
+def test_the_bridge_never_injects_an_estop_during_a_d2_run():
+    """把 D2 的发送时刻**回放给桥自己的判据** `vehicle/bridge.py:decide_forward`：
+    整个运行期间它一次都不该决定注入 ESTOP（`auto_on=True` 是 :206 硬编码的）。
+
+    为什么在测试里回放而不是重写一条 ">500 ms"：那条规则的权威版本在桥里，抄一遍就
+    是第二个事实源（AGENTS 清单第 6 条）。
+
+    两条**前提**必须先立住，否则"没注入"是一文不值的绿：
+      · 回放本身抓得住违规——把"发一条停帧、干等 1 秒、再发阶跃"这个旧形状喂给它，
+        必须报出注入；
+      · 这个假世界**真的**跑出了一段比桥窗口还长的持停，并且那段持停是按节奏喂着的
+        （`keepalive_sends` 说计数）。这一条正是旧实现红的地方：旧代码在窗口之外
+        `time.sleep(settle)`，那 1 秒不进这把建模的钟，于是它的"发送序列"在桥上看着
+        毫无破绽——**没有这两条前提，回放会把"工具睡了一觉"读成"工具一秒都没停过"**。
+    """
+    world, out = _two_round_world()
+    stop = P.pack_frame(P.TYPE_NAV, P.pack_nav(0.0, 0.0), 0)
+    step = P.pack_frame(P.TYPE_NAV, P.pack_nav(0.14, 0.14), 1)
+    assert _bridge_injection_ms([(0.0, stop), (1.0, step)]) is not None
+    decoded = world.decoded()
+    first_step = min(i for i, d in enumerate(decoded) if d[1] > 0.0)
+    assert decoded[first_step][0] - decoded[0][0] >= LP.BRIDGE_ESTOP_AFTER_S
+    assert out['keepalive_sends'] >= 8          # 3 轮段的续发：持停 4 + 窗口 2 + 持停 5
+    assert _bridge_injection_ms(world.sends) is None
+
+
+def test_d2_does_not_command_the_step_until_the_hold_proved_standing_still():
+    """持停段的证据门槛：没有"有限且低于阈值"的一帧，就**不发**那条阶跃。
+
+    第 2 轮整个持停段都是 0.06 m/s 的余速 ⇒ 一轮里只该看到停帧（NAV(0,0)），
+    一条阶跃都不该上线。旧实现每轮无条件发阶跃 ⇒ 红。
+    """
+    world, out = _two_round_world()
+    kinds = ['step' if v > 0.0 else 'stop' for _t, v, _s in world.decoded()]
+    pairs = zip(['stop'] + kinds, kinds)
+    bursts = sum(1 for a, b in pairs if b == 'step' and a == 'stop')
+    assert bursts == 1                    # 两轮里只有一轮挣到了发阶跃的资格
+    assert out['repeats'] == 2 and out['n'] == 1
+    assert out['timeouts'] == 1 and out['not_rearmed'] == 1
+    assert kinds[-6:] == ['stop'] * 6     # 最后一整轮全是停帧：一直喂着，没叫轮子转
+    assert out['keepalive_sends'] >= 3    # 第 2 轮的持停一直是喂着的
+
+
+# -------------------------------------------------- D2：re-arm 门（Important-2）
+
+
+def test_d2_requires_a_sub_threshold_frame_before_it_samples_a_crossing():
+    """上一轮的余速不许冒充"首次越阈"：判据必须是**先见到停、再见到越阈**。
+
+    0.14 m/s 的余速按 0.2 m/s^2 减到 0.05 以下要约 0.45–0.7 秒，正好落在新窗口的头几帧
+    上；照收就得到 50–200 ms 的"机械响应"——与本模块防 TIM3 混叠同一种**自洽但不存在**
+    的数（`--settle` 被操作员调小时，这道门是唯一还剩的东西）。旧实现把 0.05 秒那帧
+    直接当样本 ⇒ 红。
+    """
+    events = [(0.05, 0.10), (0.20, 0.0), (0.90, 0.06)]
+
+    def recv_iter(deadline):
+        for t, v in events:
+            yield t, {'speed_mps': v}
+
+    out = LP.measure_d2(lambda f: None, recv_iter, step_v=0.14, threshold=0.05,
+                        timeout_s=2.0, repeats=1, keepalive_s=0)
+    assert out['n'] == 1
+    assert abs(out['samples_ms'][0] - 900.0) < 1e-6
+    assert out['pre_arm_above_frames'] == 1     # 被拒的那一帧要看得见，不许静默丢弃
+
+
+def test_d2_treats_a_round_of_pure_residual_speed_as_no_sample():
+    """整轮都停不下来（一帧都高于阈值）：不产样本，并且说清是**哪一类**没产。
+
+    `timeouts` 记"这一轮没有样本"，`not_rearmed` 记"因为没有静止证据"——少了后面这个数，
+    一屏 n=0 会被读成链路不通。旧实现下这条红（它会把第一帧当 50 ms 的样本）。
+    """
+    def recv_iter(deadline):
+        for k in range(20):
+            yield 0.05 * (k + 1), {'speed_mps': 0.08}
+
+    out = LP.measure_d2(lambda f: None, recv_iter, step_v=0.14, threshold=0.05,
+                        timeout_s=1.0, repeats=1, keepalive_s=0)
+    assert out['n'] == 0 and out['timeouts'] == 1
+    assert out['not_rearmed'] == 1
+    assert out['pre_arm_above_frames'] == 20
+
+
+def test_d2_a_non_finite_speed_is_not_evidence_of_standing_still():
+    """NaN/None 既不能当"越过了阈值"，**也不能当"确实停住了"**：两头都不算。
+
+    这道门要的是证据，不是"这一帧没写字段所以算它低于阈值"。旧实现只在这一条上
+    把 0.06 那帧当样本（因为根本没有门）⇒ 红。
+    """
+    events = [(0.05, None), (0.10, float('nan')), (0.15, 0.06)]
+
+    def recv_iter(deadline):
+        for t, v in events:
+            yield t, {'speed_mps': v}
+
+    out = LP.measure_d2(lambda f: None, recv_iter, step_v=0.14, threshold=0.05,
+                        timeout_s=1.0, repeats=1, keepalive_s=0)
+    assert out['bad_speed_frames'] == 2
+    assert out['n'] == 0 and out['timeouts'] == 1
+    assert out['pre_arm_above_frames'] == 1      # 0.06 那一帧是余速，不是样本
+    assert out['not_rearmed'] == 1               # 有可信帧却从未停住：诊断名叫 re-arm
+    # 另一头：一帧可信的都没有时不许冒领 `not_rearmed`——那是"没收到/没解出"，
+    # 与"收到了但从没停下"是两种不同的故障，混在一起就等于把收帧问题说成 pacing 问题。
+    out2 = LP.measure_d2(lambda f: None,
+                         lambda dl: iter([(0.05, {'speed_mps': None}),
+                                          (0.10, {'speed_mps': float('nan')})]),
+                         step_v=0.14, threshold=0.05, timeout_s=1.0, repeats=1,
+                         keepalive_s=0)
+    assert out2['bad_speed_frames'] == 2 and out2['n'] == 0
+    assert out2['not_rearmed'] == 0 and out2['timeouts'] == 1
+
+
+# -------------------------------------------------- D2：续发的序号不许冻结（Minor M-1）
+
+
+def test_d2_re_sends_are_repacked_with_a_fresh_sequence_number():
+    """续发的每一帧都是**重新组帧的新帧**，不是同一个字节串的冻结重传。
+
+    现固件不读 NAV 的 seq，所以今天看着无害；但批 2 要让指令带 seq、单片机回传"最后
+    执行到的 seq"（spec §7.2），那时重传与原帧不可区分，而本文件自己承诺过
+    "线上日志分得清是谁发的"。旧实现把 `step_frame` 变量反复 `send_fn` ⇒ 红。
+    """
+    world, _out = _two_round_world()
+    decoded = world.decoded()
+    assert len(decoded) >= 10, 'this world should have produced a lot of feeding'
+    seqs = [s for _t, _v, s in decoded]
+    assert len(set(seqs)) == len(seqs), 'two sends share one sequence number: %r' % seqs
+    assert len({f for _t, f in world.sends}) == len(world.sends)
+    # 同一条阶跃的续发：载荷一模一样，只有序号在走（证明差别确实在 seq 那一层）
+    steps = [d for d in decoded if d[1] > 0.0]
+    assert len({s for _t, _v, s in steps}) == len(steps)
+    assert steps[0][1] == steps[-1][1] == pytest.approx(0.14)
+    # 而且整进程一条序号线仍然是连续的（与 measure_d1 的 seq_start 契约不打架）
+    assert seqs == list(range(seqs[0], seqs[0] + len(seqs)))
+
 
 
 # ---------------------------------------------------------------- StatusStream
@@ -631,6 +933,18 @@ def test_cross_read_keeps_no_status_and_no_echo_apart():
     assert 'receive path' not in flowing
     assert 'retrofit.c:60-75' in flowing and 'Fw-14' in flowing
 
+    # 但"锁存"这个嫌疑人里必须列上**这次运行自己**：D1 每轮发一帧之后要等 `--timeout-d1`
+    # 秒而中途不能补发，那段静默本身就超桥的窗口。把症状全推给板子=把工具自己的 sleep
+    # 洗成被测机制的故障，这正是本轮 Important-1 要求反查的那一类归因错误。
+    ours = '\n'.join(LP.cross_read(_d(n=0, timeouts=3, wait_s=2.0),
+                                   _d(n=0, timeouts=10, wait_s=5.0), _Rx(good=120)))
+    assert 'this very run is a suspect' in ours
+    assert 'vehicle/bridge.py:24/30/206' in ours and 'Power the board down' in ours
+    # 等待短于桥窗口时，这句自我怀疑不该出现（不许把没发生的风险写成结论）
+    assert 'this very run is a suspect' not in '\n'.join(
+        LP.cross_read(_d(n=0, timeouts=3, wait_s=0.4), _d(n=0, timeouts=10),
+                      _Rx(good=120)))
+
 
 def test_cross_read_refuses_to_call_a_dirty_stream_a_link_quality():
     lines = '\n'.join(LP.cross_read(_d(n=5), _d(n=5), _Rx(good=100, bad=7,
@@ -714,13 +1028,27 @@ def test_everything_this_script_prints_is_ascii():
                '\n'.join(LP.cross_read(_d(n=3), _d(n=3), _Rx(good=60))),
                '\n'.join(LP.cross_read(
                    _d(n=3), {'samples_ms': [], 'n': 0, 'timeouts': 0, 'p50_ms': None,
-                             'p95_ms': None, 'skipped': True}, _Rx(good=60)))]
+                             'p95_ms': None, 'skipped': True}, _Rx(good=60))),
+               # 本轮新增的两处打印面：告警行 + 带 re-arm 计数的计数行
+               '\n'.join(LP.estop_caution(2.0, keepalive_s=0.2, settle_s=1.0)),
+               '\n'.join(LP.estop_caution(0.4)),
+               LP.report(_d(n=3), _d(n=0, timeouts=2, not_rearmed=1,
+                                    pre_arm_above_frames=7, keepalive_sends=11,
+                                    wait_s=2.0, settle_s=1.0)),
+               '\n'.join(LP.cross_read(_d(n=3), _d(n=0, timeouts=2, not_rearmed=2,
+                                                   pre_arm_above_frames=9, wait_s=2.0),
+                                        _Rx(good=60)))]
     for exc in (lambda: LP.measure_d2(lambda f: None, _no_frames, threshold=0.01),
                 lambda: LP.measure_d2(lambda f: None, _no_frames,
                                       step_v=float('nan')),
                 lambda: LP.measure_d1(lambda f: None, _no_frames, profile_id=300)):
         with pytest.raises(ValueError) as info:
             exc()
+        targets.append(str(info.value))
+    # 早拒时打印的那一行也是打印面
+    for extra in (['--threshold', '0.01'], ['--step', 'nan'], ['--keepalive', '0.9']):
+        with pytest.raises(SystemExit) as info:
+            LP._preflight_inputs(LP.build_argparser().parse_args(extra))
         targets.append(str(info.value))
     for text in targets:
         for chunk in text if isinstance(text, list) else [text]:
@@ -770,3 +1098,144 @@ def test_run_needs_a_target_and_refuses_to_send_without_one():
     with pytest.raises(SystemExit) as exc:
         LP.plan(a)
     assert 'send' in str(exc.value).lower()
+
+
+# ------------------------------------------- CLI 层早拒（Minor M-2）与开工打印的告警行
+
+
+def test_bad_inputs_are_refused_before_any_socket_or_packet(monkeypatch):
+    """`--threshold 0.01` / `--step nan` / `--keepalive 0.6` 要在**建 socket 之前**就退出。
+
+    闸门本身在 `measure_d1/measure_d2` 里（那两条一道没撤），但它们跑在 `bind_listener`
+    之后——旧顺序下这些入参要等端口绑上、D1 把 30 条 MODE 发满之后才炸出 traceback：
+    那等于"先把指令发上线、再告诉你参数写错了"，换来的只是一堆超时，而这一次发送
+    本身可能已经把板子锁进 ESTOP。`--to` 一直是早拒的（"两条拒绝都发生在碰任何资源
+    之前"），入参没理由享受更低的标准。
+    """
+    created = []
+
+    def _no_sockets(*args, **kwargs):
+        created.append((args, kwargs))
+        raise AssertionError('a socket was created before the command line was checked')
+
+    monkeypatch.setattr(LP.socket, 'socket', _no_sockets)
+    bad = (['--threshold', '0.01'], ['--threshold', 'nan'], ['--step', 'nan'],
+           ['--step', '0.3'], ['--keepalive', '0.6'], ['--keepalive', '-1'],
+           ['--settle', '-1'], ['--repeats', '0'], ['--d2-repeats', '0'],
+           ['--timeout-d1', '-0.5'], ['--timeout-d2', '1e999'],
+           ['--warmup', '-0.1'])
+    for extra in bad:
+        argv = ['--to', '192.168.127.10:9000'] + extra
+        with pytest.raises(SystemExit) as info:
+            LP.main(argv)
+        assert created == [], 'socket created for %r' % extra
+        text = str(info.value)
+        assert text.isascii() and 'nothing was sent' in text
+    # --skip-d2 时这些值一条都不上线，拒它们只会挡住"这次只想量 D1"这条正当用法。
+    # （用 _preflight_inputs 直接验，不走 main：那条路要建 socket。）
+    LP._preflight_inputs(LP.build_argparser().parse_args(
+        ['--skip-d2', '--threshold', '0.01', '--keepalive', '0.9']))
+    # 而**正确**的参数必须放行，否则这条早拒就成了新的误伤。
+    LP._preflight_inputs(LP.build_argparser().parse_args(
+        ['--to', '192.168.127.10:9000']))
+
+
+def test_estop_caution_says_which_phase_is_silent_and_what_the_bench_must_do():
+    """D1 那条静默**改不掉**（中途补发 MODE 就不再是一次往返了），所以只能说明白：
+    在没有回显的板上，本跑法会注入并锁存 ESTOP，台架规程要写明跑后断电。
+
+    `!clear` 也救不了：它发的同样是 TYPE_MODE，现固件的 switch 里没有这一支
+    （`retrofit.c:60-75`）——这句必须一起说，否则操作员会以为有软件捷径。
+    """
+    lines = LP.estop_caution(2.0, keepalive_s=0.2, settle_s=1.0)
+    text = '\n'.join(lines)
+    assert 'D1' in text and 'SILENT' in text
+    assert 'Fw-14' in text and 'power' in text.lower() and '!clear' in text
+    assert 'retrofit.c:60-75' in text and 'vehicle/bridge.py:24/30/206' in text
+    # D2 那半边：说清持停段是"发着等"，并且不许假装遗留项已修
+    assert 'M-3' in text and 'STATUS' in text
+    # 等待短于桥窗口时，D1 那句不该出现（不许把没发生的风险写成告警）
+    assert LP.estop_caution(0.4) == []
+    # --skip-d2 时没有持停段，D2 那句也不该出现
+    assert len(LP.estop_caution(2.0, settle_s=0.0)) == 1
+
+
+class _BoomSock:
+    """假监听 socket：一读就报错，让读线程立刻带着 `reader_error` 退出来。"""
+
+    def recvfrom(self, n):
+        raise OSError('nothing on the bench yet')
+
+    def close(self):
+        pass
+
+
+class _FakeSender:
+    """假发送侧：只记账，不碰网络（`main()` 的收发段本来就只在这条路上测到这里）。"""
+
+    host = '192.168.127.10'
+    port = 9000
+
+    def __init__(self):
+        self.frames = []
+        self.sent = 0
+        self.errors = 0
+        self.last_error = ''
+
+    def send(self, frame):
+        self.frames.append(frame)
+        self.sent += 1
+        return True
+
+    def close(self):
+        pass
+
+
+def test_main_prints_the_estop_caution_in_the_startup_lines(monkeypatch, capsys):
+    """告警必须**印在开工那几行**里，不是只躺在文档串里：台架上没人翻源码。
+
+    这条是 Important-1 "至少补一行打印"的闭环核对——定义了 `estop_caution()` 而
+    `main()` 不印它，操作员看到的东西和以前一模一样。旧实现没有这一段 ⇒ 红。
+    """
+    sender = _FakeSender()
+    monkeypatch.setattr(LP, 'plan', lambda a: (sender, 2))
+    monkeypatch.setattr(LP, 'bind_listener', lambda port: _BoomSock())
+    monkeypatch.setattr(LP, 'measure_d1',
+                        lambda *a, **k: {'samples_ms': [], 'n': 0, 'timeouts': 1,
+                                         'p50_ms': None, 'p95_ms': None,
+                                         'frames_sent': 1, 'next_seq': 1,
+                                         'wait_s': 2.0})
+    monkeypatch.setattr(LP, 'measure_d2',
+                        lambda *a, **k: {'samples_ms': [], 'n': 0, 'timeouts': 1,
+                                         'p50_ms': None, 'p95_ms': None,
+                                         'frames_sent': 1, 'next_seq': 2,
+                                         'threshold_mps': 0.05, 'step_mps': 0.14})
+    assert LP.main(['--to', '192.168.127.10:9000', '--warmup', '0']) == 0
+    out = capsys.readouterr().out
+    assert 'caution: D1 will be SILENT' in out
+    assert 'vehicle/bridge.py:24/30/206' in out and 'power-cycle' in out
+    assert 'Fw-14' in out and '!clear' in out
+    # D2 那一半也说清楚：持停是"发着等"，而 STATUS 断流这个口子本轮没修
+    assert 'does NOT sleep through its' in out and 'M-3' in out
+    assert out.isascii(), 'the whole console output must stay cp936-safe'
+
+
+def test_report_shows_why_a_run_produced_no_sample():
+    """n=0 那一行必须带上"为什么"：被 re-arm 门拒掉的轮次与链路不通不是一件事。"""
+    d1 = {'samples_ms': [100.0], 'n': 1, 'timeouts': 0, 'p50_ms': 100.0,
+          'p95_ms': 100.0, 'frames_sent': 1}
+    d2 = {'samples_ms': [], 'n': 0, 'timeouts': 2, 'p50_ms': None, 'p95_ms': None,
+          'frames_sent': 14, 'threshold_mps': 0.05, 'step_mps': 0.14,
+          'not_rearmed': 1, 'pre_arm_above_frames': 19, 'keepalive_sends': 11}
+    text = LP.report(d1, d2)
+    assert 'rounds_never_rearmed=1' in text
+    assert 'above_threshold_before_standing_still=19' in text
+    assert 'keepalive_re_sends=11' in text
+    # 报告自己要把"两轮段"的口径说清：读者不看源码也知道 t=0 是**挣到资格之后**那条阶跃
+    assert 'THEN command the step' in text and 'residual speed' in text
+    read = '\n'.join(LP.cross_read(d1, d2, _Rx(good=300)))
+    assert 're-arm' in read
+    # **不许**在这样的轮次上说"执行面停了（Fw-21）"：D2 一条样本都没产是因为它自己
+    # 就没挣到发阶跃的资格，与板子的主循环无关——这条归属守卫是审查清单第 2 条的形状。
+    assert 'Fw-21' not in read
+    assert text.isascii()

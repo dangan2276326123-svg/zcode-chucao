@@ -9,23 +9,45 @@
         ⚠️ **不能用 NAV 测**：A2 之后 NAV 不再改 `mode`（spec §3.3），发它看不到任何
         回显变化 —— 用 NAV 探 D1 会把"被测语义变了"读成"链路超时 30 次"。
         这条对应 B8 的一票否决判据（控制帧往返 p95）。分辨率受 STATUS 20 Hz 限制（±50 ms）。
-    D2 指令到轮子真的转 = 发阶跃 NAV，量到 STATUS 的 `speed` 首次越过阈值。
+    D2 指令到轮子真的转 = 每轮先把 NAV(0,0) **持停**到看见轮子确实停了，再发阶跃，
+        量到 STATUS 的 `speed` 在那之后**首次**越过阈值。
         它含 D1 的全部 + 斜坡限幅 + PWM + 电机 + 传动 + 轮胎。
         ⚠️ `SLEW_ACC = 0.2 m/s^2`（`firmware/retrofit.c:140`）⇒ 0 → 0.14 m/s 要约
         **0.7 秒**，它把百毫秒级的链路延迟完全掩盖，所以 **D1 与 D2 必须分开报**：
         论文口径是"链路延迟 = D1；机械响应 ≈ D2 − D1"，不写成一个数（spec §7.2 / R8）。
 
-三个硬约束（都不是风格问题，都写着出处）：
+四条硬约束（都不是风格问题，都写着出处）：
   · **阈值下限 0.05 m/s 是硬的**：TIM3 是 16 位计时，脉冲间隔 > 65.536 ms 会取模
     （评审指出 0.005 m/s 会被算成约 0.01451 m/s）⇒ 低速段的 `speed` 不可信，
     `measure_d2()` 对更低的阈值直接拒。
   · **阶跃速度共用 `tools/bench_limits` 那一个数**（`NAV_BENCH_LIMIT_MPS = 0.20`，
     谓词 `nav_exceeds_bench_limit()`）。那个谓词对 NaN 比较恒假，所以非有限值在
     **本模块**的入参校验里拒掉——不改共享模块（最终审查后的收口项）。
-  · **续发**：桥在最后一条 PC 帧 500 ms 后自注 ESTOP（`vehicle/bridge.py:24/30/206`），
+  · **续发 / 持停**：桥在最后一条 PC 帧 500 ms 后自注 ESTOP（`vehicle/bridge.py:24/30/206`），
     而锁存只能把板子断电清（台账 Fw-14、`retrofit_clear_estop()` 全工程无调用点）。
     阶跃到阈值本身要约 0.7 秒 > 500 ms，所以只发一条 NAV 的测法**必然**超时：
     `measure_d2()` 在等待期间按 `keepalive_s`（默认 0.2 s < 0.5 s）续发同一条阶跃。
+    **同一条理由也管住了每轮开头**：`--settle` 那段不是"停一下再睡"，而是**边发 NAV(0,0)
+    边看 STATUS 的持停段**——睡过去的 1 秒里 PC 一个字节都不发，桥就正好注一条 ESTOP，
+    阶跃到板子时已经锁存（`retrofit.c:93` 直接 return），后面每一轮都只会超时，
+    而板子还得断电。工具不许自己成为它正在诊断的那个症状。
+    **续发一律重新 `pack_frame` 取新序号**，不是把同一个字节串冻结重传：现固件不读 NAV 的
+    seq 所以今天无害，但批 2 要给指令带 seq 并让单片机回传"最后执行到的 seq"（spec §7.2），
+    那时重传与原帧不可区分，而本文件自己承诺过"线上日志分得清是谁发的"。
+  · **re-arm 门**：本轮**必须先看到一帧有限且 `speed < 阈值`**（轮子确实停了），之后的
+    首次越阈才算样本。上一轮的余速（0.14 m/s 按 0.2 m/s^2 减到 < 0.05 要约 0.45–0.7 秒）
+    会在新窗口的头几帧就满足判据，产出 50–200 ms 的"机械响应"——
+    那是与本文件防 TIM3 混叠同一种东西：**自洽但不存在**的数（见 `MIN_THRESHOLD` 那条）。
+    `--settle` 因此可以误调而不产坏数：停不下来的那些轮次一律不计样本，只把
+    "没停住"这件事记进 `not_rearmed`（`timeouts` 仍记"这一轮没有样本"）。
+
+D1 那条**做不到**同样地喂桥：它的语义就是"发一条 MODE，然后等回显"，中途补发同一条
+MODE 会把一次往返改成两次请求，所以每轮的 `--timeout-d1`（默认 2.0 秒）就是一段真实的
+PC 静默 > 500 ms。后果要写进台架规程而不是藏在注释里：在一块**不会回显**的板上
+（批 1a 未烧：现固件的 switch 没有 TYPE_MODE 支，`retrofit.c:60-75`），D1 的每一轮都会
+让桥注一条 ESTOP 并锁存，而 `!clear` 发的也是 TYPE_MODE——现固件同样不处理，
+所以**只能断电清**（Fw-14）。这段由 `estop_caution()` 打印在开工那几行里，
+不靠人翻源码。
 
 `recv_iter` 的契约（两条测量函数都靠它，`StatusStream.recv_iter` 是它的真实现）：
     调用形式 `recv_iter(timeout_s)`，产出 `(t, status_dict)`，其中 **`t` 是"距本次请求
@@ -51,6 +73,10 @@
 发送是 **opt-in**：不填 `--to` 时本脚本一个字节都不外发，并且**直接退出**而不是跑一遍
 把所有轮次记成超时（那会把"没开发送"伪装成"链路有问题"）。目标地址的校验复用
 `tools/bench_status.resolve_target`——广播/组播/网络号/正好打在监听端口上，四样都拒。
+D1/D2 的**入参闸门在 `plan()` 里预跑一遍**（`_preflight_inputs`）：`--threshold 0.01`、
+`--step nan`、`--keepalive 0.6`、`--settle -1`、`--repeats 0` 这些都在**建 socket、绑端口
+之前**变成一行 ASCII 退出，而不是等 D1 发满 30 条之后抛 traceback——与 `--to` 同一条纪律。
+`measure_d2()` 里那道闸**不撤**：直接调用 API 的人（单测、别的脚本）也要撞上它。
 `--listen` 与记录器一样独占 9100：`pc/main.py --live` 或 `tools/bench_status.py` 开着的时候
 先关掉一个（同一时刻只能有一个收帧的人），本脚本退出时会把这一点说明白。
 
@@ -202,6 +228,12 @@ def measure_d1(send_fn, recv_iter, repeats=30, timeout_s=2.0, profile_id=0,
 
     判据只用 `mode`，不用 `authority`/`reject`：那两个字段是诊断信息（现场拨档、遥控器
     夺权同样会动 `authority`），把它们当回显会把"别人动了车"算成本次请求的功劳。
+
+    ⚠️ **这条测量本身会静默**：每轮发一帧 MODE 之后要等 `timeout_s`（默认 2.0 s），
+    中途补发同一条请求会把"一次往返"改成"两次请求"，所以这里不能像 D2 那样喂桥。
+    超过桥的 500 ms 窗口就由桥注 ESTOP（`bridge.py:24/30/206`），而现固件不认
+    TYPE_MODE（`retrofit.c:60-75`）⇒ 锁存只能断电清（Fw-14）。这个后果由
+    `estop_caution()` 印在开工行里，结果里带回 `wait_s` 供 `cross_read()` 引用。
     """
     reps = _positive_int('repeats', repeats)
     try:
@@ -242,6 +274,7 @@ def measure_d1(send_fn, recv_iter, repeats=30, timeout_s=2.0, profile_id=0,
     out = _summary(samples, timeouts, sent,
                    {'skipped_already_in_mode': skipped,
                     'no_baseline': no_baseline,
+                    'wait_s': timeout_s,
                     'repeats': reps})
     out['next_seq'] = seq
     return out
@@ -282,66 +315,136 @@ def _check_d2_inputs(step_v, threshold, keepalive_s):
     return step, thr, ka
 
 
+def _speed_or_none(st):
+    """STATUS 里的 speed，**不可信就给 None**（缺字段 / None / NaN / inf / 非数值）。
+
+    调用方一律计数、不拿它做判据：这种帧既不能当"越过了阈值"，也不能当"确实停住了"
+    ——持停段靠的就是"`speed < 阈值` 且是有限值"这一条证据，含糊的帧必须两头都不算。
+    """
+    v = st.get('speed_mps')
+    if v is None:
+        return None
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) else None
+
+
 def measure_d2(send_fn, recv_iter, step_v=DEFAULT_STEP_MPS, threshold=MIN_THRESHOLD,
                timeout_s=5.0, repeats=10, keepalive_s=DEFAULT_KEEPALIVE_S,
-               settle_s=0.0, sleep=time.sleep, seq_start=0):
-    """D2 指令到轮子真的转：每轮先 NAV(0,0) 停住，再发阶跃，量到 speed 首次越过阈值。
+               settle_s=0.0, seq_start=0):
+    """D2 指令到轮子真的转：每轮**持停**到看见轮子确实停了，再发阶跃，量其后的首次越阈。
 
     这个数**不是链路延迟**：它含 D1 的全部 + 斜坡限幅 + PWM + 电机 + 传动 + 轮胎，
     其中 `SLEW_ACC=0.2 m/s^2` 单独就贡献约 0.7 秒（0→0.14 m/s）。分开报，见 `report()`。
 
-    等待期间按 `keepalive_s` **续发同一条阶跃**（由到达的 STATUS 驱动，20 Hz 时约
-    每 0.2 s 一条）：桥在最后一条 PC 帧 500 ms 后自注 ESTOP（bridge.py:24/30/206），
-    而斜坡本身就要 0.7 秒，只发一条的测法在轮子转起来之前就已经被锁存了。
-    越过阈值那一帧先算样本、不再补发。
+    一轮分两段，两段的节奏都是"**续发 + 消费 STATUS**"，没有一段是干等：
 
-    `settle_s` > 0 时在"停"与"阶跃"之间真等一会儿（`sleep` 可注入，单测默认不等）：
-    上一轮的轮子还在减速时，越过阈值会来得偏早。
+      1. **持停段**（`settle_s` 秒的窗口）：发 NAV(0,0)，然后按 `keepalive_s` 的节奏
+         **续发 NAV(0,0)** 并逐帧读 STATUS，直到看见一帧**有限且 `speed < 阈值`**
+         （= 上一轮真的停了）。这一段既喂着桥（桥 500 ms 静默就自注 ESTOP，
+         bridge.py:24/30/206，锁存只能断电清 = Fw-14），也给第 2 段提供"从静止起算"的证据。
+         窗口用完还没停住 ⇒ 这一轮**不发阶跃**：没有静止证据的越阈分不清是指令引起的
+         还是余速。这一轮计 `timeouts`（期间见过可信帧的话，另计 `not_rearmed` 说明
+         超时不是链路的事而是没停住）。
+      2. **阶跃段**（`timeout_s` 秒的窗口）：发阶跃，按 `keepalive_s` 续发**同一条阶跃**
+         （斜坡本身要 0.7 秒 > 500 ms，只发一条的测法在轮子转起来之前就被锁存了），
+         到第一帧 `speed >= 阈值` 算样本并**先算样本再决定是否补发**。
+         `settle_s == 0` 时（单测和"我不想等"的跑法）re-arm 门挪到这一段里：
+         窗口内**必须先出现一帧有限且低于阈值**，之后的越阈才算样本；在那之前的越阈帧
+         一律计 `pre_arm_above_frames` 并忽略——上一轮的 0.14 m/s 余速按 0.2 m/s^2 减到
+         阈值以下要约 0.45–0.7 秒，正好落在新窗口的头几帧上，若照收就产出 50–200 ms 的
+         "机械响应"，那是与本模块防 TIM3 混叠同类的**自洽但不存在**的数。
+
+    续发的每一帧都**重新组帧、取新的发送序号**（M-1）：冻结重传在现固件下无害（它不读
+    NAV 的 seq），但批 2 要让指令带 seq、单片机回传最后执行到的 seq（spec §7.2），
+    那时"重传"与"原帧"就分不开了，而本文件承诺过线上日志分得清是谁发的。
+
+    ⚠️ 续发节奏是**由到达的 STATUS 驱动**的：STATUS 停下（比 `keepalive_s` 还慢或干脆断流）
+    时，节奏跟着停，PC 就又静默了。这是本轮已记台账的遗留项（审查发现 M-3），
+    不是已解决的口子；`_diagnostics()` 里的 `reader_error`/`rx` 计数就是给这个场景看的。
 
     `seq_start`/`next_seq` 与 `measure_d1` 同义：发送序号整进程一条线（spec 无关，
     但线上日志分得清是谁发的，是取证的基本要求）。
     """
     reps = _positive_int('repeats', repeats)
-    _window('timeout_s', timeout_s)
+    window = _window('timeout_s', timeout_s)
     step, thr, ka = _check_d2_inputs(step_v, threshold, keepalive_s)
     settle = _window('settle_s', settle_s)
     seq = _seq_no('seq_start', seq_start)
 
     samples = []
     timeouts = sent = keepalive = bad_speed = 0
+    not_rearmed = pre_arm_above = 0
+
+    def nav(v):
+        """发一条 NAV：每次调用都重新组帧并**占一个新序号**（见上面 M-1 那段）。"""
+        nonlocal seq, sent
+        send_fn(P.pack_frame(P.TYPE_NAV, P.pack_nav(v, v), seq))
+        seq = (seq + 1) & 0xFFFF
+        sent += 1
+
     for _i in range(reps):
-        # 先停：从静止起算，"0.7 秒斜坡"那句才是说这次测量的。
-        send_fn(P.pack_frame(P.TYPE_NAV, P.pack_nav(0.0, 0.0), seq))
-        seq = (seq + 1) & 0xFFFF
-        sent += 1
+        armed = False          # 本轮是否见过"确实停住"的证据（有限且 speed < 阈值）
+        finite_seen = 0        # 本轮见过的可信帧数：区分"没停住"与"一帧都没来"
+        next_due = ka
+        # ---- 第 1 段：持停。"先停"不是发一条就算停，得亲眼看见停了才叫从静止起算。
+        nav(0.0)
         if settle > 0:
-            sleep(settle)
-        step_frame = P.pack_frame(P.TYPE_NAV, P.pack_nav(step, step), seq)
-        send_fn(step_frame)
-        seq = (seq + 1) & 0xFFFF
-        sent += 1
+            for t, st in recv_iter(settle):
+                v = _speed_or_none(st)
+                if v is None:
+                    bad_speed += 1
+                    continue
+                finite_seen += 1
+                if v < thr:
+                    armed = True
+                    break      # 停住了：下一条就是阶跃，本身也是发送，不用在此补停
+                while ka > 0 and t >= next_due:
+                    nav(0.0)
+                    keepalive += 1
+                    next_due += ka
+            if not armed:
+                # 没有静止证据就把轮子叫起来，量到的越阈可能是上一轮的余速：
+                # 这一轮什么都不证明，所以只计超时不产样本。
+                timeouts += 1
+                if finite_seen:
+                    not_rearmed += 1
+                continue
+        # ---- 第 2 段：阶跃。
+        nav(step)
         next_due = ka
         got = False
-        for t, st in recv_iter(timeout_s):
-            v = st.get('speed_mps')
-            if v is None or not math.isfinite(v):
+        for t, st in recv_iter(window):
+            v = _speed_or_none(st)
+            if v is None:
                 # 这种帧证明不了任何事：不进样本，进计数（线上真发过 NaN 就该被看见）。
                 bad_speed += 1
                 continue
-            if v >= thr:
+            finite_seen += 1
+            if v < thr:
+                armed = True
+            elif not armed:
+                # 还没见过静止：这一帧是余速，不是"这条指令让轮子转起来"的证据。
+                pre_arm_above += 1
+            else:
                 samples.append(t * 1000.0)
                 got = True
                 break
             while ka > 0 and t >= next_due:
-                send_fn(step_frame)
-                seq = (seq + 1) & 0xFFFF
-                sent += 1
+                nav(step)
                 keepalive += 1
                 next_due += ka
         if not got:
             timeouts += 1
+            if finite_seen and not armed:
+                not_rearmed += 1
     out = _summary(samples, timeouts, sent,
                    {'keepalive_sends': keepalive, 'bad_speed_frames': bad_speed,
+                    'not_rearmed': not_rearmed,
+                    'pre_arm_above_frames': pre_arm_above,
+                    'wait_s': window, 'settle_s': settle, 'keepalive_s': ka,
                     'repeats': reps})
     out['next_seq'] = seq
     out['threshold_mps'] = thr
@@ -352,15 +455,13 @@ def measure_d2(send_fn, recv_iter, step_v=DEFAULT_STEP_MPS, threshold=MIN_THRESH
 # ------------------------------------------------------------------ 报告
 
 
-def _fmt_counts(d):
-    """一条测量的计数行（ASCII：控制台是 cp936）。"""
-    if d.get('skipped'):
-        # 没跑过与"跑了但一个样本都没有"是两件事，不许都印成 n=0 + 超时。
-        return 'skipped by request (--skip-d2): nothing was commanded'
-    if not d.get('n'):
-        return 'n=0, %d timeouts -- no usable sample' % d.get('timeouts', 0)
-    bits = ['n=%d p50=%.1f ms p95=%.1f ms timeouts=%d'
-            % (d['n'], d['p50_ms'], d['p95_ms'], d.get('timeouts', 0))]
+def _count_bits(d):
+    """计数行里的**诊断后缀**（ASCII）：一个都没有就不印，绝不印成 `=0` 凑数。
+
+    这些键在 `n=0` 时比在 `n>0` 时更要紧——"整轮被 re-arm 门拒掉"和"链路不通"在
+    `n=0, 10 timeouts` 这一行里长得一模一样，分开它们靠的就是这几个数。
+    """
+    bits = []
     if d.get('frames_sent') is not None:
         bits.append('frames_sent=%d' % d['frames_sent'])
     if d.get('skipped_already_in_mode'):
@@ -372,7 +473,27 @@ def _fmt_counts(d):
         bits.append('keepalive_re_sends=%d' % d['keepalive_sends'])
     if d.get('bad_speed_frames'):
         bits.append('non_finite_speed_frames=%d' % d['bad_speed_frames'])
-    return '  '.join(bits)
+    if d.get('not_rearmed'):
+        # re-arm 门：这些轮次从未看见轮子停下来，所以一次样本都不产（见 measure_d2）。
+        bits.append('rounds_never_rearmed=%d' % d['not_rearmed'])
+    if d.get('pre_arm_above_frames'):
+        bits.append('above_threshold_before_standing_still=%d'
+                    % d['pre_arm_above_frames'])
+    return bits
+
+
+def _fmt_counts(d):
+    """一条测量的计数行（ASCII：控制台是 cp936）。"""
+    if d.get('skipped'):
+        # 没跑过与"跑了但一个样本都没有"是两件事，不许都印成 n=0 + 超时。
+        return 'skipped by request (--skip-d2): nothing was commanded'
+    bits = _count_bits(d)
+    if not d.get('n'):
+        head = 'n=0, %d timeouts -- no usable sample' % d.get('timeouts', 0)
+        return '  '.join([head] + bits)
+    return '  '.join(['n=%d p50=%.1f ms p95=%.1f ms timeouts=%d'
+                      % (d['n'], d['p50_ms'], d['p95_ms'], d.get('timeouts', 0))]
+                     + bits)
 
 
 def report(d1, d2):
@@ -401,6 +522,14 @@ def report(d1, d2):
                      '%.1f ms' % (d2['p50_ms'] - d1['p50_ms']))
     lines.extend([
         '   D2 = D1 plus the slew limiter, PWM, motor, drivetrain and tyre.',
+        '   each round is two phases: hold NAV(0,0), re-sent often enough that the',
+        '   bridge never sees %.1f s of PC silence (vehicle/bridge.py:24, Fw-14),'
+        % BRIDGE_ESTOP_AFTER_S,
+        '   until STATUS shows a finite speed under %.2f m/s, THEN command the step;'
+        % thr,
+        '   t=0 is that step frame. A crossing seen before the wheels were seen',
+        '   standing still is residual speed from the previous round, not a sample -',
+        '   it is counted above as above_threshold_before_standing_still instead.',
         '   SLEW_ACC=%.1f m/s^2 (retrofit.c:140) -> 0 to %.2f m/s alone takes about '
         '%.1f s,' % (SLEW_ACC, step, step / SLEW_ACC),
         '   which buries a hundred-millisecond link delay: D2 is NOT the link delay.',
@@ -440,7 +569,13 @@ def cross_read(d1, d2, rx):
       · **批 1a 还没烧**：现固件的 switch 没有 TYPE_MODE 这一支（`retrofit.c:60-75`），
         三条 MODE 请求整条被丢 ⇒ 在这块板上 D1 超时是**预期**，不是故障。
       · **Fw-14**：ESTOP 锁存没有清除调用点，只能断电清；锁存期间 NAV 被 `:93` 直接 return
-        ⇒ D2 全超时而 STATUS 照常 20 Hz。
+        ⇒ D2 全超时而 STATUS 照常 20 Hz。**但这句不许被读成"板子的锅"**：D1 每轮发一帧
+        之后要等 `--timeout-d1`（默认 2.0 s）而中途不发声，它本身就是 > 500 ms 的 PC
+        静默——所以"锁存"这个症状的嫌疑人里必须先列上**这次运行自己**。D2 一侧已经改成
+        持停段续发，不再制造这种静默（`measure_d2`）。
+      · **re-arm 门**：本轮没见过"有限且低于阈值"的 speed 就不许把越阈帧当样本，
+        否则上一轮的余速会被读成 50–200 ms 的机械响应。被拒的轮次计 `not_rearmed`，
+        这里把它单独说出来，不让它伪装成链路超时。
     """
     lines = []
     d2_skipped = bool(d2.get('skipped'))
@@ -450,7 +585,8 @@ def cross_read(d1, d2, rx):
                      'figure to compare against: read D1 alone as the link number and '
                      'run without --skip-d2 (wheels off the ground) before saying '
                      'anything about the execution side')
-    if d1.get('n') and not d2.get('n') and not d2_skipped:
+    if (d1.get('n') and not d2.get('n') and not d2_skipped
+            and not d2.get('not_rearmed')):
         lines.append('D1 has samples but D2 has none: the request got through and '
                      'the echo came back, so the LINK is not the suspect. STATUS is '
                      'built in the TIM6 interrupt (retrofit.c:311/334) while the wheel '
@@ -466,11 +602,36 @@ def cross_read(d1, d2, rx):
                          'receive path first (bridge running? this host is the pc_ip? '
                          'firewall?)')
         else:
-            lines.append('STATUS flows (%d good frames) but neither echo appeared: on '
-                         'the flashed pre-E3 firmware this is expected for D1 (no '
-                         'TYPE_MODE branch, retrofit.c:60-75) and for D2 while an '
-                         'ESTOP is latched (retrofit.c:93 returns early; Fw-14 - power '
-                         'cycle only)' % rx.good)
+            msg = ('STATUS flows (%d good frames) but neither echo appeared: on '
+                   'the flashed pre-E3 firmware this is expected for D1 (no '
+                   'TYPE_MODE branch, retrofit.c:60-75) and for D2 while an '
+                   'ESTOP is latched (retrofit.c:93 returns early; Fw-14 - power '
+                   'cycle only)' % rx.good)
+            wait = d1.get('wait_s')
+            if wait and wait > BRIDGE_ESTOP_AFTER_S:
+                # 归因要往自己身上查一遍：这个锁存很可能是**本次运行**造成的，
+                # 不是板子的旧账。把症状推给被测对象是本工具最贵的误读之一。
+                msg += ('. Before this latch is blamed on the board, note that this '
+                        'very run is a suspect: each D1 round waits %.1f s with the PC '
+                        'sending nothing, which is longer than the bridge window of '
+                        '%.1f s (vehicle/bridge.py:24/30/206), so on a board that never '
+                        'echoes every D1 round lets the bridge inject the ESTOP that '
+                        'then swallows every NAV afterwards. Power the board down to '
+                        'clear it (Fw-14) and write the bench procedure around that '
+                        'power cycle, not around !clear - !clear sends TYPE_MODE, which '
+                        'the flashed firmware drops exactly like the MODE requests '
+                        'above' % (wait, BRIDGE_ESTOP_AFTER_S))
+            lines.append(msg)
+    if d2.get('not_rearmed') or d2.get('pre_arm_above_frames'):
+        lines.append('D2 refused %d rounds that never showed the wheels standing still '
+                     'before a crossing and ignored %d above-threshold frames as '
+                     'residual speed from the previous round: those counts are an '
+                     'artefact of how this run was paced, not a latency figure and not '
+                     'a link fault - the 50-200 ms those frames would have produced '
+                     'describes a mechanical response that never happened. Let each '
+                     'round re-arm (raise --settle) before quoting any D2 number'
+                     % (d2.get('not_rearmed', 0),
+                        d2.get('pre_arm_above_frames', 0)))
     if getattr(rx, 'resynced', 0):
         lines.append('the receiver saw %d reboot re-syncs (Hw-26 signature, about one '
                      'every 2.95 s on the 09-28 bench): mode resets to MANUAL and '
@@ -680,19 +841,30 @@ def build_argparser():
                          'TIM3 16-bit counter wraps and speed is not trustworthy)'
                          % MIN_THRESHOLD)
     ap.add_argument('--timeout-d1', dest='timeout_d1', type=float, default=2.0,
-                    help='per-round wait for the MODE echo (STATUS is 20 Hz)')
+                    help='per-round wait for the MODE echo (STATUS is 20 Hz). NOTE: '
+                         'D1 cannot re-send while it waits (a second MODE request '
+                         'would no longer be one round trip), so this is real PC '
+                         'silence and it is longer than the bridge ESTOP window of '
+                         '%.1f s - see the caution lines this script prints at start'
+                         % BRIDGE_ESTOP_AFTER_S)
     ap.add_argument('--timeout-d2', dest='timeout_d2', type=float, default=5.0,
                     help='per-round wait for the speed crossing (the slew ramp alone '
                          'needs ~%.1f s at %.2f m/s)'
                          % (DEFAULT_STEP_MPS / SLEW_ACC, DEFAULT_STEP_MPS))
     ap.add_argument('--keepalive', type=float, default=DEFAULT_KEEPALIVE_S,
-                    help='re-send the step NAV this often while waiting; must stay '
-                         'under the bridge ESTOP window of %.1f s '
+                    help='re-send cadence for BOTH D2 phases (NAV(0,0) during the '
+                         'hold, the step NAV while waiting); must stay under the '
+                         'bridge ESTOP window of %.1f s '
                          '(vehicle/bridge.py:24/30/206, latch cleared only by a '
                          'power cycle - Fw-14)' % BRIDGE_ESTOP_AFTER_S)
     ap.add_argument('--settle', type=float, default=1.0,
-                    help='seconds to hold NAV(0,0) before each D2 round, so the '
-                         'previous round is still standing still')
+                    help='max seconds per D2 round spent HOLDING NAV(0,0) - re-sent '
+                         'every --keepalive, not slept through - while watching '
+                         'STATUS for a finite speed below --threshold. The step is '
+                         'only commanded after that evidence appears; a round that '
+                         'never re-arms yields no sample (counted as '
+                         'rounds_never_rearmed), so setting this too small costs '
+                         'samples rather than producing a false 50-200 ms reading.')
     ap.add_argument('--warmup', type=float, default=2.0,
                     help='seconds to listen before the first request, to get a '
                          'baseline mode and see which STATUS shape the board uses')
@@ -702,12 +874,82 @@ def build_argparser():
     return ap
 
 
-def plan(a):
-    """main 的纯逻辑前段：解析 `--to` + 取档案号。没有目标就 **SystemExit**。
+def estop_caution(timeout_d1_s, keepalive_s=DEFAULT_KEEPALIVE_S, settle_s=0.0):
+    """开工要打印的那几行（ASCII）：**这个跑法自己**会不会把板子锁进 ESTOP。
 
-    为什么不是"照跑但全超时"：那会把"没开发送"伪装成"链路有问题"，一屏 n=0 比一句
-    退出难读得多，而且本脚本的一切结论都建立在"确实发出去过一条请求"上。
+    为什么放在打印面而不是只写在注释里：台架上没人翻源码，而后果是"板子要断电"这种
+    现场动作。两条各自说清是谁的静默：
+      · D1 —— 每轮发一帧 MODE 然后**安静地**等 `timeout_d1` 秒，中途不能补发（补发就不是
+        一次往返了），所以这段静默 > 500 ms 是这条测法固有的代价，改不掉，只能说明白；
+      · D2 —— 已经改成持停段续发，不再制造静默；但续发节奏由**到达的 STATUS** 驱动，
+        STATUS 断了节奏也跟着停（本轮未收的遗留项，审查发现 M-3）。
     """
+    lines = []
+    if timeout_d1_s is not None and timeout_d1_s > BRIDGE_ESTOP_AFTER_S:
+        lines.append(
+            'D1 will be SILENT for up to %.1f s per round (one MODE frame, then it '
+            'waits for the echo - re-sending would no longer be one round trip). That '
+            'exceeds the bridge ESTOP window of %.1f s (vehicle/bridge.py:24/30/206), '
+            'so on a board that never echoes (batch 1a not flashed: the switch has no '
+            'TYPE_MODE branch, retrofit.c:60-75) EVERY D1 round lets the bridge latch '
+            'an ESTOP, and every NAV afterwards is dropped by retrofit.c:93. That '
+            'latch is cleared only by powering the board down (Fw-14) - !clear sends '
+            'TYPE_MODE too, so it does not work on the flashed firmware either. '
+            'Bench procedure: power-cycle the board after this run, before any other '
+            'bench action.' % (timeout_d1_s, BRIDGE_ESTOP_AFTER_S))
+    if settle_s > 0:
+        lines.append(
+            'D2 does NOT sleep through its %.2f s settle: it re-sends NAV(0,0) every '
+            '%.2f s and reads STATUS until the wheels are seen below the threshold, '
+            'then commands the step and re-sends the step at the same cadence. Every '
+            're-send is re-packed under a fresh sequence number (a frozen retransmit '
+            'would be indistinguishable from the original once batch 2 puts seq on '
+            'the wire, spec 7.2). Caveat: that cadence is driven by arriving STATUS, '
+            'so a stalled STATUS stream stalls the feed too and the bridge latches '
+            'again - known open hole, review finding M-3, not fixed in this round.'
+            % (settle_s, keepalive_s))
+    return lines
+
+
+def _preflight_inputs(a):
+    """`plan()` 的第一件事：把测量层会拒的入参**在碰任何资源之前**拒掉。
+
+    为什么必须提前：`measure_d1/measure_d2` 里的闸门一个都没撤，但它们跑在
+    `bind_listener` 之后——`--threshold 0.01`、`--step nan`、`--keepalive 0.6`、
+    `--settle -1`、`--repeats 0` 在旧顺序下要等 socket 建好、端口绑上、D1 发满 30 条
+    之后才炸出一个 traceback，那等于"先把 30 条指令发上线、再告诉你参数写错了"，
+    而这次发送换来的只是超时。`--to` 早就有这条纪律（两条拒绝都不建 socket），
+    入参没理由享受更低的标准（AGENTS 清单第 6 条：同一份规则不许有两个版本——
+    这里复用的正是 `measure_*` 用的那几个谓词，不是第二份校验）。
+    """
+    checks = [lambda: _positive_int('repeats', a.repeats),
+              lambda: _window('timeout-d1', a.timeout_d1),
+              lambda: _window('warmup', a.warmup)]
+    if not a.skip_d2:
+        # --skip-d2 时这些值一个都不上线，拒它们只会挡住"我只想看 D1"这条正当用法；
+        # 但 d2-repeats/timeout-d2/settle/step/threshold/keepalive 真要跑 D2 时全在这里挡。
+        checks += [lambda: _positive_int('d2-repeats', a.d2_repeats),
+                   lambda: _check_d2_inputs(a.step, a.threshold, a.keepalive),
+                   lambda: _window('timeout-d2', a.timeout_d2),
+                   lambda: _window('settle', a.settle)]
+    for check in checks:
+        try:
+            check()
+        except ValueError as exc:
+            raise SystemExit('refusing to start: %s -- nothing was sent and no port '
+                             'was bound yet, this is a command-line fix (see --help).'
+                             % exc)
+
+
+def plan(a):
+    """main 的纯逻辑前段：**先**预检 D1/D2 入参，再解析 `--to` + 取档案号。
+
+    没有目标就 **SystemExit**。为什么不是"照跑但全超时"：那会把"没开发送"伪装成
+    "链路有问题"，一屏 n=0 比一句退出难读得多，而且本脚本的一切结论都建立在
+    "确实发出去过一条请求"上。两条拒绝（入参、目标）都发生在建 socket、绑端口、
+    读档案之前——见 `_preflight_inputs`。
+    """
+    _preflight_inputs(a)
     try:
         sender = make_sender(a.to, avoid_port=a.listen)
     except ValueError as exc:
@@ -784,6 +1026,12 @@ def main(argv=None):
           '%.2f m/s; the bridge injects its own ESTOP %.1f s after the last frame '
           'and that latch is cleared only by a power cycle (Fw-14).'
           % (a.step, BRIDGE_ESTOP_AFTER_S))
+    # 09-30 复审 Important-1：谁制造的静默谁说清楚。D2 已经不睡空窗了，D1 的等待
+    # 改不掉（补发就不是往返），所以把它固有可能锁存板子这件事印在开工行里——
+    # 连 --skip-d2 也要印，那一半静默正是 D1 自己的。
+    for line in estop_caution(a.timeout_d1, keepalive_s=a.keepalive,
+                              settle_s=0.0 if a.skip_d2 else a.settle):
+        print('caution: %s' % line)
 
     baseline = None
     for _t, st in stream.recv_iter(a.warmup):
