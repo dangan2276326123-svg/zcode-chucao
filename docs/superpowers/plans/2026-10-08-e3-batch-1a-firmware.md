@@ -696,7 +696,7 @@ EOF
 - Consumes: `owner`、`auth_reason`、`reject_code`、`loop_counter`、`PROFILE_ID`、`ENTRY_PERMIT`。
 - Produces: 19 字节 STATUS 载荷；`build_id`（`__DATE__ __TIME__` 字节和 & 0xFF）；`main.c` 里的 `retrofit_notify_loop();` 与 `regGroup[0]==1` 锁零分支。
 
-- [ ] **Step 1: `status_report()` 扩到 19 字节**
+- [x] **Step 1: `status_report()` 扩到 19 字节**（10-10 落地。计划写的 `:220-235` 已因 Task 3/4 的插入后移，**实际位置：`build_id()` 在 `retrofit.c:392-403`、`status_report()` 在 `:405-447`**。字段顺序不是眼看而是机检：脚本把 C 侧 `pl[` 的写入偏移从源码里 parse 出来，与 `common/protocol.py` 的 `STATUS_V2_FMT` + `pack_status_v2` 形参顺序逐字节对表，10/10 对齐、0 错位；再用这个顺序手工拼 19 字节喂 `unpack_status_any()`，五个新字段解析回来的值与写入值一致，且与 `pack_status_v2()` 的输出逐字节相同。Q5 口径：这一字节只把 `reject_code` 搬上线，本步没有新增任何对它写入的地方。）
 
 把 `:220-235` 整个函数替换为：
 
@@ -741,7 +741,7 @@ static void status_report(void)
 
 ⚠️ 载荷字段顺序必须与 `common/protocol.py` 的 `STATUS_V2_FMT = '<fffBBBBBBB'` 逐字节对齐：`speed, current, battery, limits, mode, profile, authority, loop_alive, build_id, reject`。
 
-- [ ] **Step 2: `main.c` 第一处新增——主循环计数（A12a）**
+- [x] **Step 2: `main.c` 第一处新增——主循环计数（A12a）**（10-10 落地：新增行落在**改后 `main.c:550`**，紧贴在 `/* RETROFIT safety gate: ... */` 那段我们自己的注释之前（该注释因此下移到 551）。位置三条件都满足：在 `while(1)` 体内（循环 277 起、702 止）、在 `:305` 死等之后、在 `pwm_veloc()`（改后 568-577）之前；且**不在** `if (retrofit_mode() == MODE_AUTO)` 里面。镜像里的证据：`fromelf --text -c OBJ/PWM.axf` 在 main 函数内 0x08000b58 看到 `BL retrofit_notify_loop`，前一条是 `send_angle`/`delay_ms`、后一条是 `BL retrofit_mode`。）
 
 在 `main.c:550` 那段我们自己的注释块（`/* RETROFIT safety gate: ... */`）**之前**插入一行（纯 ASCII）：
 
@@ -751,7 +751,7 @@ static void status_report(void)
 
 位置要求：**在 `while(1)` 循环体内、在 `:305` 那段死等之后、在 `:567-576` 的 `pwm_veloc()` 之前**。这样"计数在走"就等价于"这一轮真的走到了四轮输出"。⚠️ 不许放进 `if (retrofit_mode() == MODE_AUTO)` 里面，否则 MANUAL 下计数不涨、PC 会误判停摆。
 
-- [ ] **Step 3: `main.c` 第二处新增——厂商 Modbus 接管分支锁零（A1）**
+- [x] **Step 3: `main.c` 第二处新增——厂商 Modbus 接管分支锁零（A1）**（10-10 落地，**与模板有一处刻意的差别**：模板那一段以 `} else if (...)` 起头，照抄就要把 `:565` 那个已存在的右括号改成别的字节——虽然那一行本来也是我们自己的门控链、不属 A12 保护的三段，但为了让"两处纯新增"字面成立，实际写成独立一行的 `else if (regGroup[0] == 1) {`（**改后 `main.c:567-573`**），紧接在原链尾之后，现有行一个字节都没动、语义等价。`regGroup` 沿用 `main.c:123` 的 `extern`，未加新声明。注释里那句"regGroup[0] 只由 uart3.c:224 写"当场反查过 uart3.c（该行是 `regGroup[i]=buf[5];`，全工程唯一能写到下标 0 的地方），不是抄来的。）
 
 在 `:553-565` 那个 `if/else if` 链的**末尾**追加一个分支（纯 ASCII 注释）：
 
@@ -766,7 +766,7 @@ static void status_report(void)
 
 ⚠️ `regGroup` 在 `main.c:123` 已有 `extern unsigned char regGroup[16];`，不需要新声明。**除这两处之外，`main.c` 一个字符都不许动**（A12）。
 
-- [ ] **Step 4: 编码校验（GBK 文件的两处新增必须是纯 ASCII）**
+- [x] **Step 4: 编码校验（GBK 文件的两处新增必须是纯 ASCII）**（10-10 落地，当场打印 `ascii_only=True` 逐行。模板那段脚本的判断条件写成 `'regGroup[0] == 1' in l and 'veloc' in lines[i] if i < len(lines) else False`，优先级其实拼不出想要的效果（`in` 一个 `'veloc'` 子串会命中别处），所以改用字节级校验脚本：改后的 `main.c` **删掉那 8 行新增后与改前逐字节相同**（两份 SHA-256 相等），行级 diff 只有 equal/insert；`gbk_ok=True / utf-8 不可解`（说明没被按 UTF-8 重写）；非 ASCII 字节数 5502 未变；CRLF 行数 706 → 714，差值正好是新增的 8 行。`:305-323` 死等段、`:329-361` 握手段、带 800/1100 门限的五行，改前改后区域哈希各自相等。）
 
 Run:
 ```bash
@@ -783,12 +783,12 @@ PY
 ```
 Expected: `gbk ok`；两处新增行 `ascii_only= True`
 
-- [ ] **Step 5: 编译 + 尺寸 + 符号**
+- [x] **Step 5: 编译 + 尺寸 + 符号**（10-10 落地：`0 Error(s)` 达成，Code 相对改前**增大**（本任务预期方向），两次读数原文记在提交 `d447ac9` 的信息里，本计划不重抄（AGENTS 审查清单第 8 条）。符号一证用 map 加反汇编两路：`OBJ/PWM.map` 的 `status_report` 尺寸增大、新增 `build_id`（static 但没被内联）、`retrofit_notify_loop` 仍在；map 不带调用关系，所以"从没人调到有人调"这半句改用 `fromelf --text -c` 在镜像里直接找 `BL retrofit_notify_loop` 的调用点。**自证项**：警告集合相对改前恰好少一条 `retrofit.c(33) #550-D variable "auth_reason" was set but never used`（⇒ 上线的确实是那个变量），新增 0 条，`retrofit.c(189) #111-D statement is unreachable` **仍在**（⇒ Task 4 的门没被动）。**日志抖动实录**：同一份源码同一条命令连跑两次，尺寸四项读数一致，警告总数差 1，差异是 `uart2.h(12) #1295-D` 按包含它的编译单元各报一次、并行构建抓日志时漏抓一行——读数对不上先重跑同命令，别改代码。）
 
 Run: `UV4.exe -r ...` → Expected: `0 Error(s)`；Code 尺寸增大（19 字节 STATUS + build_id + main.c 两处）
 Run: `python -c "m=open(r'firmware/大车proj/大车/OBJ/PWM.map',encoding='utf-8',errors='replace').read(); print('build_id' in m, 'retrofit_notify_loop' in m)"` → Expected: 至少 `retrofit_notify_loop` 为 `True`（`build_id` 是 static，可能被内联）
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**（10-10 落地 = `d447ac9`，只 `git add` 那两个真改过的源码文件；构建产物（`OBJ/`、`*.map`、`*.hex`、`PWM.uvguix.*`、`PWM.uvoptx`、仓里被 UV4 重写的 `build_log.txt`）留在未提交态，既不还原也不提交。上面那段模板信息**没有照抄**——本仓禁止把历史标题当本次标题，标题按本次实际改动当场重写，模板的意图（19 字节 / `build_id` 的来源与它治的事故 / 两处新增的位置与理由 / A12 三段未动 / 四态口径）全部保留并补了当场证据。）
 
 ```bash
 git add "firmware/大车proj/大车/HARDWARE/retrofit/retrofit.c" "firmware/大车proj/大车/USER/main.c"
@@ -815,6 +815,14 @@ A12 遵守情况：:305 那段死等、800/1100 两个门限、:329 握手块**�
 编译 0 Error，Code 尺寸增大。待重烧。
 EOF
 ```
+
+---
+
+⚠️ **Task 5 落下的三条交接事实**（受版本控制的落点只有本计划；`.superpowers/` 里那份报告对侧看不见）：
+
+1. **进无人条件⑤从这一步起才有真实输入，但"计数真的在动"仍要等烧录**。改前 `retrofit_notify_loop()` 没有任何调用方 ⇒ `loop_stall_run` 永远不动 ⇒ ⑤恒判"未停摆"，是纸面判据；改后调用点在镜像里（`fromelf` 反汇编可查，见提交 `d447ac9`），但这只到「已编码 + 已编译」。台架那条对照实验（不拨杆 + 持续发速度帧，看 `loop_alive` 是否不变 = B5 / Fw-21 的探测手段）属 **Task 9**，不在本步关闭。
+2. **台架当天会同时出现 14 字节与 19 字节两种 STATUS，这是预期不是故障**：载荷长度只由**车上烧着的那份镜像**决定，PC 侧 `pc/status_rx.py` 按载荷长度分派（批 1b 已合入收口）。没重烧的车报 14 字节、五个新字段读回 `None`——`None` 的正确解读是"车还是旧固件"，不是"新固件报了 0"。
+3. **`main.c` 里一处行号引用漂移，本步故意没修**：Hw-24/Hw-25 那段注释（`main.c:14`）写"翻在 main.c:564-573 的 `pwm_veloc()` 出口"，本步之前实测已是 567-576（早就漂了 3 行），本步之后是 568-577。A12 只许两处纯新增 ⇒ **不许为了对齐行号去动厂商区的注释行**；这条留给下一批真要改 `main.c` 时处理，写在这里是为了让它别静默变义。另外影子副本 `firmware/retrofit.c` 本步一字节未动，`git rm` 仍是 Task 6 的活。
 
 ---
 
