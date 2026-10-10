@@ -17,6 +17,7 @@
 #define TYPE_HEARTBEAT 3
 #define TYPE_TOOL    4
 #define TYPE_STATUS  0x10
+#define TYPE_MODE    5   /* E3: authority request / release / estop-clear / profile handshake */
 
 typedef struct {
     uint8_t  type;
