@@ -100,7 +100,7 @@ EOF
   - `void retrofit_notify_loop(void);`
   - `uint8_t retrofit_owner(void); uint8_t retrofit_reject(void); uint8_t retrofit_permit(void); uint8_t retrofit_profile(void);`
 
-- [ ] **Step 1: 写头文件内容**
+- [x] **Step 1: 写头文件内容**（10-10 改判后落地：六个 `FIELD_*` 未写入，保留编号那三个已写入并在注释里写明"协议保留、当前固件不会上报"；计划本块里的中文注释按"新增行一律纯 ASCII"改成英文，其余逐字照写）
 
 ```c
 #define MODE_TELEOP 3      /* E3 batch 2; firmware answers REJ_NOT_IMPL for now */
@@ -189,20 +189,33 @@ uint8_t retrofit_profile(void);
 - **不采用：保留宏 + 让它恒通过**。`FIELD_SW_CALIBRATED` 置 1 配一个恒返回 1 的 `field_allows_unmanned()`，看似省了将来重写的功夫，实际留下一段**永远不参与判定的死码**（本项目明确反对死码）；更要紧的是它让"五条件"在代码里继续成立，下一个读码的人（或 zcode 复审）会以为车上还有一条活的拨档闸——这正是 AGENTS 审查清单第 2 条要防的"文档与代码分家"，而且 `#if FIELD_SW_CALIBRATED` 那个分支里的代码永远不会被编译，出问题时连对拍的机会都没有。
 - ✅ **10-10 作者已拍板（第二次口述原话「全按推荐值执行」，推荐值 = 第一条"整段不写入"）**：六个 `FIELD_*` 宏一个都不进固件。留一条反向备忘：若将来要换成"保留宏 + 恒通过"，要恢复的是三处——本节的宏块、Task 3 Step 2 的 `field_allows_unmanned()`、Task 4 Step 5 的"③失效 ⇒ 夺回并锁存"那一段；其余任务不受影响。门 F 真要现场夺权时，起点是契约 §4.3 的原方案存档段 + 重新走 B2 填表，**批 1a 不预留任何东西**。
 
-- [ ] **Step 2: 编译验证**
+- [x] **Step 2: 编译验证**
 
 Run: 同 Task 1 Step 2 的 `UV4.exe -r` 命令
 Expected: `0 Error(s)`；Code 尺寸不变（全是宏与声明，无实现）
+实测口径（10-10 落地时）：改前基线与改后各跑同一条命令，`Program Size:` 那一行**逐字相同**、
+错误数都是 0，符合预期。**一处需要说明的读数**：改后首跑的"总警告数"比改前少 1，少的不是
+`retrofit` 那两个文件，而是厂商 `uart2.c(70)` 的**一条警告没有被打进日志**（该文件自己的
+分档统计两次都是同一个数，且 `uart2.c` 的依赖链里没有任何头文件包含 `retrofit.h`），
+同一份改后源码原地再跑两次都回到与改前相同的读数 ⇒ 判为 `-j0` 并行构建的日志捕获抖动。
+结论与处置：不"接受差异"，而是加跑复现；Code 尺寸只在"同一份源码改前/改后两次同命令"之间比。
 
-- [ ] **Step 3: 交叉核对与 Python 侧同值**
+- [x] **Step 3: 交叉核对与 Python 侧同值**
 
 Run:
 ```bash
 python -c "from common import protocol as P; print(P.MODE_REQ_AUTO, P.PROFILE_PREV, P.AUTH_HEARTBEAT_RELEASE, P.REJECT_PERMIT)"
 ```
 Expected: `1 1 7 8` —— 与头文件里的 `MODE_REQ_AUTO`/`PROFILE_PREV`/`AUTH_HEARTBEAT_RELEASE`/`REJ_PERMIT` 逐个对上
+实测（10-10）：那条命令当场输出 `1 1 7 8`。除这四个点之外本步做了**全量**逐个比：
+`.superpowers/task2_value_check.py` 解析 `retrofit.h` + `protocol.h` 的每个数值宏，与
+`common/protocol.py`（同名项 + `REJ_*`↔`REJECT_*` 短长名映射）、`pc/wire.py`(`GATE_N/GATE_F`)、
+`pc/status_rx.py`(`STALL_FRAMES`，对应 `LOOP_STALL_FRAMES`)、两个 tools 的 `MODE_NAME` 字典
+对表，不一致为零；对照表由该脚本当场生成（`.superpowers/task2_value_table.md`），
+计数以脚本输出为准、不往本文抄数（AGENTS 审查清单第 8 条）。
+`OWNER_*` 按契约**故意没有** Python 对应量（固件内部量，不上线），表里标 N/A 而非漏比。
 
-- [ ] **Step 4: 提交**
+- [x] **Step 4: 提交**（10-10 落地：只 `git add` 那一个头文件，构建产物一律未提交；提交号见本仓 `git log`，标题按当次实际改动当场写）
 
 ```bash
 git add "firmware/大车proj/大车/HARDWARE/retrofit/retrofit.h"
