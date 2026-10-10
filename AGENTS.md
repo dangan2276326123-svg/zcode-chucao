@@ -33,7 +33,7 @@ AI 只能引用该台账，**不得再自行推测覆盖**；查不到时明确�
 ### 流程
 qoder 完成一批 → 向用户报 HEAD + 改动清单 → 用户转发 → zcode fetch、审查（跑测试 + 逐项过上面清单）→ 意见回 qoder 或 merge/push → 报主线 HEAD。
 zcode 自己的提交（审查修正、台账、文档）走正常 commit/push，同样接受 qoder 反查。
-审查/收口过程中落下的**交接事实必须写进受版本控制的文件**（执行清单 / 台账 / 契约里对应的那一节），`.superpowers/` 那套只当草稿与审查 diff 的暂存——理由：该目录被它自己的 `.gitignore` 全量忽略，对侧（zcode）看不见它（2026-10-10 定，起因是批 1b 收口时有三条现场事实只活在草稿里，本波已把它们落到 `docs/X5验机与接入执行清单.md` §4A）。
+审查/收口过程中落下的**交接事实必须写进受版本控制的文件**（执行清单 / 台账 / 契约里对应的那一节），`.superpowers/` 那套只当草稿与审查 diff 的暂存——理由：**`.superpowers/sdd/.gitignore` 的内容是 `*`**，所以 `sdd/` 底下的一切（进度台账、任务简报、报告、审查 diff）都被忽略；`.superpowers/` 根目录自己没有 `.gitignore`，只是**未跟踪**（`git status` 里显示成 `?? .superpowers/`，里面散落的临时文件也因此在 untracked 列表里可见——**每次收工把临时文件删干净**，否则它们会污染对侧的 grep 与本仓的 status）。两种情况下 zcode 侧都读不到内容（2026-10-10 定，起因是批 1b 收口时有三条现场事实只活在草稿里，本波已把它们落到 `docs/X5验机与接入执行清单.md` §4A；同批 1a Task 2 复审时反查发现本条原写"该目录被它自己的 .gitignore 全量忽略"不准确，忽略点在 `sdd/` 一层）。
 
 ## 双线并行同步协议（2026-09-14，zcode ↔ qoder 两仓均可写）
 - 双仓已互设 remote：zcode 侧 `qoder → D:\ai work\qoder`；qoder 侧 `zcode → D:\ai work\zcode`。
