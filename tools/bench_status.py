@@ -33,14 +33,10 @@ stdin 上多一套命令：`!nav vL vR` / `!tool mm lift` / `!beat` / `!auto` / 
 STATUS"那一类（②③⑧）才不用关掉记录器改用 `pc/main.py`——那条时间轴就是这么丢的。
 
 **发 NAV 之前必须知道的三件事**（09-30 复审 I-1，都是代码事实，出处写着）：
-  1. 现在烧在板上的固件，**一条 NAV 就是进 AUTO 的钥匙**（**10-10 批 1a Task 8 定身份**：
-     下面这三个行号属**板上那一版** = `f0ecf73:firmware/retrofit.c`；`firmware/` 根下那份影子副本
-     已由批 1a Task 6 删除（`da053de`），裸路径今天不可解析，而正身
-     `firmware/大车proj/大车/HARDWARE/retrofit/retrofit.c` 的同一行号已是 `TYPE_MODE` 分派）：
-     `f0ecf73:firmware/retrofit.c:93`
+  1. 现在烧在板上的固件，**一条 NAV 就是进 AUTO 的钥匙**：`f0ecf73:firmware/retrofit.c:93`
+     （**10-10 批 1a Task 8 定身份**：这三个行号属**板上那一版**——根下那份影子副本已由 Task 6 删除（`da053de`）⇒ 裸路径不可解析，而正身 `firmware/大车proj/大车/HARDWARE/retrofit/retrofit.c` 的同一行号已是 `TYPE_MODE` 分派）
      `if (len < 9 || estop_latched) return;` → `:98-101` 把 `cmd_vl`/`cmd_vr` 钳到
-     **±1.0 m/s** → `:102` `mode = MODE_AUTO;`（批 1a 的 F1 修法就是拆掉这一支：**10-10 已编码 +
-     已编译**，正身 `:131-151` 的 NAV 分支不再写 `mode`，但**未烧录**，所以板上还是这个语义）；
+     **±1.0 m/s** → `:102` `mode = MODE_AUTO;`（批 1a 的 F1 修法就是拆掉这一支：**10-10 已编码 + 已编译**，正身 `:131-151` 的 NAV 分支不再写 `mode`，但**未烧录**，所以板上还是这个语义）；
   2. "钳到 ±1.0"**不等于安全**：行走斜率 `SLEW_ACC = 0.2 m/s²`（`retrofit.c:140`），
      一条 0.9 的命令约 **4.5 秒**后真的把车推到 0.9 m/s；
   3. 所以本工具对 NAV 有 **0.20 m/s 的硬闸**，与 `tools/link_probe.py` 读同一个数
@@ -457,8 +453,7 @@ class TxSender:
         if kind == 'tx_nav':
             # 速度硬闸（09-30 复审 I-1）。判的是**要上线的那对字节**，不是输入行上的字面量：
             # 闸该拦的是帧，不是打字。现固件把一条 NAV 当进 AUTO 的钥匙并把速度钳到 ±1.0 m/s
-            # （`f0ecf73:firmware/retrofit.c:93/:98-101/:102`——10-10 批 1a Task 8 定身份：这组行号
-            #  属板上那一版，正身里这一段已被批 1a 改成 TYPE_MODE 分派），而斜率是 0.2 m/s²（同版 :140）——0.9 的命令
+            # （`f0ecf73:firmware/retrofit.c:93/:98-101/:102` = 板上那一版的行号，10-10 Task 8 定身份；正身里这一段已被批 1a 改成 TYPE_MODE 分派），而斜率是 0.2 m/s²（同版 :140）——0.9 的命令
             # 4.5 秒后真的会把车推到 0.9 m/s。同一个 bridge:9000 入口的 PC 侧发送器
             # （这里与 tools/link_probe.py）必须共用一个数，所以常量在 tools/bench_limits.py。
             vl, vr = P.unpack_nav(P.unpack_frame(frame)[2])[:2]
