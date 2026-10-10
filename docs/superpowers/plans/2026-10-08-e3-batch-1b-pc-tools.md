@@ -2,6 +2,10 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **🔴 10-10 勘误注（作者改判；本计划已合入，代码一行不改）**：作者 2026-10-10 口述推翻 E3 契约里"现场拨档"这一条进无人判据（原话两句、逐行读码依据与落地形状见契约 `docs/superpowers/specs/2026-10-08-e3-control-authority-design.md` 文首横幅与 §4.3，批 1a 计划 Task 2 的改判注）。**对本计划的影响只在措辞层**：正文里那 7 处提到 `REJECT_FIELD_SWITCH` / `现场拨档` 的地方，**全部是"当时合入的代码与测试原文"的转录**（协议常量表、`REJECT_TEXT` 字典、`test_status_rx` / `test_wire` / `test_link_probe` 的用例），不是对批 1a 的许诺——**它们照原样保留，不改、不删**，因为 `common/protocol.py` 与 `pc/wire.py` 里那些常量现在还在、`tests/` 还在钉它们。
+> ⇒ 读这些转录时的现行语义：**`0x03`（现场拨档不在允许位）与 `0x07`（已被现场夺权）是"协议里保留、当前固件不会上报"的原因码；短码 `FIELD-SWITCH`/`FIELD-LATCH` 照旧能显示，但不会再由车端产生**。编号保留、不复用（批 1a 不许把它们改成别的含义或另派新码）。
+> ⚠️ **本波发现一处代码注释已成假话，留给下一批改代码时处理（本波不改代码）**：`pc/main.py:470` 那句"今天不咬人只是因为 `FIELD_SW_CALIBRATED=0` 也在挡，危害窗口在 B2 填表之后才打开"——`FIELD_SW_CALIBRATED` 这个宏**批 1a 不写入固件**，危害窗口也不再由"B2 填表"打开；那句注释的前半句（"批 1a 之后五条件一旦成立就授权、PC 静默 ⇒ 500 ms 链路看门狗把 MCU 闩死"）**机制仍然成立**（只是"五条件"现在数出来是四条），失效的只是"有一道拨档闸顺便挡住了它"这半句。已在 Task 12 报告里点名。
+
 **Goal:** 把 E3 控制权限契约的 PC 侧与工具侧全部落地——权限由显式 `MODE` 帧申请、STATUS 按载荷长度兼容 14/19 字节、PC 持权期间永不发心跳、门 N 下只发提刀，并让台架工具能边发边记。
 
 **Architecture:** 新增一个纯函数模块 `pc/wire.py` 承载"这一拍该往线上发什么帧"的全部判定（可单测，不碰 GUI/串口）；`pc/state_machine.py` 只管状态与许可位；`pc/status_rx.py` 只管把 STATUS 解成字典并判执行面是否停摆；`pc/main.py` 退化成"取状态 → 问 wire → 发帧 → 记日志"。协议常量集中在 `common/protocol.py`，固件侧（批 1a）镜像同一套数值。

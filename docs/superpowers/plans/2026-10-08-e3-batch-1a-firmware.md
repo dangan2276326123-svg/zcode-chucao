@@ -2,11 +2,15 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 把 E3 契约的固件侧落地——权限只能由 `MODE` 帧申请、进无人五条件 fail-closed、刀的安全写成不变量、TOOL/NAV 只认当前持权者、STATUS 扩到 19 字节带回档案号/权限变迁原因/主循环计数/build 号/拒绝码，并把源文件编码统一成 GBK。
+**Goal:** 把 E3 契约的固件侧落地——权限只能由 `MODE` 帧申请、进无人五条件（**10-10 作者改判后为四条：①②④⑤，③ 现场拨档不实现、编号保留**）fail-closed、刀的安全写成不变量、TOOL/NAV 只认当前持权者、STATUS 扩到 19 字节带回档案号/权限变迁原因/主循环计数/build 号/拒绝码，并把源文件编码统一成 GBK。
 
 **Architecture:** 全部改动集中在 `firmware/大车proj/大车/HARDWARE/retrofit/`（我们自己的文件）加 `USER/main.c` 的**两处纯新增**（一句主循环计数、一条厂商 Modbus 分支锁零）。厂商那段 `:305` 死等结构**一个字符都不动**（A12）。权限判定收成一个函数 `owner_allows()`，四轮/刀/横移三个执行点都调它（spec §4.1：判定必须落在执行点，且不许各复制一份）。
 
 **Tech Stack:** STM32F407 + SPL，Keil µVision（命令行 `UV4.exe -r`），C89 风格（变量声明在块首，沿用现有文件风格）。
+
+> **10-10 作者改判（开工前必读，本计划已按此重排）**：E3 **不实现"现场拨档"这一条进无人判据**——契约 §4.2 条件③、§4.3 现场夺权、§1 的 A4 一并撤销（**编号全部保留、不复用**）。后果落在本计划的四处：**Task 2** 那五个 `FIELD_*` 宏**不写进固件**；**Task 3** 的进无人判据由五条变**四条**（①②④⑤，③ 那一行就地标注、不删号）；**Task 4 Step 5** 里"条件③失效 ⇒ 立刻夺回并锁存"那一段**不写入**（删除痕迹留在原地）；**Task 9** 原先"等 B2 填表才能验 ②③⑧"的限制作废，并**新增一条实测判据：从按下 `[M]` 到 STATUS 的 `mode` 回 MANUAL 的往返时间**（撤销路径唯一没测过的量，测法用 `tools/latency_probe.py` 的 D1）。作者两句原话与逐行读码依据写在契约文首横幅与 §4.3，本计划不重复抄。**编号 ③、拒绝码 0x03 与 0x07、`AUTH_FIELD_TAKEOVER`/`REJ_FIELD_SWITCH` 这些名字继续留在协议层，不许重排**（`common/protocol.py` 与 `pc/wire.py` 已合入，改号会让代码与文档分家）。
+>
+> **本计划的四态口径未因改判而前进**：批 1a 仍是**未开工**——`firmware/` 一行未改、Keil 未重编译；`[M]` 那条撤销路径只到「已编码 + 已单测」，往返时延是**待测**。
 
 ## Global Constraints
 
@@ -15,7 +19,7 @@
 - **A12：不改厂商 `main.c` 的死等结构**（`:305` 那个 `while`、门限 800/1100、`:329` 握手块）。`main.c` 只允许两处**纯新增**：一句 `retrofit_notify_loop();`、一条 `regGroup[0]==1` 锁零分支。
 - **A14：`retrofit.c`/`retrofit.h`/`protocol.h` 当前是 UTF-8，本批 Task 6 转成 GBK**。转换只动注释字节 ⇒ **重编译后 Code 必须仍是转换前那次的值**（当前基线 44848，若 Task 3–5 已让 Code 变化，则以"转换前后两次编译 Code 相同"为准）。
 - **编码纪律**：Task 6 之前 `retrofit.*` 是 UTF-8、`main.c` 是 GBK；Task 6 之后全是 GBK。补丁脚本必须**逐文件试解码**（UTF-8 严格 → GBK 严格 → 都失败即停手报"混合编码"），改完用同一编码读回并确认"非 ASCII 变更行 = 0"（`main.c` 的新增行必须是纯 ASCII）。
-- **fail-closed**：任何拿不到的量（现场拨档阈值、档案号）都不得"当作满足"。宁可进不了无人，不可带着未标定的判据进无人。
+- **fail-closed**：任何拿不到的量（~~现场拨档阈值、~~档案号）都不得"当作满足"。宁可进不了无人，不可带着未标定的判据进无人。**10-10 改判后本条只剩档案号那一路**（拨档阈值随条件③ 撤销，本批不存在这个量）；⚠️ 撤销之后 fail-closed 的形状变了：**进无人的门是"人按 `[A]` + 四条判据"，不再有"未标定 ⇒ 谁都进不了"那道默认闸**，所以 Task 3 的档案握手那一条（①）就成了唯一的"没对上就不给进"的闸，别把它当形式。
 - 固件没有单元测试框架。**每个任务的验证 = 编译证据 + 符号证据 + 尺寸证据**（spec §10 步 1 的①–⑤），台架行为验证统一放到 Task 9。
 - 提交纪律同批 1b：`git commit -F <文件> --cleanup=verbatim`，提交后看 `git log --oneline -1` 与 `git show --numstat --format=""`；**不提交** `OBJ/`、`*.map`、`*.hex`、`build_log.txt`、`PWM.uvguix.*`、`PWM.uvoptx`。
 - ⚠️ 中文路径下 `git checkout`/`rebase` 可能静默 no-op：同步对侧之后必须做内容 diff 验证，必要时用文件系统 `cp` 兜底。
@@ -27,8 +31,8 @@
 | 文件 | 责任 | 本批动作 |
 |---|---|---|
 | `firmware/大车proj/大车/HARDWARE/retrofit/protocol.h` | 帧类型常量 | 加 `TYPE_MODE 5`（Task 1）；Task 6 转 GBK（该文件只有 3 个非 ASCII 字节） |
-| `firmware/大车proj/大车/HARDWARE/retrofit/retrofit.h` | 对外 API 与全部契约常量 | 加 MODE 请求码、档案号、许可位、authority/reject 码、现场拨档通道与阈值、新 API 声明（Task 2） |
-| `firmware/大车proj/大车/HARDWARE/retrofit/retrofit.c` | 权限状态机与执行点 | dispatch 加 `case TYPE_MODE`；`owner`/五条件/拒绝码/刀不变量/TOOL 门/急停解除/拨档锁存/持续复查/19 字节 STATUS/`loop_alive`/`build_id`（Task 3–5）；Task 6 转 GBK |
+| `firmware/大车proj/大车/HARDWARE/retrofit/retrofit.h` | 对外 API 与全部契约常量 | 加 MODE 请求码、档案号、许可位、authority/reject 码、~~现场拨档通道与阈值~~（**10-10 改判：这五个 `FIELD_*` 宏本批不写入**，见 Task 2 的改判注）、新 API 声明（Task 2） |
+| `firmware/大车proj/大车/HARDWARE/retrofit/retrofit.c` | 权限状态机与执行点 | dispatch 加 `case TYPE_MODE`；`owner`/五条件（**10-10 改判后四条**）/拒绝码/刀不变量/TOOL 门/急停解除/~~拨档锁存~~（不写入）/持续复查/19 字节 STATUS/`loop_alive`/`build_id`（Task 3–5）；Task 6 转 GBK |
 | `firmware/大车proj/大车/USER/main.c` | 厂商主循环（GBK） | **两处纯新增**：`retrofit_notify_loop();`（Task 5）、`regGroup[0]==1` 锁零（Task 5） |
 | `firmware/{retrofit.c,retrofit.h,protocol.c,protocol.h}` | 影子副本 | **删除**（Task 6，A13） |
 | `README.md`、`firmware/集成说明.md` | 资产位置权威 | 标明固件源只在 `大车proj` 内；编码口径（Task 6） |
@@ -90,7 +94,7 @@ EOF
   - `OWNER_RC 0`、`OWNER_PC 1`、`OWNER_NONE 2`
   - `AUTH_BOOT 0` … `AUTH_HEARTBEAT_RELEASE 7`
   - `REJ_NONE 0` … `REJ_PERMIT 8`
-  - `FIELD_CH 7`、`FIELD_SW_CALIBRATED 0`、`FIELD_ALLOW_HI`/`FIELD_MID_LO`/`FIELD_MID_HI`
+  - ~~`FIELD_CH 7`、`FIELD_SW_CALIBRATED 0`、`FIELD_ALLOW_HI`/`FIELD_MID_LO`/`FIELD_MID_HI`~~ ⇒ **10-10 作者改判：这一整行不写入**（连同 `FIELD_LATCH_MS` 共**六个**宏，简报点名的是五个；`FIELD_LATCH_MS` 是夺权防抖那 1 秒的门限，与同一处机制一起撤销）。Task 2 的其余常量一个不少，`REJ_FIELD_SWITCH 3`/`REJ_FIELD_LATCHED 7`/`AUTH_FIELD_TAKEOVER 2` **照旧写入并保留编号**（协议层已有，不复用、不重排）——它们的含义是"协议保留、当前固件不会上报"
   - `LOOP_STALL_FRAMES 5`
   - `void retrofit_on_mode_frame(const uint8_t *payload, uint16_t len);`
   - `void retrofit_notify_loop(void);`
@@ -145,16 +149,12 @@ EOF
 #define REJ_PERMIT        8
 
 /* ---- field takeover switch (A4) ----
-   FIELD_SW_CALIBRATED = 0 until B2 fills the three numbers below from the
-   transmitter's own channel monitor. While it is 0 the gate FAILS CLOSED:
-   unmanned mode cannot be entered at all. That is deliberate -- an
-   uncalibrated threshold must never be treated as "condition satisfied". */
-#define FIELD_CH            7
-#define FIELD_SW_CALIBRATED 0
-#define FIELD_ALLOW_HI   1600u   /* [B2] stick high end = allow unmanned */
-#define FIELD_MID_LO     1200u   /* [B2] 3-position middle band, low edge  */
-#define FIELD_MID_HI     1400u   /* [B2] 3-position middle band, high edge */
-#define FIELD_LATCH_MS   1000u   /* must stay in "allow" this long to unlatch */
+   10-10 AUTHOR RULING: NOT WRITTEN THIS BATCH. The six FIELD_* macros below
+   are NOT added to retrofit.h: entry to unmanned mode no longer requires a
+   field lever (spec 4.2 condition 3 and spec 4.3 were revoked).
+   REJ_FIELD_SWITCH / REJ_FIELD_LATCHED / AUTH_FIELD_TAKEOVER keep their
+   numbers (protocol constants already merged in common/protocol.py) --
+   reserved, never produced by this firmware. Do not renumber, do not reuse. */
 
 /* ---- execution-plane liveness (A12a / Fw-21) ---- */
 #define LOOP_STALL_FRAMES 5   /* 5 STATUS periods (250 ms) without a change */
@@ -166,6 +166,28 @@ uint8_t retrofit_reject(void);
 uint8_t retrofit_permit(void);
 uint8_t retrofit_profile(void);
 ```
+
+**原文存档（10-10 作者改判：以下六行**不写入** `retrofit.h`；留在这儿是因为门 F 若要现场夺权，通道与阈值这两件事仍得按这个形状重新标定）**：
+
+```c
+/* ---- field takeover switch (A4) ----
+   FIELD_SW_CALIBRATED = 0 until B2 fills the three numbers below from the
+   transmitter's own channel monitor. While it is 0 the gate FAILS CLOSED:
+   unmanned mode cannot be entered at all. That is deliberate -- an
+   uncalibrated threshold must never be treated as "condition satisfied". */
+#define FIELD_CH            7
+#define FIELD_SW_CALIBRATED 0
+#define FIELD_ALLOW_HI   1600u   /* [B2] stick high end = allow unmanned */
+#define FIELD_MID_LO     1200u   /* [B2] 3-position middle band, low edge  */
+#define FIELD_MID_HI     1400u   /* [B2] 3-position middle band, high edge */
+#define FIELD_LATCH_MS   1000u   /* must stay in "allow" this long to unlatch */
+```
+
+**写法选择与代价（本节按"整段不写入"落地；这是给作者的推荐，不是替作者改判——若要换成另一种写法，改动面只有下面点到的三处）**：
+
+- **本计划采用：整段不写入**。固件里少 6 个宏、少一个不参与判定的函数，`Code` 尺寸与警告数不被死码污染，`retrofit.h` 里"进无人有几道门"这句话和 `retrofit.c` 里实际走的门数**一致**。代价：门 F 将来要现场夺权时得**重新设计并重新烧**（通道、三个阈值、锁存与 ≥1 秒防抖、`AUTH_FIELD_TAKEOVER` 的语义都要重走 B2 填表）——但契约 §4.3 的存档段已把设计形状留下，重做不是从零想。
+- **不采用：保留宏 + 让它恒通过**。`FIELD_SW_CALIBRATED` 置 1 配一个恒返回 1 的 `field_allows_unmanned()`，看似省了将来重写的功夫，实际留下一段**永远不参与判定的死码**（本项目明确反对死码）；更要紧的是它让"五条件"在代码里继续成立，下一个读码的人（或 zcode 复审）会以为车上还有一条活的拨档闸——这正是 AGENTS 审查清单第 2 条要防的"文档与代码分家"，而且 `#if FIELD_SW_CALIBRATED` 那个分支里的代码永远不会被编译，出问题时连对拍的机会都没有。
+- ⚠️ **待作者拍板（Task 12 报告的问题 Q1）**：两种写法的取舍。若作者选"保留宏 + 恒通过"，要恢复的是三处——本节的宏块、Task 3 Step 2 的 `field_allows_unmanned()`、Task 4 Step 5 的"③失效 ⇒ 夺回并锁存"那一段；其余任务不受影响。
 
 - [ ] **Step 2: 编译验证**
 
@@ -185,14 +207,18 @@ Expected: `1 1 7 8` —— 与头文件里的 `MODE_REQ_AUTO`/`PROFILE_PREV`/`AU
 ```bash
 git add "firmware/大车proj/大车/HARDWARE/retrofit/retrofit.h"
 git commit -F- --cleanup=verbatim <<'EOF'
-retrofit.h 落 E3 契约常量：档案号/许可位/持权者/authority/reject/拨档通道
+retrofit.h 落 E3 契约常量：档案号/许可位/持权者/authority/reject（拨档通道不写入，10-10 改判）
 
 E3 批 1a 第 2 步（spec §2/§3.2/§3.3/§4.3）。三个关键设计写进常量本身：
 
 - PROFILE_ID 与 ENTRY_PERMIT 是**编译期常量，不由 PC 下发**（A5）：那样"上位机
   出错"就等于"可以落刀"。换车/换门 = 改一行 + 重编译，代价可接受。
-- FIELD_SW_CALIBRATED = 0：B2 那张通道表没填之前，现场拨档这一条**恒不通过**
-  （fail-closed）。未标定的阈值绝不能当成"条件满足"，代价是 B2 之前进不了无人。
+- ~~FIELD_SW_CALIBRATED = 0：B2 那张通道表没填之前，现场拨档这一条**恒不通过**
+  （fail-closed）。未标定的阈值绝不能当成"条件满足"，代价是 B2 之前进不了无人。~~
+  **10-10 作者改判：这一段随条件③ 撤销而不写入**——那六个 `FIELD_*` 宏一个都不进
+  `retrofit.h`（写法取舍与代价见本计划 Task 2 Step 1 的"写法选择与代价"）。
+  `REJ_FIELD_SWITCH`(3)/`REJ_FIELD_LATCHED`(7)/`AUTH_FIELD_TAKEOVER`(2) **照旧写入、
+  编号保留不复用**，含义是"协议保留、当前固件不会上报"。
 - OWNER_* 是固件内部量（不上线），线上的 authority 是"最近一次变迁原因码"。
   两个概念分开，是 spec 自审时订正过的（初稿混用一个词）。
 
@@ -203,14 +229,14 @@ EOF
 
 ---
 
-### Task 3: `retrofit.c`——`MODE` 帧分派、五条件、拒绝码、owner 迁移
+### Task 3: `retrofit.c`——`MODE` 帧分派、五条件（**10-10 改判后四条**）、拒绝码、owner 迁移
 
 **Files:**
 - Modify: `firmware/大车proj/大车/HARDWARE/retrofit/retrofit.c`（`:23` 附近的 static 变量区、`:60-75` dispatch、`:90-129` 帧处理函数区）
 
 **Interfaces:**
 - Consumes: Task 2 的全部常量；现有 `retrofit_sbus_ok()`（`:159`）、`estop_latched`（`:24`）、`mode`（`:23`）、`lift_bits`（`:33`）、`tick_ms`。
-- Produces: `static uint8_t owner`、`static uint8_t auth_reason`、`static uint8_t reject_code`、`static uint8_t pc_profile`、`static uint8_t handshake_ok`、`static uint8_t field_latched`、`static uint32_t field_ok_since`、`static volatile uint8_t loop_counter`、`static uint8_t last_loop_seen`、`static uint8_t loop_stall_run`、`static uint32_t loop_check_ms`；函数 `retrofit_on_mode_frame()`、`retrofit_notify_loop()`、`retrofit_owner/reject/permit/profile()`、`static uint8_t owner_allows(void)`、`static uint8_t field_allows_unmanned(void)`、`static void set_owner(uint8_t who, uint8_t reason)`。
+- Produces: `static uint8_t owner`、`static uint8_t auth_reason`、`static uint8_t reject_code`、`static uint8_t pc_profile`、`static uint8_t handshake_ok`、~~`static uint8_t field_latched`、`static uint32_t field_ok_since`~~（**10-10 改判：这两个变量随拨档机制一并撤销，不写入**）、`static volatile uint8_t loop_counter`、`static uint8_t last_loop_seen`、`static uint8_t loop_stall_run`、`static uint32_t loop_check_ms`；函数 `retrofit_on_mode_frame()`、`retrofit_notify_loop()`、`retrofit_owner/reject/permit/profile()`、`static uint8_t owner_allows(void)`、~~`static uint8_t field_allows_unmanned(void)`~~（**不写入，见 Step 2 的改判注**）、`static void set_owner(uint8_t who, uint8_t reason)`。
 
 - [ ] **Step 1: 加状态变量**
 
@@ -223,8 +249,9 @@ static uint8_t  auth_reason = AUTH_BOOT;   /* last transition, reported in STATU
 static uint8_t  reject_code = REJ_NONE;    /* last refusal, reported in STATUS */
 static uint8_t  pc_profile = PROFILE_NONE_SAFE;  /* 0 until handshake */
 static uint8_t  handshake_ok = 0;
-static uint8_t  field_latched = 0;         /* field switch pulled to "manual" */
-static uint32_t field_ok_since = 0;
+/* 10-10 AUTHOR RULING: field lever revoked -- field_latched and field_ok_since
+   are NOT written.  REJ_FIELD_SWITCH/REJ_FIELD_LATCHED keep their numbers in
+   retrofit.h (protocol constants already merged), unused and not reusable. */
 static volatile uint8_t loop_counter = 0;  /* written by main loop, read in ISR */
 static uint8_t  last_loop_seen = 0;
 static uint8_t  loop_stall_run = 0;
@@ -245,18 +272,6 @@ uint8_t retrofit_profile(void) { return PROFILE_ID; }
 
 void retrofit_notify_loop(void) { loop_counter++; }   /* A12a: one line in main.c */
 
-static uint8_t field_allows_unmanned(void)
-{
-    /* FAIL CLOSED until B2 fills the thresholds (FIELD_SW_CALIBRATED == 0). */
-#if FIELD_SW_CALIBRATED
-    uint16_t v = sbus_channel_raw(FIELD_CH);   /* existing SBUS accessor */
-    if (v >= FIELD_MID_LO && v <= FIELD_MID_HI) return 0;  /* middle = forbid */
-    return v >= FIELD_ALLOW_HI;
-#else
-    return 0;
-#endif
-}
-
 static void set_owner(uint8_t who, uint8_t reason)
 {
     if (owner == who) { auth_reason = reason; return; }
@@ -273,20 +288,40 @@ static void set_owner(uint8_t who, uint8_t reason)
 static uint8_t owner_allows(void) { return owner == OWNER_PC && !estop_latched; }
 ```
 
-⚠️ `sbus_channel_raw(FIELD_CH)` 必须用工程里**已存在**的 SBUS 通道数组（`telecontrol.c` 导出的 `sbus_channel[]`，`main.c:305` 就在用它）。实施时先 `grep -n "sbus_channel" firmware/大车proj/大车/HARDWARE/telecontrol/*.h`确认外部声明，直接写 `extern uint16_t sbus_channel[16];` 或包含对应头文件——**不要新造一个访问器**。
+**原文存档（10-10 作者改判：上面这个 `field_allows_unmanned()` 不写入；`enter_unmanned()` 里对它的那一次调用一并去掉 ⇒ 进无人判据从五条变四条，条件编号 ③ 与 `REJ_FIELD_SWITCH`(3)/`REJ_FIELD_LATCHED`(7) 保留不复用）**：
+
+```c
+static uint8_t field_allows_unmanned(void)
+{
+    /* FAIL CLOSED until B2 fills the thresholds (FIELD_SW_CALIBRATED == 0). */
+#if FIELD_SW_CALIBRATED
+    uint16_t v = sbus_channel_raw(FIELD_CH);   /* existing SBUS accessor */
+    if (v >= FIELD_MID_LO && v <= FIELD_MID_HI) return 0;  /* middle = forbid */
+    return v >= FIELD_ALLOW_HI;
+#else
+    return 0;
+#endif
+}
+```
+
+⚠️ **存档订正（10-10 逐行读码发现的两处硬错，门 F 若重新启用拨档必须先改对）**：`sbus_channel_raw()` **在工程里不存在**（全仓 grep 零命中），原句"必须用工程里已存在的 SBUS accessor"是假话；实际符号是 `telecontrol.h:11` 的 `extern int sbus_channel[16]`——**类型是 `int` 不是 `uint16_t`**，抄成 `uint16_t` 会在通道值为负（乱码帧，见台账 Hw-17）时把符号吃掉。
+
+（以下这条 ⚠️ 原本是关于 `FIELD_CH` 取数的实施提醒，随本函数撤销而失效，留作门 F 的提醒：**（10-10 改判后不适用）** `sbus_channel_raw(FIELD_CH)` 必须用工程里**已存在**的 SBUS 通道数组（`telecontrol.c` 导出的 `sbus_channel[]`，`main.c:305` 就在用它）。实施时先 `grep -n "sbus_channel" firmware/大车proj/大车/HARDWARE/telecontrol/*.h`确认外部声明，直接写 `extern uint16_t sbus_channel[16];` 或包含对应头文件——**不要新造一个访问器**。⇒ 正确写法是**包含 `telecontrol.h`** 并用 `sbus_channel[]` 本体，不要自己再 `extern` 一份不同签名的声明（上面那条订正就是这个坑）。）
 
 - [ ] **Step 3: 加 `retrofit_on_mode_frame()`**
 
 放在 `retrofit_clear_estop()`（`:124-129`）之后：
 
 ```c
-/* E3 spec 4.2: five conditions, all must hold, and they are re-checked
-   continuously (see retrofit_poll_1ms). Refusals are reported, not silent. */
+/* E3 spec 4.2 (as amended 10-10 by the author): FOUR conditions, all must hold,
+   re-checked continuously (see retrofit_poll_1ms).  Condition 3 (field lever)
+   was revoked -- REJ_FIELD_SWITCH(3) / REJ_FIELD_LATCHED(7) keep their numbers,
+   unused and not reusable.  Refusals are reported, never silent. */
 static uint8_t enter_unmanned(uint8_t want_mode)
 {
     if (!handshake_ok || pc_profile != PROFILE_ID) { reject_code = REJ_PROFILE;       return 0; }
     if (!retrofit_sbus_ok())                       { reject_code = REJ_RCS_STALE;    return 0; }
-    if (!field_allows_unmanned())                  { reject_code = field_latched ? REJ_FIELD_LATCHED : REJ_FIELD_SWITCH; return 0; }
+    /* (condition 3 removed 10-10: field lever not implemented this batch) */
     if (estop_latched)                             { reject_code = REJ_ESTOP_LATCHED; return 0; }
     if (loop_stall_run >= LOOP_STALL_FRAMES)       { reject_code = REJ_LOOP_STALLED;  return 0; }
     if (want_mode == MODE_TELEOP)                  { reject_code = REJ_NOT_IMPL;     return 0; }
@@ -386,22 +421,25 @@ Expected: 四个符号**都能在 map 里找到**（`enter_unmanned`/`set_owner`
 ```bash
 git add "firmware/大车proj/大车/HARDWARE/retrofit/retrofit.c"
 git commit -F- --cleanup=verbatim <<'EOF'
-固件加 MODE 帧处理：进无人五条件 fail-closed，换主即作废旧目标
+固件加 MODE 帧处理：进无人四条件 fail-closed，换主即作废旧目标
 
 E3 批 1a 第 3 步（spec §4.2/§4.3/§4.4/§4.6）。
 
 - owner（内部量，谁现在能动车）与 auth_reason（线上字段，最近一次变迁原因）分开。
 - set_owner() 在任何一次换主时把 cmd_vl/cmd_vr/tool_offset 清零、lift_bits 置全提、
   last_tool_ms 清零 —— 这样现场夺权之后路上延迟到达的那条 TOOL 不可能再落刀（F3）。
-- enter_unmanned() 五条件缺一不可，且**逐条给拒绝码**（档案/遥控/拨档/急停/执行面停摆），
+- enter_unmanned() 四条件缺一不可（10-10 改判后；原第五条"拨档"就地删除，条件编号 ③ 保留
+  不复用），且**逐条给拒绝码**（档案/遥控/急停/执行面停摆），
   PC 侧能看出为什么被拒而不是"没反应"。
 - 获批瞬间的动作顺序是"先把刀提到最高、再交权"，所以 Fw-17 那个"进 AUTO 落刀"
   在结构上不可能发生。
 - MODE_REQ_CLEAR_ESTOP 给了 retrofit_clear_estop 一直缺的那个入口（Fw-14），
   并且把 lift_bits=0 改成 0x07（F2）；**清锁不等于授权**，解除后 owner 回 RC。
 - HEARTBEAT 仍是唯一的隐式交权路径，现在也走 set_owner 并记 AUTH_HEARTBEAT_RELEASE。
-- FIELD_SW_CALIBRATED=0 时 field_allows_unmanned() 恒返回 0（fail-closed）：
-  B2 那张通道表填好之前**进不了无人**，这是刻意的。
+- ~~FIELD_SW_CALIBRATED=0 时 field_allows_unmanned() 恒返回 0（fail-closed）：
+  B2 那张通道表填好之前**进不了无人**，这是刻意的。~~
+  **10-10 作者改判：这一条整段作废**——拨档判据不实现，"进不了无人"不再是默认状态；
+  现在挡在门外的是档案握手（①）、遥控新鲜（②）、急停锁存（④）、执行面停摆（⑤）。
 
 编译 0 Error，Code 尺寸相对 44848 增大，map 里 retrofit_on_mode_frame 有地址。
 待 Keil 重烧后才算生效；本提交不含 hex/map/build_log。
@@ -418,6 +456,8 @@ EOF
 **Interfaces:**
 - Consumes: `owner_allows()`、`set_owner()`、Task 2 常量。
 - Produces: 修改后的 `retrofit_on_nav_frame()`、`retrofit_on_tool_frame()`、刀输出段、横移闭锁段、`retrofit_poll_1ms()` 里的持续复查与 `loop_alive` 停摆检测。
+
+⚠️ **10-10 改判留下的一个措辞冲突，本任务不替作者决定**：Step 1/Step 2 里"非当前持权者来的 NAV/TOOL 一律丢弃"那一支，原计划报 `REJ_FIELD_LATCHED`(0x07)——**0x07 的字面含义是"已被现场夺权，锁存中"，而现场夺权已随条件③ 撤销**。撤销之后走进这一支的真实原因是"`[M]`/`MODE(0x00)` 交回之后 PC 还在发 NAV/TOOL"，报 0x07 会给操作员一个假线索（他会去找那个不存在的拨档）。**两条路都合规，等作者拍板（Task 12 报告的问题 Q4）**：a) 保留 0x07 但在契约 §3.3 把它改述为"非持权者期间丢弃"（= 复用编号，与"保留不复用"这条纪律相冲，需要作者明确批准）；b) 这一支不设拒绝码（丢弃 + 计数照旧，`reject` 保持上一次的值），把 0x07 留成纯"保留不复用"。**本任务的两段代码在作者裁定前先按原文执行**，因为两种写法都不改变"丢弃"这个安全行为本身——变的只是屏幕上那行短码说什么。
 
 - [ ] **Step 1: NAV 不再改 mode，且只认持权者（修 F1）**
 
@@ -527,14 +567,12 @@ void retrofit_on_tool_frame(const uint8_t *payload, uint16_t len)
     }
 
     if (owner == OWNER_PC && !estop_latched) {
-        if (!field_allows_unmanned() || field_latched) {
-            /* Field operator took over: immediate, latched, and it wins over
-               everything (spec 4.3). */
-            field_latched = 1;
-            mode = MODE_MANUAL;
-            set_owner(OWNER_RC, AUTH_FIELD_TAKEOVER);
-            reject_code = REJ_FIELD_LATCHED;
-        } else if (!retrofit_sbus_ok()) {
+        /* 10-10 AUTHOR RULING: the "field lever back to manual -> take authority
+           back and latch" branch is DELETED here (it was condition 3, spec 4.2
+           and 4.3).  Revocation is now MODE(0x00) from the PC's [M] key, handled
+           in retrofit_on_mode_frame().  What is re-checked continuously is the
+           RC freshness and the execution plane, as below. */
+        if (!retrofit_sbus_ok()) {
             /* RC link lost while the PC drives: lock the speed to zero and
                raise the knives, but DO NOT hand authority back -- handing it
                to a dead receiver is meaningless (spec 4.2). */
@@ -552,6 +590,24 @@ void retrofit_on_tool_frame(const uint8_t *payload, uint16_t len)
         }
     }
 
+    /* 10-10 AUTHOR RULING: the field-override unlatch/debounce block that used to
+       sit here (field_latched + FIELD_LATCH_MS, spec 4.3) is DELETED together
+       with condition 3.  There is no field latch to unlatch; the ≥1 s debounce
+       goes with it.  Original text kept in the archive right below the fence. */
+```
+
+**删除痕迹（10-10 作者改判，原文照录不抹，供门 F 恢复时对账）**——上面那两段被删掉的原代码是：
+
+```c
+        if (!field_allows_unmanned() || field_latched) {
+            /* Field operator took over: immediate, latched, and it wins over
+               everything (spec 4.3). */
+            field_latched = 1;
+            mode = MODE_MANUAL;
+            set_owner(OWNER_RC, AUTH_FIELD_TAKEOVER);
+            reject_code = REJ_FIELD_LATCHED;
+        } else if (...)          /* 现在只剩 !retrofit_sbus_ok() 这一支 */
+
     /* Unlatch the field override only after the switch has sat in "allow
        unmanned" for FIELD_LATCH_MS (debounce, spec 4.3). */
     if (field_latched && field_allows_unmanned()) {
@@ -566,7 +622,8 @@ void retrofit_on_tool_frame(const uint8_t *payload, uint16_t len)
     }
 ```
 
-⚠️ `FIELD_SW_CALIBRATED == 0` 时 `field_allows_unmanned()` 恒为 0，所以上面第一段会**立刻把 owner 打回 RC 并锁存**——这正是 fail-closed 的表现（进不了无人，也留不住无人）。**在 B2 填数之前，台架只能验 ⑨⑪⑫ 这类"被拒"场景**，需要真进无人的 ②③⑧ 必须等 B2。这一条要在 Task 9 的清单里写清。
+⚠️ ~~`FIELD_SW_CALIBRATED == 0` 时 `field_allows_unmanned()` 恒为 0，所以上面第一段会**立刻把 owner 打回 RC 并锁存**——这正是 fail-closed 的表现（进不了无人，也留不住无人）。**在 B2 填数之前，台架只能验 ⑨⑪⑫ 这类"被拒"场景**，需要真进无人的 ②③⑧ 必须等 B2。这一条要在 Task 9 的清单里写清。~~
+**⇒ 10-10 作者改判：上面这段的前提没了**。拨档判据不实现 ⇒ 没有"恒为 0 的第三道门"，也没有"进不了无人"这个默认状态；**台架的分段方式随之下线**（原先"B2 之前只能验被拒类、B2 之后才能验真进无人"这条限制作废，Task 9 已按改判重排），持续复查剩下两件事：**遥控新鲜度**（②，锁零 + 提刀但**不交权**）与**执行面停摆**（⑤）。场景编号 ⑨⑪⑫ 与 ②③⑧ 一律保留不复用。
 
 - [ ] **Step 6: 编译 + 尺寸 + 提交**
 
@@ -575,7 +632,7 @@ Run: `UV4.exe -r ...` → Expected: `0 Error(s)`，Code 尺寸再次增大
 ```bash
 git add "firmware/大车proj/大车/HARDWARE/retrofit/retrofit.c"
 git commit -F- --cleanup=verbatim <<'EOF'
-刀写成不变量、NAV/TOOL 只认持权者、五条件持续复查
+刀写成不变量、NAV/TOOL 只认持权者、四条件持续复查（拨档复查已删，10-10 改判）
 
 E3 批 1a 第 4 步（spec §4.2/§4.4/§4.5）。三个洞一起关：
 
@@ -585,12 +642,15 @@ E3 批 1a 第 4 步（spec §4.2/§4.4/§4.5）。三个洞一起关：
 - Fw-17 + F2 + Pc-8：刀输出改成一条不变量 —— 急停锁存 / 门 N / TOOL 不新鲜 /
   非当前持权者，四种情况一律提刀；只有"门 F + 持权者半秒内的明确指令"才允许落刀。
 - 横移在门 N 下直接停 TIM4 脉冲，与既有停转分支同一种停法。
-- poll_1ms 里加持续复查：现场拨档一扳回立刻交权并锁存（去抖 FIELD_LATCH_MS）；
+- poll_1ms 里加持续复查：~~现场拨档一扳回立刻交权并锁存（去抖 FIELD_LATCH_MS）；~~
+  **（10-10 作者改判：拨档那一条复查连同去抖一起删除，撤销改由 MODE(0x00)/[M] 承担）**
   遥控失联时锁零速度+提刀但**不交权**（交给死掉的遥控没有意义）；
   loop_alive 连续 5 个 STATUS 周期不变即判执行面停摆（Fw-21 的探测手段）。
 
-⚠️ FIELD_SW_CALIBRATED=0 时 fail-closed 会立刻把 owner 打回 RC，所以 B2 填表之前
-台架只能验"被拒"类场景（⑨⑪⑫），需要真进无人的 ②③⑧ 必须等 B2。
+⚠️ ~~FIELD_SW_CALIBRATED=0 时 fail-closed 会立刻把 owner 打回 RC，所以 B2 填表之前
+台架只能验"被拒"类场景（⑨⑪⑫），需要真进无人的 ②③⑧ 必须等 B2。~~
+**10-10 作者改判：这句作废**——B2 那张通道表不再是批 1a 的前置，进不了无人不再是默认状态；
+场景号 ⑨⑪⑫ 与 ②③⑧ 保留不复用，Task 9 的台架分段已按改判重排。
 编译 0 Error，Code 尺寸再次增大。待重烧。
 EOF
 ```
@@ -855,10 +915,14 @@ git commit -F- --cleanup=verbatim <<'EOF'
 hex 只活在构建它这台机器上）。烧完之后第一件事是在笔记本上看 STATUS 的
 build_id 与 HMI 上屏的编译时间戳，跟台账这一行对上 —— 对上才算烧的是这一份。
 
-⚠️ 烧完**不要立刻期待能进无人**：FIELD_SW_CALIBRATED 仍是 0（B2 那张通道表还没填），
+⚠️ ~~烧完**不要立刻期待能进无人**：FIELD_SW_CALIBRATED 仍是 0（B2 那张通道表还没填），
 现场拨档这一条 fail-closed，申请无人会被 reject=3 拒掉。这是刻意的安全默认。
 台架先验 ⑨⑪⑫ 三条"被拒"场景，等 B2 填完数、把 FIELD_SW_CALIBRATED 改成 1 重编译，
-再验需要真进无人的 ①②③④⑤⑥⑧⑩。
+再验需要真进无人的 ①②③④⑤⑥⑧⑩。~~
+**10-10 作者改判后这段作废**：烧完批 1a 之后**不再有"因为拨档没标定所以谁都进不了无人"这一档**
+（条件③ 不实现、`FIELD_*` 不写入、`reject=0x03` 保留不复用）；申请无人能不能过，看的是档案握手、
+遥控新鲜、急停锁存、执行面活着那四条。**这一段作废不等于台架没有前置**——Task 9 里"驱动轮全程架空"
+"先断电再做下一个动作"两条纪律照旧，另加一条新的实测判据（按下 `[M]` 到 STATUS 回 MANUAL 的往返时间）。
 EOF
 ```
 
@@ -955,12 +1019,25 @@ EOF
 4. `build_id` 与台账认版行一致（认版从此不靠文件时间）
 5. `profile` 列 = 1（PREV），`permit` 在 PC 侧 = 1（门 N）
 
-**步 3（对拍 B2）分两段**
-- **B2 填表之前**（`FIELD_SW_CALIBRATED=0`，现场拨档 fail-closed）：只能验
-  ⑨（不拨杆申请无人 → reject=5）、⑪（档案号故意填错 → reject=1）、
-  ⑫（急停后 `!clear` → mode 回 MANUAL、刀位提、速度零、**不自动回无人**）
-- **B2 填表并把 `FIELD_SW_CALIBRATED` 改 1 重编译之后**：验 ①②③④⑤⑥⑧⑩
-  （清单见 spec §11；②③⑧ 涉及刀与横移，台架无执行元件 ⇒ **只到信号级，不许勾通过**）
+**步 3（对拍）——10-10 改判后一段做完，不再分"B2 之前 / B2 之后"**
+- **分段作废的理由**：原分段的前置是"拨档判据 fail-closed ⇒ 谁都进不了无人"，条件③ 撤销后
+  这个默认状态不存在了 ⇒ **不等 B2 也能验"真进无人"那一类**。B2 那张通道表仍要做
+  （键位映射 + B3 的油门三位置，契约 §15），但它**不在批 1a 的 critical path 上**了。
+  原先那两个分段号（⑨⑪⑫ 与 ①②③④⑤⑥⑧⑩）一个都不重排、不复用。
+- 一次上台架按顺序验：**⑨**（不拨杆申请无人 → `reject=0x05`）、**⑪**（档案号故意填错 → `reject=0x01`）、
+  **⑫**（急停后 `!clear` → mode 回 MANUAL、刀位提、速度零、**不自动回无人**）这三条"被拒"类先跑，
+  再跑 **①②④⑤⑥⑩**（真进无人那一类，进无人 = **人按 `[A]`**，见契约 §4.3）；
+  **③**（横移中切 AUTO）照跑；**⑧** 的现场拨档触发方式已随条件③ 撤销 ⇒ **等作者裁定**是否改写成
+  "`[M]` 交回后仍发 NAV + TOOL"（契约 §11 的 ⑧ 注）；**没裁定就不验这一格，也不许用别的场景顶替它打勾**。
+- 🔴 **新增实测判据（撤销路径唯一没测过的量）**：从**按下 `[M]`** 到 **STATUS 的 `mode` 回到 MANUAL**
+  的**往返时间**。测法用 `tools/latency_probe.py` 的 D1（同一条"请求→回显"往返口径，与链路延迟 D1 同档才可比）；
+  记录形状：同一档至少 20 次往返、报 p50/p95、把桥自注 ESTOP 那一段剔掉再统计（X5 清单 §4A 第 5 条）。
+  判据要看的是整条链，不是一句"按了"：**按 `[M]` ⇒ PC 本地 `go_manual()` + 发 `MODE(0x00)` ⇒ 固件
+  `mode=MANUAL`、`owner=RC`、STATUS `authority=6` ⇒ 此后 PC 再发的 NAV/TOOL 不被采纳**
+  （非持权者丢弃那一支的拒绝码见 Task 4 开头的 Q4 注，等作者裁定）。
+  ⚠️ **这条是"待测"**：测到之前，任何文档与口头汇报都不许把 `[M]` 写成"已验证有效的撤销手段"——
+  它当前只到「已编码 + 已单测」（四态里的第二条）。
+- 台架无执行元件 ⇒ 涉及刀与横移的条目**只到信号级，不许勾通过**（A18，09-22 定级）。
 
 **F1 原始症状复验（审查 C-2 的闭环项；新增测试数不能代替它）**
 - 原始症状（批 1a 之前，10-10 逐环读码核过）：PC 的 `[A]` 申请被拒 ⇒ 状态机落 LIFT ⇒ 持权照发
@@ -993,14 +1070,21 @@ qoder 判读要点：`loop_alive` 是否在变、`authority` 变迁序列是否�
 ```bash
 git add "docs/X5验机与接入执行清单.md"
 git commit -F- --cleanup=verbatim <<'EOF'
-X5 执行清单加"批 1a 烧录与对拍"一节：含 Fw-22 的停车纪律与 fail-closed 分段
+X5 执行清单加"批 1a 烧录与对拍"一节：含 Fw-22 的停车纪律与改判后的单段对拍
 
 三件事写死在清单里，因为它们是当场会出事的那种：
 1. **不要用油门杆停车**（Fw-22）：:305 那段死等无闩锁，行驶中 ch[4]<800 会再掉进去，
-   不写 PWM 也不喂狗 ⇒ 保持原速约 3 秒后整机重启。停车用 ch[6] 互锁档或急停帧。
+   不写 PWM 也不喂狗 ⇒ 保持原速约 3 秒后整机重启。
+   **10-10 读码订正**：能停轮子的只有协议的急停帧（`[E]`）与 `MODE(0x00)`/`[M]` 交回人工，
+   兜底断电；**`ch[6]` 那一档只切工作机构使能**（`uart4.c` 内 9 处全在 `work_send_control()`
+   的 Modbus 写帧里），**不停轮、也不撤权限**，AUTO 之下推它车照走；`SW_Stop` 只切 `MOTOR_1`
+   一路 24V（台账 Hw-2）。⇒ 原句"停车用 ch[6] 互锁档"按事实降级为"停工作机构"。
 2. **驱动轮全程架空**：离开死等之后车会真的走。
-3. **B2 填表前只能验"被拒"类场景**（⑨⑪⑫）：FIELD_SW_CALIBRATED=0 时现场拨档
-   fail-closed，需要真进无人的 ①②③④⑤⑥⑧⑩ 必须等通道表填好、改成 1 重编译。
+3. ~~**B2 填表前只能验"被拒"类场景**（⑨⑪⑫）：FIELD_SW_CALIBRATED=0 时现场拨档
+   fail-closed，需要真进无人的 ①②③④⑤⑥⑧⑩ 必须等通道表填好、改成 1 重编译。~~
+   **10-10 作者改判：这条分段作废**——条件③ 不实现 ⇒ 没有"谁都进不了无人"的默认档，
+   一次上台架把 ⑨⑪⑫ 与 ①②④⑤⑥⑩ 连着跑；③ 照跑；⑧ 等作者裁定触发方式，未裁定不验。
+   另加一条实测判据：**按下 `[M]` 到 STATUS 的 `mode` 回 MANUAL 的往返时间**（D1 口径，待测）。
 
 另附步 2 的认版判据（loop_alive 在变 + build_id 与台账认版行一致），
 从此"板上是哪一份镜像"不靠文件时间。
@@ -1011,12 +1095,12 @@ EOF
 
 ## Self-Review（本计划自查）
 
-**1. spec 覆盖**：§2 许可位/档案号编译期常量 → Task 2；§3.1 MODE 帧 → Task 1/3；§3.2 五字段 → Task 5；§3.3 reject 码 → Task 2/3；§3.4 五处同步的固件两处（`protocol.c/h`）→ Task 1（`protocol.c` 无需改：它只按 `type` 透传，不认具体类型值——**这一点已在 Task 1 核对：`prot_parse_byte` 与 `prot_build` 都不 switch on type**）；§4.1 判定落在执行点 → Task 4 Step 3/4 + Task 5 Step 2（三个执行点都调 `owner_allows()` 或读 `loop_counter`）；§4.2 五条件 + 持续复查 → Task 3 Step 3 + Task 4 Step 5；§4.3 现场夺档与锁存 → Task 3 Step 2 + Task 4 Step 5；§4.4 NAV/TOOL 门 + 换主作废 → Task 3 Step 2（`set_owner`）+ Task 4 Step 1/2；§4.5 刀不变量 → Task 4 Step 3；§4.6 急停解除 → Task 3 Step 3；§4.7 loop_alive → Task 3 Step 2 + Task 5 Step 2；§4.8 编码统一 → Task 6；§8 厂商 Modbus 锁零 + 操作纪律 → Task 5 Step 3 + Task 9 Step 1；§10 步 1/2/3 → Task 7/9；§11 场景表 → Task 9；§13 R1/R2/R6/R10 → Task 5/6/7 的验证步骤。
+**1. spec 覆盖**：§2 许可位/档案号编译期常量 → Task 2；§3.1 MODE 帧 → Task 1/3；§3.2 五字段 → Task 5；§3.3 reject 码 → Task 2/3；§3.4 五处同步的固件两处（`protocol.c/h`）→ Task 1（`protocol.c` 无需改：它只按 `type` 透传，不认具体类型值——**这一点已在 Task 1 核对：`prot_parse_byte` 与 `prot_build` 都不 switch on type**）；§4.1 判定落在执行点 → Task 4 Step 3/4 + Task 5 Step 2（三个执行点都调 `owner_allows()` 或读 `loop_counter`）；§4.2 五条件 + 持续复查 → Task 3 Step 3 + Task 4 Step 5（**10-10 改判后：四条件 + 两条持续复查；③ 与其复查就地标注/删除，编号保留不复用**）；§4.3 现场夺档与锁存 → ~~Task 3 Step 2 + Task 4 Step 5~~（**10-10 改判：本节已重写为"撤销路径"，原夺权与锁存不实现 ⇒ 覆盖它的不是代码任务而是契约 §4.3 那张"进/撤/兜底"表；`[M]` 往返实测判据落在 Task 9**）；§4.4 NAV/TOOL 门 + 换主作废 → Task 3 Step 2（`set_owner`）+ Task 4 Step 1/2；§4.5 刀不变量 → Task 4 Step 3；§4.6 急停解除 → Task 3 Step 3；§4.7 loop_alive → Task 3 Step 2 + Task 5 Step 2；§4.8 编码统一 → Task 6；§8 厂商 Modbus 锁零 + 操作纪律 → Task 5 Step 3 + Task 9 Step 1；§10 步 1/2/3 → Task 7/9；§11 场景表 → Task 9；§13 R1/R2/R6/R10 → Task 5/6/7 的验证步骤。
 
-**未覆盖（诚实列出，不在本批）**：§5.x 全部是批 1b（另一个计划文件）；§7.1 TELEOP 实现（批 2，固件现在回 `REJ_NOT_IMPL`）；§4.3 的 `FIELD_*` 三个阈值（等 B2 实测，本批 fail-closed）；HMI 上屏编译时间戳（spec §3.2 提到的 `build_id` 兜底）—— **这一条本批没做**，只有 STATUS 里的 `build_id`；要做需在 `main.c` 开机段加一句 `snprintf(tjcstr,...)`，属厂商文件的新增，留到 Task 7 之后单独一小批。
+**未覆盖（诚实列出，不在本批）**：§5.x 全部是批 1b（另一个计划文件）；§7.1 TELEOP 实现（批 2，固件现在回 `REJ_NOT_IMPL`）；~~§4.3 的 `FIELD_*` 三个阈值（等 B2 实测，本批 fail-closed）~~ ⇒ **10-10 作者改判：这一项不再是"等实测"，而是"不实现"**——`FIELD_*` 六个宏本批不写入，三个阈值随 A4 作废、不再向 B2 索取（门 F 若要现场夺权需重新设计，起点是契约 §4.3 的存档段）；另 **§4.3 新写的"撤销路径"里 `[M]` 的往返时延是本批新增的待测量**（Task 9），测之前它只到「已编码 + 已单测」；HMI 上屏编译时间戳（spec §3.2 提到的 `build_id` 兜底）—— **这一条本批没做**，只有 STATUS 里的 `build_id`；要做需在 `main.c` 开机段加一句 `snprintf(tjcstr,...)`，属厂商文件的新增，留到 Task 7 之后单独一小批。
 
-**2. 占位符扫描**：`〔待 B2 实测填入〕` 三处集中在 `FIELD_ALLOW_HI/FIELD_MID_LO/FIELD_MID_HI`，并且用 `FIELD_SW_CALIBRATED 0` 把它们**关成 fail-closed**——不是"先写个默认值以后再说"，是"没标定就进不了无人"。台账认版行里的 `〔实测数字〕` 是执行时当场抄的编译输出，Task 7 Step 1 给了取值命令。除此之外无 TBD/TODO/"类似 Task N"。
+**2. 占位符扫描**：~~`〔待 B2 实测填入〕` 三处集中在 `FIELD_ALLOW_HI/FIELD_MID_LO/FIELD_MID_HI`，并且用 `FIELD_SW_CALIBRATED 0` 把它们**关成 fail-closed**——不是"先写个默认值以后再说"，是"没标定就进不了无人"。~~ **10-10 作者改判后本项清空**：那三个宏连同 `FIELD_CH`/`FIELD_SW_CALIBRATED`/`FIELD_LATCH_MS` 一起不写入固件（见 Task 2 Step 1 的存档与"写法选择与代价"），所以**计划里已不存在"等 B2 才填得上"的占位符**，也就没有"用 fail-closed 把占位符关住"这回事了；台账认版行里的 `〔实测数字〕` 是执行时当场抄的编译输出，Task 7 Step 1 给了取值命令。除此之外无 TBD/TODO/"类似 Task N"。
 
-**3. 类型/符号一致性**：`owner_allows()` 在 Task 3 定义、Task 4 三处调用（NAV/TOOL/刀输出）与 Task 4 Step 4 的横移闭锁；`set_owner(who, reason)` 签名在 Task 3 定义、Task 3 Step 3/Step 4 与 Task 4 Step 5 调用一致（都是两个参数）；`field_allows_unmanned()` 在 Task 3 定义、Task 3/4 调用；`loop_counter` 声明为 `volatile uint8_t`（ISR 读、主循环写），`retrofit_notify_loop()` 只做 `loop_counter++`；`LOOP_STALL_FRAMES` 与 Python 侧 `STALL_FRAMES` **同为 5**（Task 2 与批 1b Task 4 各定义一次，值必须一致——已在两边写明）；STATUS 字段顺序与 `STATUS_V2_FMT = '<fffBBBBBBB'` 逐字节对齐（Task 5 Step 1 的 ⚠️）。
+**3. 类型/符号一致性**：`owner_allows()` 在 Task 3 定义、Task 4 三处调用（NAV/TOOL/刀输出）与 Task 4 Step 4 的横移闭锁；`set_owner(who, reason)` 签名在 Task 3 定义、Task 3 Step 3/Step 4 与 Task 4 Step 5 调用一致（都是两个参数）；~~`field_allows_unmanned()` 在 Task 3 定义、Task 3/4 调用~~（**10-10 改判：该函数与其两处调用都不写入**——Task 3 Step 3 的 `enter_unmanned()` 少了第三条判据、Task 4 Step 5 的持续复查少了"拨回现场档 ⇒ 夺回并锁存"那一支，两处删除痕迹与原文存档就地留在原地。连带一处等作者裁定：Task 4 Step 1/2 的"非持权者丢弃"那一支原先报 `REJ_FIELD_LATCHED`(0x07)，拨档撤销后这个码名不副实，见 Task 4 开头的 Q4 注）；`loop_counter` 声明为 `volatile uint8_t`（ISR 读、主循环写），`retrofit_notify_loop()` 只做 `loop_counter++`；`LOOP_STALL_FRAMES` 与 Python 侧 `STALL_FRAMES` **同为 5**（Task 2 与批 1b Task 4 各定义一次，值必须一致——已在两边写明）；STATUS 字段顺序与 `STATUS_V2_FMT = '<fffBBBBBBB'` 逐字节对齐（Task 5 Step 1 的 ⚠️）。
 
 **4. 与批 1b 的接缝**：批 1b 的 `unpack_status_any` 按长度分派，所以**烧录前后 PC 都能跑**（旧固件 14 B → v1，新固件 19 B → v2）；批 1b 的 `link_probe` 已经会在收到 v1 帧时打印"板上是 E3 之前的固件"。⇒ 顺序错了不会静默错位，但仍要求 1b 先合（spec §3.5）。
