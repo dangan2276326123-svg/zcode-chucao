@@ -18,10 +18,31 @@
 #define LINK_TIMEOUT_MS   500   /* no PC frame -> estop */
 #define STEPPER_PULSE_HZ  2000  /* max pulse rate */
 #define STEPPER_STEPS_PER_MM 25.0f  /* 8mm lead / 200 steps * microstep 16 -> 400/mm; tune on bench */
+/* E3 retrofit: PROFILE_NONE_SAFE is the firmware-local name for
+   "no profile handshake yet"; it must equal PROFILE_NONE = 0 in
+   common/protocol.py.  Do not create a same-concept symbol with a
+   different value on either side. */
+#define PROFILE_NONE_SAFE 0
 
 /* ---------- state ---------- */
 static uint8_t  mode = MODE_MANUAL;
 static uint8_t  estop_latched = 0;
+
+/* ---- E3 control authority (spec 2026-10-08) ---- */
+static uint8_t  owner = OWNER_RC;          /* who may drive right now */
+static uint8_t  auth_reason = AUTH_BOOT;   /* last transition, reported in STATUS */
+static uint8_t  reject_code = REJ_NONE;    /* last refusal, reported in STATUS */
+static uint8_t  pc_profile = PROFILE_NONE_SAFE;  /* 0 until handshake */
+static uint8_t  handshake_ok = 0;
+/* 10-10 AUTHOR RULING: field lever revoked -- field_latched and
+   field_ok_since are NOT written.  REJ_FIELD_SWITCH/REJ_FIELD_LATCHED keep
+   their numbers in retrofit.h (protocol constants already merged), unused
+   and not reusable. */
+static volatile uint8_t loop_counter = 0;  /* written by main loop, read in ISR */
+static uint8_t  last_loop_seen = 0;
+static uint8_t  loop_stall_run = 0;
+static uint32_t loop_check_ms = 0;
+
 static volatile uint32_t tick_ms = 0;
 static volatile uint32_t last_pc_ms = 0;    /* last nav/heartbeat from PC */
 static volatile uint32_t sbus_last_ms = 0;  /* updated by telecontrol.c on SBUS RX */
@@ -37,6 +58,13 @@ static volatile uint32_t last_tool_ms = 0;
 static volatile uint32_t cap_period[4] = {0,0,0,0};
 static volatile uint32_t cap_edge_ms[4] = {0,0,0,0};
 static float wheel_speed_mps[4];    /* estimated per wheel */
+
+/* Forward declarations: the two E3 helpers are defined in the regions the
+   batch 1a plan assigns them to (after retrofit_clear_estop and after
+   retrofit_sbus_ok), so enter_unmanned() cannot see set_owner() yet.
+   Same convention as tim6_1ms_init() further down in this file. */
+static void set_owner(uint8_t who, uint8_t reason);
+static uint8_t enter_unmanned(uint8_t want_mode);
 
 /* ---------------- small helpers ---------------- */
 static uint32_t ms(void) { return tick_ms; }
@@ -67,10 +95,17 @@ void USART6_IRQHandler(void)
             case TYPE_ESTOP:
                 retrofit_on_estop();
                 break;
+            case TYPE_MODE:
+                retrofit_on_mode_frame(rx_frame.payload, rx_frame.payload_len);
+                break;
             case TYPE_HEARTBEAT:
-                /* PC alive but not commanding -> release AUTO so the RC
-                   operator regains control; AUTO entry is NAV-driven (P0-2) */
-                if (mode == MODE_AUTO) mode = MODE_MANUAL;
+                /* PC alive but not commanding -> release authority so the RC
+                   operator regains control. E3: NAV no longer implies AUTO,
+                   so this is now the ONLY implicit release path. */
+                if (mode == MODE_AUTO || mode == MODE_TELEOP) {
+                    mode = MODE_MANUAL;
+                    set_owner(OWNER_RC, AUTH_HEARTBEAT_RELEASE);
+                }
                 break;  /* heartbeat also refreshes watchdog via last_pc_ms */
             }
         }
@@ -128,6 +163,74 @@ void retrofit_clear_estop(void)
     lift_bits = 0;
 }
 
+/* ---------------- E3 MODE frame: authority request / release /
+   ---------------- estop-clear / profile handshake (spec 4.2/4.3/4.6) -- */
+/* E3 spec 4.2 (as amended 10-10 by the author): FOUR conditions, all must
+   hold, re-checked continuously (see retrofit_poll_1ms).  Condition 3 (field
+   lever) was revoked -- REJ_FIELD_SWITCH(3) / REJ_FIELD_LATCHED(7) keep their
+   numbers, unused and not reusable.  Refusals are reported, never silent. */
+static uint8_t enter_unmanned(uint8_t want_mode)
+{
+    if (!handshake_ok || pc_profile != PROFILE_ID) { reject_code = REJ_PROFILE;       return 0; }
+    if (!retrofit_sbus_ok())                       { reject_code = REJ_RCS_STALE;    return 0; }
+    /* (condition 3 removed 10-10: field lever not implemented this batch) */
+    if (estop_latched)                             { reject_code = REJ_ESTOP_LATCHED; return 0; }
+    if (loop_stall_run >= LOOP_STALL_FRAMES)       { reject_code = REJ_LOOP_STALLED;  return 0; }
+    if (want_mode == MODE_TELEOP)                  { reject_code = REJ_NOT_IMPL;     return 0; }
+
+    /* Order matters (spec 4.2): safe the tools FIRST, then hand over. */
+    lift_bits = 0x07;
+    tool_offset_mm = 0.0f;
+    cmd_vl = 0.0f; cmd_vr = 0.0f;
+    last_tool_ms = 0;
+    mode = want_mode;
+    set_owner(OWNER_PC, AUTH_PC_GRANTED);
+    reject_code = REJ_NONE;
+    return 1;
+}
+
+void retrofit_on_mode_frame(const uint8_t *payload, uint16_t len)
+{
+    uint8_t req, prof;
+    if (len < 2) return;
+    req = payload[0];
+    prof = payload[1];
+
+    switch (req) {
+    case MODE_REQ_PROFILE:
+        pc_profile = prof;
+        handshake_ok = (prof == PROFILE_ID);
+        reject_code = handshake_ok ? REJ_NONE : REJ_PROFILE;
+        break;
+    case MODE_REQ_AUTO:
+    case MODE_REQ_TELEOP:
+        enter_unmanned(req == MODE_REQ_AUTO ? MODE_AUTO : MODE_TELEOP);
+        break;
+    case MODE_REQ_MANUAL:
+        /* PC releases authority. Not allowed to clear an estop latch. */
+        if (estop_latched) { reject_code = REJ_ESTOP_LATCHED; break; }
+        mode = MODE_MANUAL;
+        set_owner(OWNER_RC, AUTH_PC_RELEASE);
+        reject_code = REJ_NONE;
+        break;
+    case MODE_REQ_CLEAR_ESTOP:
+        /* A3: single confirmation from the whitelisted PC.
+           Clearing the latch is NOT granting authority (spec 4.6). */
+        estop_latched = 0;
+        mode = MODE_MANUAL;
+        set_owner(OWNER_RC, AUTH_PC_CLEAR_ESTOP);
+        lift_bits = 0x07;            /* knives up -- fixes F2 */
+        cmd_vl = 0.0f; cmd_vr = 0.0f;
+        tool_offset_mm = 0.0f;
+        last_tool_ms = 0;
+        reject_code = REJ_NONE;
+        break;
+    default:
+        reject_code = REJ_NOT_IMPL;
+        break;
+    }
+}
+
 /* F2 note: the independent hardware watchdog is the board's existing
    IWDG (main.c: IWDG_Init(4,500) ~= 1 s, fed in the main loop).  A second
    IWDG instance is not possible on the same peripheral; retrofit coverage
@@ -166,6 +269,29 @@ uint8_t retrofit_sbus_ok(void)
            (uint32_t)(tick_ms - sbus_last_ms) <= 500u;
 }
 
+
+/* ---------------- E3 authority getters + handover ---------------- */
+uint8_t retrofit_owner(void)   { return owner; }
+uint8_t retrofit_reject(void)  { return reject_code; }
+uint8_t retrofit_permit(void)  { return ENTRY_PERMIT; }
+uint8_t retrofit_profile(void) { return PROFILE_ID; }
+
+void retrofit_notify_loop(void) { loop_counter++; }   /* A12a: one line in main.c */
+
+static void set_owner(uint8_t who, uint8_t reason)
+{
+    if (owner == who) { auth_reason = reason; return; }
+    owner = who;
+    auth_reason = reason;
+    /* spec 4.4: on ANY handover the old targets are void -- a late frame
+       from the previous owner must not be able to drop a knife. */
+    cmd_vl = 0.0f; cmd_vr = 0.0f;
+    tool_offset_mm = 0.0f;
+    lift_bits = 0x07;          /* all beams up */
+    last_tool_ms = 0;          /* forget the previous owner's TOOL freshness */
+}
+
+static uint8_t owner_allows(void) { return owner == OWNER_PC && !estop_latched; }
 uint8_t retrofit_mode(void)
 {
     return mode;
