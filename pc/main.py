@@ -465,9 +465,13 @@ def main():
                     # fix round 1 I-3：**先问状态机，它点头了才把申请发到线上**。旧写法
                     # 是无条件、且在 go_auto() **之前**发——ESTOP 下 go_auto() 必返回
                     # False，于是 PC 停在 ESTOP 一帧不发，而 MCU 已经收到申请：批 1a
-                    # 之后五条件一旦成立就授权，PC 静默 ⇒ 500 ms 链路看门狗把 MCU 闩死
-                    # （firmware/retrofit.c:316-318）。今天不咬人只是因为
-                    # FIELD_SW_CALIBRATED=0 也在挡，危害窗口在 B2 填表之后才打开。
+                    # 之后四条件一旦成立就授权，PC 静默 ⇒ 500 ms 链路看门狗把 MCU 闩死
+                    # （firmware/retrofit.c:316-318）。🔴 10-10 作者改判（撤销"现场拨档"那条判据，
+                    # 契约 §4.2 条件③ / A4）：原来下面那两句"今天不咬人只是因为
+                    # FIELD_SW_CALIBRATED=0 也在挡，危害窗口在 B2 填表之后才打开"**已成假话**——
+                    # 那个宏批 1a 根本不写入固件，危害窗口也不由填 B2 那张表打开。今天不咬人的
+                    # 真正原因是现固件把 MODE 整条丢掉（retrofit.c:60-75 没有 TYPE_MODE 分支），
+                    # 而批 1a 之后不咬人靠的就是上面这条"先问状态机、点头才发"的顺序。
                     # fix round 1 I-2：进无人的门槛是 ENTER_MIN_CONF，不跟着 usable
                     # 一起降到 0.01——"进无人"与"继续跑"各一份判据（控制器裁定）。
                     pre_state, pre_gate = sm.state, sm.needs_confirm

@@ -8,7 +8,7 @@
 
 **Tech Stack:** STM32F407 + SPL，Keil µVision（命令行 `UV4.exe -r`），C89 风格（变量声明在块首，沿用现有文件风格）。
 
-> **10-10 作者改判（开工前必读，本计划已按此重排）**：E3 **不实现"现场拨档"这一条进无人判据**——契约 §4.2 条件③、§4.3 现场夺权、§1 的 A4 一并撤销（**编号全部保留、不复用**）。后果落在本计划的四处：**Task 2** 那五个 `FIELD_*` 宏**不写进固件**；**Task 3** 的进无人判据由五条变**四条**（①②④⑤，③ 那一行就地标注、不删号）；**Task 4 Step 5** 里"条件③失效 ⇒ 立刻夺回并锁存"那一段**不写入**（删除痕迹留在原地）；**Task 9** 原先"等 B2 填表才能验 ②③⑧"的限制作废，并**新增一条实测判据：从按下 `[M]` 到 STATUS 的 `mode` 回 MANUAL 的往返时间**（撤销路径唯一没测过的量，测法用 `tools/latency_probe.py` 的 D1）。作者两句原话与逐行读码依据写在契约文首横幅与 §4.3，本计划不重复抄。**编号 ③、拒绝码 0x03 与 0x07、`AUTH_FIELD_TAKEOVER`/`REJ_FIELD_SWITCH` 这些名字继续留在协议层，不许重排**（`common/protocol.py` 与 `pc/wire.py` 已合入，改号会让代码与文档分家）。
+> **10-10 作者改判（开工前必读，本计划已按此重排）**：E3 **不实现"现场拨档"这一条进无人判据**——契约 §4.2 条件③、§4.3 现场夺权、§1 的 A4 一并撤销（**编号全部保留、不复用**）。后果落在本计划的四处：**Task 2** 那六个 `FIELD_*` 宏（`FIELD_CH`/`FIELD_SW_CALIBRATED`/`FIELD_ALLOW_HI`/`FIELD_MID_LO`/`FIELD_MID_HI`/`FIELD_LATCH_MS`）**不写进固件**；**Task 3** 的进无人判据由五条变**四条**（①②④⑤，③ 那一行就地标注、不删号）；**Task 4 Step 5** 里"条件③失效 ⇒ 立刻夺回并锁存"那一段**不写入**（删除痕迹留在原地）；**Task 9** 原先"等 B2 填表才能验 ②③⑧"的限制作废，并**新增一条实测判据：从按下 `[M]` 到 STATUS 的 `mode` 回 MANUAL 的往返时间**（撤销路径唯一没测过的量，测法用 `tools/latency_probe.py` 的 D1）。作者两句原话与逐行读码依据写在契约文首横幅与 §4.3，本计划不重复抄。**编号 ③、拒绝码 0x03 与 0x07、`AUTH_FIELD_TAKEOVER`/`REJ_FIELD_SWITCH` 这些名字继续留在协议层，不许重排**（`common/protocol.py` 与 `pc/wire.py` 已合入，改号会让代码与文档分家）。
 >
 > **本计划的四态口径未因改判而前进**：批 1a 仍是**未开工**——`firmware/` 一行未改、Keil 未重编译；`[M]` 那条撤销路径只到「已编码 + 已单测」，往返时延是**待测**。
 
@@ -31,7 +31,7 @@
 | 文件 | 责任 | 本批动作 |
 |---|---|---|
 | `firmware/大车proj/大车/HARDWARE/retrofit/protocol.h` | 帧类型常量 | 加 `TYPE_MODE 5`（Task 1）；Task 6 转 GBK（该文件只有 3 个非 ASCII 字节） |
-| `firmware/大车proj/大车/HARDWARE/retrofit/retrofit.h` | 对外 API 与全部契约常量 | 加 MODE 请求码、档案号、许可位、authority/reject 码、~~现场拨档通道与阈值~~（**10-10 改判：这五个 `FIELD_*` 宏本批不写入**，见 Task 2 的改判注）、新 API 声明（Task 2） |
+| `firmware/大车proj/大车/HARDWARE/retrofit/retrofit.h` | 对外 API 与全部契约常量 | 加 MODE 请求码、档案号、许可位、authority/reject 码、~~现场拨档通道与阈值~~（**10-10 改判：这六个 `FIELD_*` 宏本批不写入**，见 Task 2 的改判注）、新 API 声明（Task 2） |
 | `firmware/大车proj/大车/HARDWARE/retrofit/retrofit.c` | 权限状态机与执行点 | dispatch 加 `case TYPE_MODE`；`owner`/五条件（**10-10 改判后四条**）/拒绝码/刀不变量/TOOL 门/急停解除/~~拨档锁存~~（不写入）/持续复查/19 字节 STATUS/`loop_alive`/`build_id`（Task 3–5）；Task 6 转 GBK |
 | `firmware/大车proj/大车/USER/main.c` | 厂商主循环（GBK） | **两处纯新增**：`retrofit_notify_loop();`（Task 5）、`regGroup[0]==1` 锁零（Task 5） |
 | `firmware/{retrofit.c,retrofit.h,protocol.c,protocol.h}` | 影子副本 | **删除**（Task 6，A13） |

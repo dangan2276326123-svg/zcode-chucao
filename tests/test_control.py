@@ -997,7 +997,8 @@ def test_no_auto_request_leaves_the_pc_while_it_does_not_hold_authority(
 
     旧写法是 `send(MODE_REQ_AUTO)` 无条件、且在 `go_auto()` 之前。ESTOP 下
     go_auto() 必 return False ⇒ PC 停在 ESTOP 一帧不发，而 MCU 已经收到申请 ⇒
-    批 1a 的五条件若成立就授权，PC 静默 ⇒ 500 ms 链路看门狗把 MCU 闩死
+    批 1a 的四条件若成立就授权（10-10 作者改判：撤销"现场拨档"那条，原五条件里的 ③ 编号保留
+    不复用），PC 静默 ⇒ 500 ms 链路看门狗把 MCU 闩死
     （retrofit.c:316-318）。这正是报告 Concern 1 那条"自锁分叉"的真实触发路径。
     """
     r = _drive_main(tmp_path, monkeypatch,
