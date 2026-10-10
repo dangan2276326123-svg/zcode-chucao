@@ -835,11 +835,11 @@ EOF
 
 **Interfaces:** 无（不改任何代码语义）。
 
-- [ ] **Step 1: 记录转换前的编译尺寸**
+- [x] **Step 1: 记录转换前的编译尺寸**（10-10 当场 `UV4 -r` = `Code=44960 RO-data=1176 RW-data=1088 ZI-data=3064`，0 Error / 61 Warning）
 
 Run: `UV4.exe -r ...`，从 `build_log.txt` 抄下 `Program Size: Code=XXXXX`（**转换前基线**，Task 5 之后的值）
 
-- [ ] **Step 2: 转换编码（只动注释字节）**
+- [x] **Step 2: 转换编码（只动注释字节）**（转前先枚举码点：`retrofit.c` 23 种 / 25 个，`retrofit.h`、`protocol.h` 各 1 个 U+2014；逐个确认 GBK 可编**且解回同一字符**，无"编不出"也无"静默换字"。转后逐字符等值比较差异 = 0，行数不变 800/100/40。字节数 32,988→32,963 等——**是变小**，UTF-8 每字 3 字节、GBK 2 字节，本计划上一行"从 75 个非 ASCII 字节变成更多"的预期写反了，按实测为准）
 
 ```bash
 python - <<'PY'
@@ -862,13 +862,13 @@ PY
 Expected: 三个文件都打印出来且**没有异常**；`retrofit.c` 从 75 个非 ASCII 字节变成更多（GBK 双字节）；往返断言通过。
 若任何一个文件 `decode('utf-8')` 或 `encode('gbk')` 抛异常 ⇒ **立刻停手**，说明该文件是混合编码（Fw-20 说的情况），先查清再动。
 
-- [ ] **Step 3: 重编译，Code 必须与 Step 1 完全相同**
+- [x] **Step 3: 重编译，Code 必须与 Step 1 完全相同**（转码后当场同一条 `UV4 -r`：`Code=44960 RO-data=1176 RW-data=1088 ZI-data=3064`，0 Error / 61 Warning——与 Step 1 **逐项一字不差**，RO/RW/ZI 也没动）
 
 Run: `UV4.exe -r ...`
 Expected: `0 Error(s)`，且 `Program Size: Code=` **与 Step 1 记录的数字一字不差**。
 数字变了 ⇒ 转换伤到了代码（不只是注释），**立刻 `git checkout` 那三个文件回退**（⚠️ 中文路径下 checkout 可能静默 no-op，回退后必须再 `git diff --stat` 确认真的回去了，必要时用 `git show HEAD:<path> > <path>` 兜底）。
 
-- [ ] **Step 4: 删影子副本并改文档**
+- [x] **Step 4: 删影子副本并改文档**（`git rm` 四份已删。**先验证再删**：`grep -rn "firmware/retrofit.c" --include=*.c --include=*.h` 零命中、任何含 `../` 的 `#include` 也零命中，`<FilePath>`/`<IncludePath>` 都不指向 `firmware/` 根；分叉检查=纯落后（根 `retrofit.c` 与 `f0ecf73` 时正身按行尾归一后逐行相同，差 10 个 CR；根 `protocol.h`/`protocol.c` 逐字节相同）。README 改的是 19/74/75/102/104/241 六处 + 固件段新增位置与编码说明；`firmware/集成说明.md` 顶部补一段；台账 Fw-20 加 2026-10-10 续写、原句未删。删后重编译 `Code=44960 RO-data=1176 RW-data=1088 ZI-data=3064` 仍一字不差）
 
 ```bash
 git rm firmware/retrofit.c firmware/retrofit.h firmware/protocol.c firmware/protocol.h
@@ -884,7 +884,7 @@ git rm firmware/retrofit.c firmware/retrofit.h firmware/protocol.c firmware/prot
 `protocol.c` 是纯 ASCII。改之前逐文件试解码，别假定全树一种编码（台账 Fw-20）。
 ```
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**（实际提交 `da053de`，10 个文件。**偏离计划两处**：① 没用 `git add -A firmware/ README.md`——该仓工作树里 `USER/build_log.txt`、`PWM.uvguix.22763`、`PWM.uvoptx` 本来就是脏的且永不提交，`-A` 会把它们一并带走，改成逐文件 `git add`；② 本 Step 模板里那几个数字（`retrofit.c` md5 `1e15bd202d69003bde01ebdb051f6636`、"四份逐字节相同"、"75 个非 ASCII 字节变成更多"）是 10-08 写计划时的读数，到执行日已不成立（根副本从 Task 4 起就落后、GBK 让字节数**减少**），按 AGENTS 审查清单第 8 条一律以当场输出为据，没有照抄。⚠️ **交接（悬空引用，留给 Task 7/8 或下一批处理，本步故意没动）**：删除根副本后，下列位置里的 `firmware/retrofit.c:…` 路径已不可解析，但它们的**行号仍然正确**——描述的是现烧在板上的那版（= `f0ecf73`），改成 HEAD 的行号反而会让它们变假。逐处列全：`pc/main.py:469`；`tools/bench_limits.py:12/15/67`；`tools/bench_status.py:36/456`；`tools/latency_probe.py:15`；`tests/test_bench_status.py:701/837`；`tests/test_control.py:972`；`docs/参数差异台账.md` §1 标题行与 09-05 建表行、`docs/接线图_v1.md:3`、`docs/缺口清单.md:133`、`docs/superpowers/specs/2026-09-16-v1.0-...md:114`、`docs/superpowers/specs/2026-10-08-e3-control-authority-design.md:275`、`docs/X5验机与接入执行清单.md:132/146`。修法：把路径改指 `firmware/大车proj/大车/HARDWARE/retrofit/retrofit.c` 并加"行号按 `f0ecf73` 那版"的版本限定，或统一改成 `git show f0ecf73:…` 的可取回写法；README 那六处本步已按此法改好，可当范本。**没有一条测试因此变红**（这些是文档串与注释里的引文，不是读文件的代码；`tests/test_latency_probe.py:958/977/1243` 断言的是工具 stdout 里的字符串，与文件是否存在无关）——当场全量 `pytest` = 394 passed，`check_doc_invariants.py` 退出码 0）
 
 ```bash
 git add -A firmware/ README.md
