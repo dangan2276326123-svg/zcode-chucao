@@ -1,6 +1,6 @@
 #ifndef _PROTOCOL_H
 #define _PROTOCOL_H
-/* 0xA5 0x5A frame protocol â€” firmware side (STM32F407, SPL).
+/* 0xA5 0x5A frame protocol ¡ª firmware side (STM32F407, SPL).
    Matches common/protocol.py exactly. Frame:
      A5 5A | len u16le | type u8 | seq u16le | payload | crc16 u16le
    crc16 = CRC-16/CCITT-FALSE over bytes after header (len..payload).

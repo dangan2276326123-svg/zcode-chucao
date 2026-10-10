@@ -2,7 +2,7 @@
 #define _RETROFIT_H
 /* Weeding retrofit module: dual-command-source chassis control, knife
    interlock, UDP-link watchdog, middle-tool stepper, wheel-speed capture,
-   status reporting.  Pins per v0.7 section 13.2 â€” do not touch existing
+   status reporting.  Pins per v0.7 section 13.2 ¡ª do not touch existing
    allocations (PA10 SBUS, TIM1 PE9/11/13/14, PA5/PF10/PF8 relays). */
 #include <stdint.h>
 #include "protocol.h"

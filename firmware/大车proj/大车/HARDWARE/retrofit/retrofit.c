@@ -354,7 +354,7 @@ static void wheel_speed_update(void)
 {
     /* period ticks between rising edges at 1 MHz timer clock;
        wheel circumference C meters, N pulses/rev -> v = C/(N*T) */
-    const float c_per_pulse = 0.0005f;  /* meters per pulse â€” calibrate on bench */
+    const float c_per_pulse = 0.0005f;  /* meters per pulse ¡ª calibrate on bench */
     int i;
     for (i = 0; i < 4; i++) {
         uint32_t p = cap_period[i];
@@ -569,7 +569,7 @@ void retrofit_poll_1ms(void)
     }
 
     /* SBUS heartbeat: telecontrol sets sbus_last_ms on valid frame;
-      é¥æŽ§æ–­é“¾åœ¨ MANUAL ä¸‹ä¹Ÿç…§å¸¸ï¼Œä¸è‡ªåŠ¨åˆ‡ AUTOï¼ˆå®‰å…¨é»˜è®¤ä¸ºæ‰‹åŠ¨ï¼‰ */
+      Ò£¿Ø¶ÏÁ´ÔÚ MANUAL ÏÂÒ²ÕÕ³££¬²»×Ô¶¯ÇÐ AUTO£¨°²È«Ä¬ÈÏÎªÊÖ¶¯£© */
 
     /* E3 spec 4.2: the entry conditions are re-checked continuously, not only
        when a MODE request arrives.  Two of them can lapse on their own while
@@ -691,7 +691,7 @@ void retrofit_init(void)
     TIM_OC1PreloadConfig(TIM4, TIM_OCPreload_Enable);
     TIM_ARRPreloadConfig(TIM4, ENABLE);
 
-    /* TIM3 4-channel input capture 1 MHz (wheel speed) â€” restores the
+    /* TIM3 4-channel input capture 1 MHz (wheel speed) ¡ª restores the
        commented capture block in pwm.c on PA6/PA7/PB0/PB1 with AF2 */
     g.GPIO_Pin = GPIO_Pin_6 | GPIO_Pin_7;
     g.GPIO_PuPd = GPIO_PuPd_NOPULL;
