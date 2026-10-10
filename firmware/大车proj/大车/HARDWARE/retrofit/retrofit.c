@@ -59,12 +59,15 @@ static volatile uint32_t cap_period[4] = {0,0,0,0};
 static volatile uint32_t cap_edge_ms[4] = {0,0,0,0};
 static float wheel_speed_mps[4];    /* estimated per wheel */
 
-/* Forward declarations: the two E3 helpers are defined in the regions the
+/* Forward declarations: the E3 helpers are defined in the regions the
    batch 1a plan assigns them to (after retrofit_clear_estop and after
    retrofit_sbus_ok), so enter_unmanned() cannot see set_owner() yet.
-   Same convention as tim6_1ms_init() further down in this file. */
+   Same convention as tim6_1ms_init() further down in this file.
+   owner_allows() joins them in batch 1a Task 4, because from Task 4 on the
+   NAV / TOOL frame handlers above call it (C90: needs a visible prototype). */
 static void set_owner(uint8_t who, uint8_t reason);
 static uint8_t enter_unmanned(uint8_t want_mode);
+static uint8_t owner_allows(void);
 
 /* ---------------- small helpers ---------------- */
 static uint32_t ms(void) { return tick_ms; }
@@ -125,7 +128,27 @@ static void uart6_send(const uint8_t *data, uint16_t len)
 void retrofit_on_nav_frame(const uint8_t *payload, uint16_t len, uint16_t seq)
 {
     (void)seq;
-    if (len < 9 || estop_latched) return;  /* NAV implies AUTO (P0-2 fix) */
+    if (len < 9) return;
+    /* E3 spec 4.4 (batch 1a Task 4, closes F1): a NAV frame carries wheel
+       speeds ONLY.  It never touches mode or owner -- writing mode = MODE_AUTO
+       here was what made the car go unmanned on the first NAV frame, with no
+       MODE request and no field confirmation.  Authority comes from MODE
+       frames only (retrofit_on_mode_frame -> enter_unmanned).
+       The old "|| estop_latched" half of the guard is deliberately NOT kept as
+       a second copy: owner_allows() already means
+       "owner == OWNER_PC && !estop_latched", and two copies of one test are
+       the classic "change one, forget the other" seed. */
+    if (!owner_allows()) {
+        /* Q4 ruling (author, 10-10), option b: a NAV frame from anyone who is
+           not the current owner is dropped, and nothing else happens.
+           reject_code keeps its previous value -- its contract is "why the
+           last MODE *request* was refused", and this is not a request.
+           REJ_FIELD_SWITCH(3) / REJ_FIELD_LATCHED(7) are reserved protocol
+           numbers that this firmware never reports and that nothing here
+           re-purposes.  Evidence of the drop itself is that mode/authority do
+           not move while link_probe keeps seeing NAV frames on the wire. */
+        return;
+    }
     /* payload: vL f32le, vR f32le, flags u8 */
     memcpy(&cmd_vl, &payload[0], 4);
     memcpy(&cmd_vr, &payload[4], 4);
@@ -134,12 +157,34 @@ void retrofit_on_nav_frame(const uint8_t *payload, uint16_t len, uint16_t seq)
     if (cmd_vl >  1.0f) cmd_vl =  1.0f;
     if (cmd_vr < -1.0f) cmd_vr = -1.0f;
     if (cmd_vr >  1.0f) cmd_vr =  1.0f;
-    mode = MODE_AUTO;
 }
 
 void retrofit_on_tool_frame(const uint8_t *payload, uint16_t len)
 {
-    if (len < 5 || estop_latched) return;
+    if (len < 5) return;
+    /* E3 spec 4.4 (batch 1a Task 4, closes F3): a TOOL frame is void unless it
+       comes from the CURRENT owner.  The old code looked only at the length
+       and the estop latch, so a TOOL frame that arrived after authority had
+       been handed back still moved the lift.  The estop test is not duplicated
+       here either -- owner_allows() carries it. */
+    if (!owner_allows()) {
+        /* Q4 ruling, option b: drop only, no reject code (see the NAV note). */
+        return;
+    }
+    if (ENTRY_PERMIT == PERMIT_GATE_N) {
+        /* Gate N: knives locked up, no lateral travel.  The PC is supposed to
+           send lift=0x07 / offset=0 here; the payload is ignored either way so
+           a PC bug cannot drop a knife (spec 4.5, both sides).  Pinning the
+           stored targets here is belt-and-braces -- the actual interlock is
+           re-derived from the compile-time ENTRY_PERMIT in apply_outputs() and
+           stepper_update(), so this branch cannot be the only thing standing
+           between a bad lift_bits and a relay. */
+        reject_code = ((payload[4] & 0x07) != 0x07) ? REJ_PERMIT : REJ_NONE;
+        last_tool_ms = tick_ms;
+        lift_bits = 0x07;
+        tool_offset_mm = 0.0f;
+        return;
+    }
     last_tool_ms = tick_ms;
     memcpy(&tool_offset_mm, &payload[0], 4);
     lift_bits = payload[4];
@@ -364,23 +409,44 @@ static void status_report(void)
 /* ---------------- actuation outputs ---------------- */
 static void apply_outputs(void)
 {
-    uint8_t auto_active = (mode == MODE_AUTO) && !estop_latched;
     uint8_t i;
 
-    /* knife relays PD4/5/6: in AUTO commanded by lift_bits (1=up);
-       in MANUAL all follow lift request but relays default released;
-       ESTOP forces all up (open relay = beam raised) */
-    /* MANUAL default-safe: a manual tool command is only honoured within
-       500 ms of the last TOOL frame; otherwise knives stay UP. */
-    /* last_tool_ms==0 means "no TOOL frame ever" - never treat as fresh,
-       otherwise the first 500 ms after boot ran knives DOWN (P0-7) */
+    /* E3 spec 4.5 (batch 1a Task 4, closes Fw-17 + F2 + Pc-8): the knife state
+       is an INVARIANT of the output stage, not a value every caller has to
+       remember to sanitise.  Unless the CURRENT owner asked for it within the
+       last 500 ms, a beam stays UP.  One rule, three holes closed:
+         - Fw-17: the old AUTO branch took lift_bits straight to the pins, so a
+                  stale or forged lift request dropped a knife the moment the
+                  mode word happened to read AUTO;
+         - F2:    retrofit_clear_estop() writes lift_bits = 0, i.e. "knives
+                  down as soon as the latch opens" -- now ignored while a gate
+                  or a missing owner forbids it;
+         - Pc-8:  the PC sending lift=0 (a bug, or a gate-F build talking to a
+                  gate-N car) can no longer reach the relays.
+       Why nothing can route around this loop: it is the only place in the
+       linked image that drives PD4/PD5/PD6.  retrofit_init() writes those
+       three pins once, at boot, all UP -- the same safe state, not a second
+       policy.  A grep over the compiled units (main.c, work_control.c, pwm.c,
+       path_plan.c, uart5.c, telecontrol.c, ...) finds no other write to
+       GPIOD pins 4..6; the vendor files that do drive GPIOD (driver.c,
+       motor.c, bujin_motor.c) are not part of this project's build.  So any
+       path that pulls a knife down must pass the four tests below.
+       ENTRY_PERMIT is a compile-time constant (retrofit.h): under gate N the
+       compiler folds the whole chain to up = 1 and lift_bits never reaches a
+       pin at all -- that is the part that makes it an invariant rather than a
+       check. */
+    /* tool_cmd_fresh keeps its P0-7 guard: last_tool_ms == 0 means "no TOOL
+       frame ever" and is deliberately NOT treated as fresh, otherwise the
+       first 500 ms after boot ran with the knives down. */
     uint8_t tool_cmd_fresh =
         last_tool_ms != 0 && (uint32_t)(tick_ms - last_tool_ms) < 500;
     for (i = 0; i < 3; i++) {
         uint8_t up;
-        if (estop_latched) up = 1;
-        else if (auto_active) up = (lift_bits >> i) & 1;
-        else up = tool_cmd_fresh ? (lift_bits >> i) & 1 : 1;
+        if (estop_latched)                      up = 1;
+        else if (ENTRY_PERMIT == PERMIT_GATE_N) up = 1;
+        else if (!tool_cmd_fresh)               up = 1;
+        else if (!owner_allows())               up = 1;
+        else                                    up = (lift_bits >> i) & 1;
         gpio_out(GPIOD, (uint16_t)(GPIO_Pin_4 << i), up);
     }
 
@@ -398,6 +464,24 @@ static void stepper_update(void)
     float hz;
     uint16_t arr;
     uint8_t lim_origin, lim_left, lim_right;
+
+    /* E3 spec 4.5 (batch 1a Task 4): gate N allows NO lateral travel at all,
+       and without a current owner nothing may move either.  This is the first
+       statement of the function, so it sits above every branch that could
+       touch TIM4, PB5 or the ARR/CCR registers.  It parks the pulse train the
+       same way the existing "hold" branch at the bottom of this function does
+       (TIM_Cmd(TIM4, DISABLE)) -- no second kind of stop is introduced.
+       TIM4's only user in this build is retrofit.c: every other TIM4
+       reference in the compiled units (pwm.c encoder block, the
+       count_TIM4 extern in main.c) is commented out.
+       Under gate N retrofit_on_tool_frame() also pins tool_offset_mm to 0, and
+       set_owner()/enter_unmanned() zero it on any handover, so there is no
+       leftover target for the axis to "resume on its own" towards. */
+    if (ENTRY_PERMIT == PERMIT_GATE_N || !owner_allows()) {
+        TIM_Cmd(TIM4, DISABLE);
+        return;
+    }
+
     lim_origin = GPIO_ReadInputDataBit(GPIOD, GPIO_Pin_15);
     lim_left  = GPIO_ReadInputDataBit(GPIOD, GPIO_Pin_10);
     lim_right = GPIO_ReadInputDataBit(GPIOD, GPIO_Pin_11);
@@ -446,6 +530,42 @@ void retrofit_poll_1ms(void)
 
     /* SBUS heartbeat: telecontrol sets sbus_last_ms on valid frame;
       遥控断链在 MANUAL 下也照常，不自动切 AUTO（安全默认为手动） */
+
+    /* E3 spec 4.2: the entry conditions are re-checked continuously, not only
+       when a MODE request arrives.  Two of them can lapse on their own while
+       the car is already unmanned -- the RC link (condition 2) and the
+       execution plane (condition 5, the loop_counter probe for Fw-21).
+       The stall sampler runs on the STATUS period (50 ms) so loop_stall_run is
+       counted in the same unit LOOP_STALL_FRAMES is written in
+       (LOOP_STALL_FRAMES == STALL_FRAMES == 5 on both sides). */
+    if ((uint32_t)(tick_ms - loop_check_ms) >= 50u) {
+        loop_check_ms = tick_ms;
+        if (loop_counter == last_loop_seen) {
+            if (loop_stall_run < 250u) loop_stall_run++;
+        } else {
+            loop_stall_run = 0;
+            last_loop_seen = loop_counter;
+        }
+    }
+
+    if (owner_allows()) {
+        /* RC link lost while the PC holds authority: zero the wheel targets
+           and raise the knives, but do NOT hand authority back -- passing the
+           car to a dead receiver is not a safer state (spec 4.2). */
+        if (!retrofit_sbus_ok()) {
+            cmd_vl = 0.0f; cmd_vr = 0.0f;
+            lift_bits = 0x07;
+            auth_reason = AUTH_RCS_LOST;
+            reject_code = REJ_RCS_STALE;
+        }
+        /* Execution plane parked: the main loop is not turning, so the wheels
+           are not being served.  Stop pretending the PC is driving. */
+        if (loop_stall_run >= LOOP_STALL_FRAMES) {
+            cmd_vl = 0.0f; cmd_vr = 0.0f;
+            lift_bits = 0x07;
+            reject_code = REJ_LOOP_STALLED;
+        }
+    }
 
     slew_step();
     wheel_speed_update();
