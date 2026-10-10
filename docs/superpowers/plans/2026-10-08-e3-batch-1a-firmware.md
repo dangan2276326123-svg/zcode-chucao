@@ -251,7 +251,7 @@ EOF
 - Consumes: Task 2 的全部常量；现有 `retrofit_sbus_ok()`（`:159`）、`estop_latched`（`:24`）、`mode`（`:23`）、`lift_bits`（`:33`）、`tick_ms`。
 - Produces: `static uint8_t owner`、`static uint8_t auth_reason`、`static uint8_t reject_code`、`static uint8_t pc_profile`、`static uint8_t handshake_ok`、~~`static uint8_t field_latched`、`static uint32_t field_ok_since`~~（**10-10 改判：这两个变量随拨档机制一并撤销，不写入**）、`static volatile uint8_t loop_counter`、`static uint8_t last_loop_seen`、`static uint8_t loop_stall_run`、`static uint32_t loop_check_ms`；函数 `retrofit_on_mode_frame()`、`retrofit_notify_loop()`、`retrofit_owner/reject/permit/profile()`、`static uint8_t owner_allows(void)`、~~`static uint8_t field_allows_unmanned(void)`~~（**不写入，见 Step 2 的改判注**）、`static void set_owner(uint8_t who, uint8_t reason)`。
 
-- [ ] **Step 1: 加状态变量**
+- [x] **Step 1: 加状态变量**（落地：五个 E3 static 变量按计划在 `estop_latched` 之后；**改判②** —— `field_latched`/`field_ok_since` 未写入，只在注释里以撤销身份出现；`PROFILE_NONE_SAFE` 用本地名 =0，与 `common/protocol.PROFILE_NONE`=0 同值，未新造不同值符号）
 
 在 `static uint8_t estop_latched = 0;`（`:24`）之后插入：
 
@@ -273,7 +273,7 @@ static uint32_t loop_check_ms = 0;
 
 并在常量区加 `#define PROFILE_NONE_SAFE 0`（若 Task 2 未定义 `PROFILE_NONE`，就用这个本地名，**不要引入与 Python 侧不同值的符号**；Python 侧 `PROFILE_NONE = 0`，两边同为 0）。
 
-- [ ] **Step 2: 加三个判定函数**
+- [x] **Step 2: 加三个判定函数**（落地：四个 getter + `retrofit_notify_loop()` + `set_owner()` + `owner_allows()`；**改判①** —— `field_allows_unmanned()` 整段未写入，下面那段原文存档留在计划里不进 .c；⚠️ 存档段那个 `sbus_channel_raw()` 工程里根本不存在（全仓零命中），真实符号是 `telecontrol.h:11` 的 `extern int sbus_channel[16]`，类型 `int` 不是 `uint16_t`（Hw-17），本步不需要 SBUS 取数所以一行未碰。另加两条 `static` 前置声明 —— Step 2/Step 3 的落位让 `enter_unmanned()` 调用其后才定义的 `set_owner()`，不前置就编译不过，写法沿用本文件既有的 `tim6_1ms_init()` 惯例，这是相对计划的一处偏离）
 
 放在 `retrofit_sbus_ok()`（`:159-167`）之后：
 
@@ -321,7 +321,7 @@ static uint8_t field_allows_unmanned(void)
 
 （以下这条 ⚠️ 原本是关于 `FIELD_CH` 取数的实施提醒，随本函数撤销而失效，留作门 F 的提醒：**（10-10 改判后不适用）** `sbus_channel_raw(FIELD_CH)` 必须用工程里**已存在**的 SBUS 通道数组（`telecontrol.c` 导出的 `sbus_channel[]`，`main.c:305` 就在用它）。实施时先 `grep -n "sbus_channel" firmware/大车proj/大车/HARDWARE/telecontrol/*.h`确认外部声明，直接写 `extern uint16_t sbus_channel[16];` 或包含对应头文件——**不要新造一个访问器**。⇒ 正确写法是**包含 `telecontrol.h`** 并用 `sbus_channel[]` 本体，不要自己再 `extern` 一份不同签名的声明（上面那条订正就是这个坑）。）
 
-- [ ] **Step 3: 加 `retrofit_on_mode_frame()`**
+- [x] **Step 3: 加 `retrofit_on_mode_frame()`**（落地：`enter_unmanned()` 四条判据逐条给拒绝码 ①②④⑤=0x01/0x02/0x04/0x05，**改判③** —— 代码路径里一次都不上报 `REJ_FIELD_SWITCH`(3)/`REJ_FIELD_LATCHED`(7)，编号保留不复用；获批瞬间先提刀再交权的顺序照 spec §4.2；`MODE_REQ_CLEAR_ESTOP` 补齐 Fw-14 缺的入口并把刀置 0x07（F2），清锁不授权）
 
 放在 `retrofit_clear_estop()`（`:124-129`）之后：
 
@@ -393,7 +393,7 @@ void retrofit_on_mode_frame(const uint8_t *payload, uint16_t len)
 }
 ```
 
-- [ ] **Step 4: 接进 dispatch，并让 HEARTBEAT 也走 `set_owner`**
+- [x] **Step 4: 接进 dispatch，并让 HEARTBEAT 也走 `set_owner`**（落地：dispatch 加 `case TYPE_MODE`；HEARTBEAT 改走 `set_owner(OWNER_RC, AUTH_HEARTBEAT_RELEASE)`，即 `authority=7` 那条心跳交回撤销路径，也是现在唯一的隐式交权）
 
 `USART6_IRQHandler` 的 `switch (rx_frame.type)`（`:60-75`）里加一个 case，并改写 HEARTBEAT 那个 case：
 
@@ -412,7 +412,7 @@ void retrofit_on_mode_frame(const uint8_t *payload, uint16_t len)
                 break;
 ```
 
-- [ ] **Step 5: 编译 + 符号 + 尺寸三证**
+- [x] **Step 5: 编译 + 符号 + 尺寸三证**（三证已跑，**读数原文写在提交 `d42b8fd` 的信息里**，本计划不重抄一遍——AGENTS 审查清单第 8 条：基线类数字只在一处写。可核验的形状：改前/改后是同一条 `UV4 -r` 命令、改后另复跑一遍排抖动，map 里 `retrofit_on_mode_frame` 有地址。警告 +4 全部是本文件里 Task 4/5 才消费的符号（#177-D/#550-D），未删判据；厂商 led.c 那条 `#223-D` 在两遍日志里各少一行 = 并行构建日志抖动，非回归）
 
 Run: `UV4.exe -r ...`（同 Task 1 Step 2）
 Expected: `0 Error(s)`；Code 尺寸**相对本任务改前那次基线增大**（新增了实际代码）。
@@ -433,7 +433,7 @@ PY
 ```
 Expected: 四个符号**都能在 map 里找到**（`enter_unmanned`/`set_owner` 是 static，若被内联则允许 0 命中，但必须在 `PWM.map` 的 `retrofit.o` 段里能看到 `retrofit_on_mode_frame` 的地址）
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**（提交 = 只含 `retrofit.c` 一条 + 本条计划勾选，构建产物与仓里那份用户弄脏的 `USER/build_log.txt` 都没进；两次编译读数与 map 证据的原文写在提交信息里）
 
 ```bash
 git add "firmware/大车proj/大车/HARDWARE/retrofit/retrofit.c"
@@ -463,8 +463,9 @@ E3 批 1a 第 3 步（spec §4.2/§4.3/§4.4/§4.6）。
 EOF
 ```
 
----
+⚠️ **Task 3 的落点核对（Q4 裁定）**：本任务没有触碰 `retrofit_on_nav_frame()`/`retrofit_on_tool_frame()` —— “非当前持权者来的 NAV/TOOL 被丢弃 ⇒ `REJ_FIELD_LATCHED`”那两行属 Task 4 Step 1/2，且按 Q4 定案**只丢弃、不写 `reject_code`**。所以本步不声称“NAV 不再隐含进 AUTO”这一症状已消失（那是 Task 4 的闭环判据）。
 
+---
 ### Task 4: 刀不变量 + NAV/TOOL 只认持权者 + 持续复查
 
 **Files:**
