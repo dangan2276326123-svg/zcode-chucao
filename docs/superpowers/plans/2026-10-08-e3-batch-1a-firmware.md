@@ -477,7 +477,7 @@ EOF
 
 ⚠️ **10-10 改判留下的一个措辞冲突 ⇒ 作者已裁定（第二次口述「全按推荐值执行」，推荐值 = 下面 b 那条）**：Step 1/Step 2 里"非当前持权者来的 NAV/TOOL 一律丢弃"那一支，原计划报 `REJ_FIELD_LATCHED`(0x07)——**0x07 的字面含义是"已被现场夺权，锁存中"，而现场夺权已随条件③ 撤销**。撤销之后走进这一支的真实原因是"`[M]`/`MODE(0x00)` 交回之后 PC 还在发 NAV/TOOL"，报 0x07 会给操作员一个假线索（他会去找那个不存在的拨档）。**定案走 b**：a) ~~保留 0x07 但改述为"非持权者期间丢弃"~~——**不采用**，因为它正是"复用编号"，与本轮"0x03/0x07 保留不复用"这条纪律直接相冲；b) ✅ **这一支不设拒绝码**：丢弃照做、丢弃计数照旧（`reject` 保持上一次的值不动）。三条理由：① `reject` 的契约语义是"最近一次 **MODE 申请**被拒的原因"，把 NAV/TOOL 的丢弃写进去会让操作员读到一个从未发生过的申请；② 非持权期间 PC 仍以 50 ms 节奏发帧，这一支会被反复命中，`reject` 变成常态噪声而失去"刚刚那次申请被拒"的指示力；③ 这一支本身有别的证据——`authority=6`（PC 主动交回）之后 `mode` 不再变、`link_probe` 的判据看的就是"发了但不被采纳"。**⇒ Task 4 的两段代码按 b 执行**：只丢弃、不写 `reject`；`REJECT_FIELD_LATCHED` 与它的短码 `FIELD-LATCH` 继续留在协议层当"保留、当前固件不会上报"（读到它就是版本/语义异常，见 `docs/X5验机与接入执行清单.md` §4A 第 4 条）。
 
-- [ ] **Step 1: NAV 不再改 mode，且只认持权者（修 F1）**
+- [x] **Step 1: NAV 不再改 mode，且只认持权者（修 F1）**（10-10 落地：`mode = MODE_AUTO` 那句已删，剥注释后的正文机检证明 NAV 里既不给 `mode` 也不给 `owner` 赋值、不调 `set_owner()`；`|| estop_latched` 那半个判据按计划收进 `owner_allows()`，未留第二份拷贝。**Q4 改判①已执行**：非持权者那一支只有 `return`，`reject_code` 一行未写，`REJ_FIELD_SWITCH`/`REJ_FIELD_LATCHED` 两个标识符在全文件零命中。为让调用点位于定义之前，`owner_allows()` 已加进本文件既有的 `static` 前置声明块——C90 不前置编不过，写法沿用 `tim6_1ms_init()` 惯例）
 
 把 `retrofit_on_nav_frame()`（`:90-103`）改成：
 
@@ -501,7 +501,7 @@ void retrofit_on_nav_frame(const uint8_t *payload, uint16_t len, uint16_t seq)
 
 ⚠️ 原 `:93` 的 `if (len < 9 || estop_latched) return;` 里那半个急停判断由 `owner_allows()` 承担（急停时 `owner != OWNER_PC`）——**不要两处都留**，否则以后改一处漏一处。
 
-- [ ] **Step 2: TOOL 同样只认持权者，且门 N 下忽略刀位与横移（修 F3 + Pc-8 固件侧）**
+- [x] **Step 2: TOOL 同样只认持权者，且门 N 下忽略刀位与横移（修 F3 + Pc-8 固件侧）**（10-10 落地：持权者判定在前、门 N 分支在后，丢弃那一支同样**不写 `reject_code`**（Q4 b）；门 N 分支按计划原文写 `REJ_PERMIT`/`REJ_NONE`——它是"门 N 下收到非法刀位"的事实陈述，不是"非持权者丢弃"那一支，不在 Q4 的禁用范围内。计划给的中文注释按"插入行一律纯 ASCII"改成英文，代码行逐字照抄）
 
 把 `retrofit_on_tool_frame()`（`:105-113`）改成：
 
@@ -532,7 +532,7 @@ void retrofit_on_tool_frame(const uint8_t *payload, uint16_t len)
 }
 ```
 
-- [ ] **Step 3: 刀输出改成不变量（修 Fw-17 + F2）**
+- [x] **Step 3: 刀输出改成不变量（修 Fw-17 + F2）**（10-10 落地：四条件一律提刀、只有"门 F + 持权者半秒内的明确指令"才允许落刀，`tool_cmd_fresh` 那句含 `last_tool_ms != 0` 的 P0-7 护栏按计划保留原样。**收口点唯一性已机检**：`apply_outputs()` 内只有一次 `gpio_out(GPIOD, ...)`；对全部 39 个已编译 `.c` 单元剥注释扫描，GPIOD 4..6 的写点只有 retrofit.c（`retrofit_init()` 上电那一次写全 UP 是同一个安全态、不是第二套策略），驱动 PD4..6 的厂商文件 driver.c/motor.c/bujin_motor.c 不在 PWM.uvprojx 的构建清单内。**偏离一处**：随新刀序失效的局部量 `auto_active` 一并删除，留着它就是一条新的"设了不读" `#550-D`）
 
 把 `:253-259` 那个 `for` 循环体改成：
 
@@ -553,7 +553,7 @@ void retrofit_on_tool_frame(const uint8_t *payload, uint16_t len)
 
 （`tool_cmd_fresh` 的定义 `:251-252` 保留原样，含 `last_tool_ms != 0` 那个 P0-7 护栏。）
 
-- [ ] **Step 4: 横移同样受许可位约束**
+- [x] **Step 4: 横移同样受许可位约束**（10-10 落地：守卫是函数体的**第一条语句**（声明之后、任何可执行语句之前，C90 安全），停法沿用函数尾部既有的 `TIM_Cmd(TIM4, DISABLE)`，未引入第二种停法；`TIM4` 在已编译单元里只有 retrofit.c 使用（pwm.c 那批 TIM4 引用整段是注释，main.c 只剩一个 `extern int count_TIM4`）。折叠后的实际后果由 map 给出：门 N 镜像里 `stepper_update` 只剩守卫那么大，横移代码物理不存在——这条正是改判红线③要的"绕不过"，不是"每次检查一遍参数"）
 
 在 `stepper_update()`（`:268` 起）里，找到它读 `tool_offset_mm` 决定脉冲方向/数量的那一段，在函数开头加：
 
@@ -568,7 +568,7 @@ void retrofit_on_tool_frame(const uint8_t *payload, uint16_t len)
 
 ⚠️ 实施时**必须先读 `stepper_update()` 全文**（`:268-303`）确认 `TIM_Cmd(TIM4, DISABLE)` 与它既有的停转分支一致（`:300` 已有 `TIM_Cmd(TIM4, DISABLE);`），不要引入第二种停法。
 
-- [ ] **Step 5: 持续复查 + 执行面停摆检测（`retrofit_poll_1ms`）**
+- [x] **Step 5: 持续复查 + 执行面停摆检测（`retrofit_poll_1ms`）**（10-10 落地：50 ms 一个采样窗与 `LOOP_STALL_FRAMES` 同单位（Python 侧 `pc/status_rx.py` 的 `STALL_FRAMES` 同为 5，已当场核对同值），遥控不新鲜 ⇒ 锁零 + 提刀但**不交权**，停摆 ⇒ 锁零 + 提刀 + `REJ_LOOP_STALLED`。**改判红线②已执行**：上面那两段"删除痕迹"注释块与 `field_latched`/`field_ok_since`/`field_allows_unmanned()` 一行都没进 `.c`（全文件剥注释后零命中），那份原文照录挪到 `task-4-1a-report.md`，不当注释塞进源码。**偏离一处**：计划原文的 `if (owner == OWNER_PC && !estop_latched)` 写成 `if (owner_allows())`——它就是这两个条件的逐字定义，用函数以免在同一文件里留第三份拷贝（正是本任务 Step 1 的 ⚠️ 所禁的那个模式），语义零差异）
 
 在 `retrofit_poll_1ms()`（`:311-335`）的链路看门狗那段（`:315-319`）之后插入：
 
@@ -643,9 +643,9 @@ void retrofit_on_tool_frame(const uint8_t *payload, uint16_t len)
 ⚠️ ~~`FIELD_SW_CALIBRATED == 0` 时 `field_allows_unmanned()` 恒为 0，所以上面第一段会**立刻把 owner 打回 RC 并锁存**——这正是 fail-closed 的表现（进不了无人，也留不住无人）。**在 B2 填数之前，台架只能验 ⑨⑪⑫ 这类"被拒"场景**，需要真进无人的 ②③⑧ 必须等 B2。这一条要在 Task 9 的清单里写清。~~
 **⇒ 10-10 作者改判：上面这段的前提没了**。拨档判据不实现 ⇒ 没有"恒为 0 的第三道门"，也没有"进不了无人"这个默认状态；**台架的分段方式随之下线**（原先"B2 之前只能验被拒类、B2 之后才能验真进无人"这条限制作废，Task 9 已按改判重排），持续复查剩下两件事：**遥控新鲜度**（②，锁零 + 提刀但**不交权**）与**执行面停摆**（⑤）。场景编号 ⑨⑪⑫ 与 ②③⑧ 一律保留不复用。
 
-- [ ] **Step 6: 编译 + 尺寸 + 提交**
+- [x] **Step 6: 编译 + 尺寸 + 提交**（10-10 落地：`0 Error(s)` 达成；改前/改后两次读数的原文写在提交 `2e5c08b` 的信息里，本计划不重抄（AGENTS 审查清单第 8 条）。**判据订正**：~~Expected: Code 尺寸再次增大~~ ⇒ 本步实际是**减小**，且减小才是门 N 折叠正确的证据——`ENTRY_PERMIT` 是编译期常量，门 N 下刀序折成 `up = 1`、横移整段成为死码，被折叠掉的比新增的判定多；逐函数的形状以 `OBJ/PWM.map` 当场输出为据（`stepper_update`/`apply_outputs` 变小，`retrofit_poll_1ms` 与 `owner_allows` 变大/新出现）。**新增一条警告并保留**：`retrofit.c` 的门 F 尾段在门 N 构建里不可达 ⇒ `#111-D statement is unreachable`，这是折叠的诚实信号，未为消警告而放松门；`#550-D auth_reason set but never used` 按计划留给 Task 5 接 STATUS 时消，Task 3 那三条 `#177-D`（`owner_allows`/`last_loop_seen`/`loop_check_ms`）本步全部消失=门真接进了执行点）
 
-Run: `UV4.exe -r ...` → Expected: `0 Error(s)`，Code 尺寸再次增大
+Run: `UV4.exe -r ...` → Expected: `0 Error(s)`；Code 尺寸**与折叠方向一致**（见上面 Step 6 的判据订正，不以"增大"为准）
 
 ```bash
 git add "firmware/大车proj/大车/HARDWARE/retrofit/retrofit.c"
@@ -672,6 +672,11 @@ E3 批 1a 第 4 步（spec §4.2/§4.4/§4.5）。三个洞一起关：
 编译 0 Error，Code 尺寸再次增大。待重烧。
 EOF
 ```
+
+⚠️ **Task 4 落下的两条交接事实**（受版本控制的落点只有本计划；`.superpowers/` 里那份报告对侧看不见）：
+
+1. 上面模板里"Code 尺寸再次增大"这句**与本步实际相反**（实际减小，理由见 Step 6 的判据订正）。**门 F 那一次编译时会跳回来**——把 `ENTRY_PERMIT` 改成 `PERMIT_GATE_F`，被折叠掉的刀序与横移代码会重新进镜像，尺寸变大不是回归。
+2. **影子副本自本步起落后于编译树**：`firmware/retrofit.c` 不参与编译（`PWM.uvprojx:617` 指向 `..\HARDWARE\retrofit\retrofit.c`），它现在缺 Task 3 + Task 4 两步，那句 `mode = MODE_AUTO` 还在它的 `:102`。README:103-105 目前仍把它当主、把工程内那份叫"副本"，README:74/75 与计划 Task 12 引用的 `retrofit.c:93/:98-101/:102/:140` 全部是**影子副本的行号**。正解是 A13（Task 6 `git rm` 四份影子）——**Task 6 之前不要往 `firmware/retrofit.c` 里改任何东西**，那只会把漂移做成两份互相矛盾的"事实源"。
 
 ---
 
