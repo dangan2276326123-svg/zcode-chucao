@@ -547,6 +547,7 @@ while(1)
 		
 	//控制伺服电机
     
+	retrofit_notify_loop();   /* E3 A12a: prove the execution plane is alive (Fw-21) */
 /* RETROFIT safety gate: AUTO uses slew-limited vision commands;
    ESTOP or retrofit fault forces zero. MANUAL falls through to the
    original SBUS path below, unchanged. */
@@ -561,6 +562,13 @@ while(1)
 		/* H2.3 (review 09-14): SBUS stale in MANUAL -> revoke stale RC
 		   commands at the drive point. Recoverable, covers all 4 wheels
 		   (unlike SW_Stop which only cuts MOTOR_1, see ledger Hw-2). */
+		veloc[0] = veloc[1] = veloc[2] = veloc[3] = 0.0;
+	}
+	else if (regGroup[0] == 1) {
+		/* E3 A1: the vendor UART3/Modbus "upper computer" path is a
+		   half-finished product and is OUT of the contract.  It must not
+		   be able to drive the wheels.  regGroup[0] is written only by the
+		   Modbus handler at uart3.c:224; retrofit does not use regGroup. */
 		veloc[0] = veloc[1] = veloc[2] = veloc[3] = 0.0;
 	}
 //左前

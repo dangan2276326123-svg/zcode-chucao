@@ -389,18 +389,57 @@ static uint8_t read_limits(void)
     return v;
 }
 
+/* E3 (spec 3.2): compile stamp for STATUS.build_id.  Changes on every rebuild
+   without anyone having to remember to bump a number.  Fixes the 09-23 incident
+   where two hex files had the same Code size and only mtime told them apart.
+   The full stamp goes to the HMI at boot (see the note in the spec). */
+static uint8_t build_id(void)
+{
+    static const char stamp[] = __DATE__ " " __TIME__;
+    uint16_t sum = 0;
+    uint8_t i;
+    for (i = 0; stamp[i] != '\0'; i++) sum += (uint8_t)stamp[i];
+    return (uint8_t)(sum & 0xFF);
+}
+
+/* ---------------- status_report: 19-byte payload (STATUS v2) ----------------
+   Field order is byte-for-byte common/protocol.py STATUS_V2_FMT = '<fffBBBBBBB'
+   (3 x f32 little endian + 7 x u8), i.e. pack_status_v2(speed, current_a,
+   battery_v, limits, mode, profile, authority, loop_alive, build_id, reject):
+     pl[0..3]   speed       f32  -> speed
+     pl[4..7]   current_a   f32  -> current_a
+     pl[8..11]  battery_v   f32  -> battery_v
+     pl[12]     limits      u8   -> limits
+     pl[13]     mode        u8   -> mode
+     pl[14]     profile     u8   -> profile    (PROFILE_ID, compile-time)
+     pl[15]     authority   u8   -> authority  (auth_reason: reason of the LAST
+                                                authority transition)
+     pl[16]     loop_alive  u8   -> loop_alive (loop_counter, A12a liveness probe)
+     pl[17]     build_id    u8   -> build_id   (this function's stamp)
+     pl[18]     reject      u8   -> reject     (reject_code: the LAST refusal,
+                                                Q5 ruling 10-10, not per-frame
+                                                health)
+   A reorder here that is not made in the same commit on the Python side is the
+   field-misalignment accident the "batch 1b merges before batch 1a flashes"
+   rule exists to prevent (spec 3.5), so this table is the contract. */
 static void status_report(void)
 {
-    uint8_t pl[14];
-    uint8_t frame[2 + 5 + 14 + 2];
+    uint8_t pl[19];
+    uint8_t frame[2 + 5 + 19 + 2];
     float speed = retrofit_wheel_speed();
     float cur = adc_current_a();
-    float bat = 48.0f;  /* TODO: ADC divider channel */
+    float bat = 48.0f;  /* TODO bench: ADC divider channel (Fw-5) */
     memcpy(&pl[0], &speed, 4);
     memcpy(&pl[4], &cur, 4);
     memcpy(&pl[8], &bat, 4);
     pl[12] = read_limits();
     pl[13] = mode;
+    /* ---- E3 (spec 3.2): the five new bytes ---- */
+    pl[14] = PROFILE_ID;
+    pl[15] = auth_reason;
+    pl[16] = loop_counter;
+    pl[17] = build_id();
+    pl[18] = reject_code;
     {
         uint16_t n = prot_build(TYPE_STATUS, tx_seq++, pl, sizeof(pl), frame);
         uart6_send(frame, n);
