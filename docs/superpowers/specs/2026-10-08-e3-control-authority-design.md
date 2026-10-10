@@ -189,7 +189,7 @@ Fw-21 已查明：权限/状态/刀/横移/STATUS 跑在 TIM6 中断（`retrofit
 | **撤销** | **人按 `[M]`** = `MODE(0x00)` + 本地 `go_manual()`（`pc/main.py` 的 `elif k == ord('m')`，批 1b 已合入） | 固件：`mode=MANUAL`、`owner=RC`，并由 `set_owner()` 把旧目标作废（§4.4） | `authority=6`（PC 主动交回）；心跳交回那条仍走 `authority=7` | 🟡 「已编码 + 已单测」——**从按下 `[M]` 到 STATUS 的 `mode` 回 MANUAL 的往返时间没测过**，不许写"已验证有效"；该实测判据已加进批 1a 计划 Task 9（测法用 `tools/latency_probe.py` 的 D1） |
 | **兜底** | **断电**（`[M]` 不生效、或 PC 整体失联时唯一确定有效的手段） | 无 | — | 作者 10-10 认可的形状；**不是"已验证的恢复手段"** |
 
-**三件必须说清的事**（10-10 逐行读码；行号 = `firmware/大车proj/大车/USER/main.c`、`HARDWARE/uart4/uart4.c`、`firmware/retrofit.c`）：
+**三件必须说清的事**（10-10 逐行读码；行号 = `firmware/大车proj/大车/USER/main.c`、`HARDWARE/uart4/uart4.c`、**`firmware/大车proj/大车/HARDWARE/retrofit/retrofit.c`**——**10-10 批 1a Task 8 定身份**：此处原写 `firmware/retrofit.c`，那份根下影子副本已由 Task 6 删除（`da053de`），正身就是前面这个路径；**本节这三件事引的行号全在厂商 `main.c` 与 `uart4.c` 上，retrofit 只作为读码来源列出、本节未引它的行号**）：
 
 1. **进无人只有人按 `[A]` 才会发生**，软件不会自己进（A2 已把 NAV 从授权钥匙的位置撤下来，见 §4.4）。
 2. **进了无人之后，遥控器既不驱轮也不停车**：AUTO 分支**无条件覆盖**四轮速度（`main.c:553-557`，`veloc[0]=veloc[2]=vl; veloc[1]=veloc[3]=vr;`），PWM 出口 `:567/570/573/576` 紧跟其后、没有再套一层条件 ⇒ **不许**把"遥控还能当场刹住"写进取入无人判据或现场预案。要停：`[M]` 交回，或断电。
@@ -272,7 +272,7 @@ PC 侧实现见 §5.3。**只改一侧都不算完成**：只改 PC 等于把安
 
 > **10-09 就地改判（实现侧订正，原文不删）**：本表 ESTOP 那行的"**之后 HEARTBEAT**"**已作废**，实现是**跳变那一拍发一次 `TYPE_ESTOP`，稳态在线上完全静默**（`pc/wire.py:frames_for_state('ESTOP', …)` 返回 `[]`，`pc/main.py:324-329` 只在跳变那一拍发那一帧）。
 > **为什么稳态不发帧**：持权判定与心跳语义冲突。`retrofit.c:70-73` 对心跳的动作是 `if (mode == MODE_AUTO) mode = MODE_MANUAL;`——**"PC 发心跳"在线上的意思就是"PC 交回权限"**，与本节开头那句"只要 PC 持权就永不发 HEARTBEAT"是同一条契约的正反面。急停期间 PC 并没有交回什么权限（它此刻不持权，锁存在固件手里），继续按拍发心跳只会让线上出现一个"表达交权"的帧，而日志与状态写着 ESTOP：**同一时刻两条互相矛盾的语义**，正是 A9 要消灭的那类事故（Task 2 审查把这一条交办给 Task 6，Task 6 有意变更并按"改判留痕"写进本报告）。
-> 安全性核对（读源码，`firmware/retrofit.c`，未改动）：失联看门狗的条件是 `mode == MODE_AUTO && !estop_latched && (tick_ms - last_pc_ms) > 500`（`:316-318`）⇒ **ESTOP 锁存期间两个前提都被否掉**，PC 静默不会"再触发一次失联"。
+> 安全性核对（读源码，**`f0ecf73:firmware/retrofit.c`**，未改动。**10-10 批 1a Task 8 定身份**：那份根下影子副本已由 Task 6 删除（`da053de`），正身 = `firmware/大车proj/大车/HARDWARE/retrofit/retrofit.c`；**同一条件在正身是 `:566-567`**，阈值来自 `LINK_TIMEOUT_MS`（正身 `:18` = 500），批 1a 没有改这条看门狗 ⇒ 下面这个结论两个版本都成立）：失联看门狗的条件是 `mode == MODE_AUTO && !estop_latched && (tick_ms - last_pc_ms) > 500`（`:316-318` = **`f0ecf73` 那一版**的行号，别按正身去找）⇒ **ESTOP 锁存期间两个前提都被否掉**，PC 静默不会"再触发一次失联"。
 > ⚠️ **一条与 §4A/X5 清单同源的后果**：PC 静默意味着桥那边 `last_pc_ms` 不再更新（`vehicle/bridge.py:24/30/206`）⇒ 若操作员在 PC 还锁着 ESTOP 时物理复位板子并用现场开关让固件进 AUTO，固件会在 500 ms 后自己急停（fail-closed，方向对，但现场看到的是"拨了开关车就锁"）。这段窗口的真实表现**只有台架能定**，属未验项（Task 6 报告 §6 记的残余风险 1）。
 
 **规则一句话**：只要 PC 持权（AUTO 或 LIFT），线上就必须是 NAV+TOOL，**永不发 HEARTBEAT**。现在的代码（`pc/main.py:243/253/261` 三分支）在"AUTO 但这一帧不可用、且未满 2 秒"时会掉进 `else` 发心跳，固件收到心跳就把权限交回遥控（`retrofit.c:73`），而 PC 状态与日志仍写着 AUTO——**日志与实车不一致，这是必须消灭的那类事故**。
