@@ -179,7 +179,8 @@ void retrofit_on_tool_frame(const uint8_t *payload, uint16_t len)
            re-derived from the compile-time ENTRY_PERMIT in apply_outputs() and
            stepper_update(), so this branch cannot be the only thing standing
            between a bad lift_bits and a relay. */
-        reject_code = ((payload[4] & 0x07) != 0x07) ? REJ_PERMIT : REJ_NONE;
+        /* Q5 (author ruling 10-10): a GATE_N-compliant TOOL frame must NOT overwrite reject_code -- the PC sends TOOL every 50 ms, so writing REJ_NONE here would wipe any real refusal within one frame period. Report only the refusal itself: knives must stay up under gate N. */
+        if ((payload[4] & 0x07) != 0x07) reject_code = REJ_PERMIT;
         last_tool_ms = tick_ms;
         lift_bits = 0x07;
         tool_offset_mm = 0.0f;
