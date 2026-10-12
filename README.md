@@ -141,20 +141,37 @@
 | `docs/决策依据说明.md` | 设计决策记录（D1–D8）。⚠️ D8"实车无转向执行器"已作废未标，见台账 Hw-13 |
 | `docs/接线图_v1.md` | 大板接线图 v1（含 §4A 待改项） |
 | `docs/车上供电与接线清单.md` | **供电与接线权威版**（方案 B 定稿 v4，198 行，采购详版，09-12） |
-| `docs/车上供电与接线清单_v1.md` | 同上早期版（119 行，09-12 16:49），**已存档**，以 v4 为准 |
+| ~~`docs/车上供电与接线清单_v1.md`~~ | 同上早期版（119 行，09-12 16:49），**已存档**，以 v4 为准 → **2026-10-12 起本地不留**（该文件自己第 3 行就写着"已被取代、仅存档，不要再据此采购或接线"）。取回见本节末『旧版归档说明』 |
 | `docs/X5验机与接入执行清单.md` | RDK X5 到货验机四项与接入步骤 |
 | `docs/秋季图像采集清单.md` | 秋季采集执行文档（矩阵、命名、标注规范、IPM 顺带标定） |
 | `docs/整车尺寸实测表_20260921.md` | **M1–M12 量车型**：每项给测法、照片留档与"这个数用来判什么"；判据在 `tools/geometry_check.py` |
 | `docs/thesis_text_fixes_R7_H4.md` | 论文正文修改单（R7/H4 对应项） |
 | `docs/大板实物标注.jpg`、`近照A/B/C标注.jpg` | 主控板实物照（13 处编号标注）。**全仓无整机/刀架/电推杆照片**——见量车型 |
-| `docs/组会汇报_20260907/`、`docs/组会汇报_20260916/` | 组会 deck（Route C 可编辑 pptx + plan JSON + 证据合同 `paper_analysis.json` + `gen_map.py` 生成的溯源表 + 渲染 QA 图） |
-| `docs/纯视觉…实施方案_v0.4~v0.7.docx` | 历史总体方案 docx（**已被 md 版方案取代**，见下） |
+| ~~`docs/组会汇报_20260907/`、`docs/组会汇报_20260916/`~~ | 组会 deck（Route C 可编辑 pptx + plan JSON + 证据合同 `paper_analysis.json` + `gen_map.py` 生成的溯源表 + 渲染 QA 图）→ **2026-10-12 起两版都本地不留**：0907 那目录里 5.4 MB 是逐页 png 与单页 pptx 的渲染 QA 中间产物（`export_png.ps1` 可再生），0916 那版是**作者自己先从工作树删掉的**，本次只是把那个删除落进提交。**现行 deck 是下一行的 0923** |
+| `docs/组会汇报_20260923/` | **现行组会 deck**：`组会汇报.pptx` + `deck_order_map.md`（逐页溯源表）+ `paper_analysis.json`／`paper_analysis_validation.json`（证据合同）+ `pragmatic_edit_plan.json` + `gen_map.py`／`export_png.ps1`。⚠️ 同目录的 `render_qa/`（逐页 `幻灯片N.PNG` + montage，2.3 MB）属可再生中间产物，**已写进 `.gitignore`、不进仓**——要重出图就跑 `export_png.ps1` |
+| `results/` | **台架与冒烟证据，必须进仓**：`bench_YYYYMMDD_HHMM/bench_log.csv` 是 `tools/bench_status.py` 的输出（§4B 的规矩是一格一个目录），`smoke*` 是 IPM／主入口的冒烟产物。台账、缺口清单、E3 spec、§4B 回填表引用的就是这些路径——**不进仓则对侧（zcode）读不到证据**，而 AGENTS"交接事实必须落到受版本控制的文件"这条正是上一批踩过的坑。⚠️ `results/smoke_ipm/ipm_params.json` **不是标定**（源图全黑，见 v1.0 spec 与本仓台账 H5.2 那行），别当外参用 |
+| ~~`docs/纯视觉…实施方案_v0.4~v0.7.docx`~~ | 历史总体方案 docx（**已被 md 版方案取代**，见下）→ **2026-10-12 起四份都只留在 git 历史**，本地不再占位。缺口清单 §G 那条针对 v0.7 旧路径的勘误**照旧有效**，只是要先按下面『旧版归档说明』把 docx 取出来再看 |
 | `docs/refs/` | 调研原始记录（访谈 raw、原理图核对、参考资料调研、方法章理论材料） |
 | `docs/superpowers/specs/2026-09-16-v1.0-system-validation-design.md` | **现行方案**（整机设计与田间系统验证；V1–V4 真值、P/E 修复区、两道准入门） |
 | `docs/superpowers/specs/2026-09-08-v0.9-defense-first-design.md` | 已被 v1.0 取代（顶部有横幅），保留作决策史 |
 | `docs/superpowers/specs/2026-09-09-4ws-steering-design.md` | 4WS 转向设计稿 |
 | `docs/superpowers/specs/2026-08-14-peony-interrow-weeder-design.md` | 最早的系统设计稿 |
 | 外部评审件 | 在 **`D:\ai work\codex\docs\reviews\`**（不在本仓）：09-09 整体审查、09-14 复审、09-15 论文聚焦复审、09-21 增量复审 |
+
+### 旧版归档说明（2026-10-12）
+
+作者 10-12 定的口径：**本地只留最新版，旧版全部退到 git 历史里**。下面这些文件**此刻已在那条 GitHub 主线上**（逐条对 `zcode/master` 反查过），所以从工作树移除它们不丢东西——只是要取回得用哈希。
+
+| 从工作树移除的 | 取回办法（10-12 实测：`git log -1 --format='%h %ad' --date=short -- <路径>`，最后一次含该内容的提交） |
+|---|---|
+| 实施方案 docx **v0.4／v0.5_详细版／v0.6／v0.7** | `git show b6b369d:"docs/纯视觉芍药行间除草机器人_手把手实施方案_v0.7.docx" > 落地路径`（其余三份换路径同理；各自的哈希用上面那条命令现查） |
+| `docs/车上供电与接线清单_v1.md` | `git show 975450a:docs/车上供电与接线清单_v1.md > 落地路径` |
+| `docs/组会汇报_20260907/`（整目录，其中 5.4 MB 是逐页渲染 QA 的中间产物） | 单文件 `git show 1ca4f72:docs/组会汇报_20260907/组会进展汇报_纯视觉芍药行间除草机器人.pptx > x.pptx`；**整目录**可以用 `git checkout 1ca4f72 -- docs/组会汇报_20260907`，但要知道这条会**顺手把它们暂存**——取回不是为了提交就 `git restore --staged docs/组会汇报_20260907` 退回去 |
+| `docs/组会汇报_20260916/`（**作者自己先从工作树删掉的**，本次只是把那个删除落进提交） | 单文件如 `git show 7605995:docs/组会汇报_20260916/deck_order_map.md > x.md` |
+
+表里那四个哈希是**历史里的固定地址**，不是"当前 HEAD／测试条数"那一类每批都会变的读数——AGENTS 审查清单第 8 条管的是后者，所以这里可以写死。要查任何一份文件的全史：`git log --follow --format='%h %ad %s' --date=short -- <路径>`。
+
+**没有一起清掉的两类，以及为什么**：`docs/superpowers/specs/` 与 `docs/superpowers/plans/` 里那些带横幅的旧版设计稿（v0.9、4WS、08-14）**留盘**。它们是**被按路径引用的决策链**——AGENTS『当前状态』的 ⑥ 指 v0.9 那批批准口径，缺口清单与台账逐条指 spec/plan 的具体小节，删掉会把"为什么这么决定"变成只能翻历史；而 docx 与 deck 属**交付物**，新版存在即旧版无用。要一并清也做得，代价是上面那几处指针得同时改成指向哈希。
 
 ## 快速上手
 

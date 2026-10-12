@@ -17,7 +17,9 @@
 1. **不动 `firmware/`、不重编译、不烧录。** 也不改 `docs/参数差异台账.md` 的 §4 与 Fw-14／Fw-17／Fw-21／Fw-22／Pc-8 那五行——批 1a Task 8 已经就地改判过，本批再写一遍就是第二个事实源。
 2. **不预勾任何一格台架结论。** 本计划全部改动的最高状态是「已编码 + 已单测」与「已文档化」。文档里凡写到台架，一律带"未台架"。
 3. **两条硬禁令继续生效**：禁止实车 AUTO、禁止按现有接线文档直接带动力接线。本计划不需要板子；任何一步发现"要板子才能验"，就把它写成"未台架"，不许现场改成"顺手验了"。
-4. **只 `git add <显式路径>`**，严禁 `git add -A`／`git add .`／`git add .`。作者的工作树里有这些脏项，一条都不许带进本批提交：`docs/组会汇报_20260916/**`（被作者删除）、`docs/组会汇报_20260923/`、`results/**`、`scan_result.txt`、`firmware/大车proj/大车/USER/PWM.uvguix.22763`、`firmware/大车proj/大车/USER/PWM.uvoptx`、`firmware/大车proj/大车/USER/build_log.txt`，以及 Keil 产物（`OBJ/`、`*.map`、`*.hex`）。每次提交前跑 `git diff --cached --numstat` 自查（注意：`git status --porcelain --cached` 不是合法旗标，会 exit 129）。
+4. **只 `git add <显式路径>`**，严禁 `git add -A`／`git add .`。作者的工作树里有这些脏项，一条都不许带进本批提交：`docs/组会汇报_20260916/**`（被作者删除）、`docs/组会汇报_20260923/`、`results/**`、`scan_result.txt`、`firmware/大车proj/大车/USER/PWM.uvguix.22763`、`firmware/大车proj/大车/USER/PWM.uvoptx`、`firmware/大车proj/大车/USER/build_log.txt`，以及 Keil 产物（`OBJ/`、`*.map`、`*.hex`）。每次提交前跑 `git diff --cached --numstat` 自查（注意：`git status --porcelain --cached` 不是合法旗标，会 exit 129）。
+   ⚠️ **同一天作者改判，本条的名单缩了**（原文不删，10-12 晚）：`docs/组会汇报_20260923/` 的现行 deck 八样与 `results/bench_*` 的台架 CSV **改为进仓**，理由是"台账／E3 spec／§4B 回填表按路径引用这些 CSV，不进仓则对侧读不到证据"（AGENTS『流程』那条"交接事实必须落到受版本控制的文件"是同一条规矩）；`docs/组会汇报_20260916/**` 那个删除也已落进提交；`scan_result.txt` 先入历史再删。**仍然不许进仓的是**：三个 Keil 脏项与一切 `OBJ/`／`*.map`／`*.hex`。落地形状写在 README 的 `results/` 那一行与『旧版归档说明』。⇒ 下面 Task 7 Step 4 那句"Expected: 只剩作者自己那些项"要按这份新名单读。
+   （另：本条初稿把 `git add .` 写了两遍，是打字重复，不是有两种不同禁令。）
 5. **提交形状固定**：`git commit -F- --cleanup=verbatim <<'EOF' … EOF`，标题**按本次改动当场写**。本仓有 6 次"复制上一条提交标题"的事故，所以写标题前先跑 `git show --stat --oneline HEAD` 看清上一条是什么、然后**不看它**打字。
 6. **AGENTS 审查清单第 8 条（基线类数字）**：测试通过条数、测试文件数、`check_doc_invariants` 的圈号命中数、Keil 的 Code 尺寸与警告数、领先提交数——**只能由工具当场输出，不许抄进任何文档，包括本计划正文**。要引用就写"以某命令当场输出为准"并指向唯一权威处（现行测试基线在 `AGENTS.md`『当前状态』那一行，编译读数在台账 §4 那一行）。本计划正文里出现"基线"二字时指的都是**位置**，不是数值。
 7. **`AGENTS.md` 本批只改 `:56` 那一行里的两个小片段**（③ 段的日期形状、② 段加一个指针）。同一个列表项的其余字符**一个都不动**；审查清单第 2 条所在的行块**不许碰**——那是 `tools/check_doc_invariants.py` 唯一摘除的扫描区，动它等于让规则自己击破自己。
@@ -1250,7 +1252,8 @@ Expected: 退出码 **0**；受保护记号的命中数等于工具自己声明�
 - [ ] **Step 4: 工作树自查**
 
 Run: `git status --porcelain | head -40`
-Expected: 只剩作者自己那些项（`docs/组会汇报_20260916/**` 删除、`docs/组会汇报_20260923/`、`results/**`、`scan_result.txt`、三个 Keil 脏项）。本批五个代码文件、四个测试文件、四份文档都应已提交、不出现在列表里。
+Expected: 只剩**三个 Keil 脏项**（`firmware/大车proj/大车/USER/` 下的 `PWM.uvguix.22763`、`PWM.uvoptx`、`build_log.txt`）。本批五个代码文件、四个测试文件、四份文档都应已提交、不出现在列表里。
+⚠️ 这条在 10-12 晚被作者的清理口径改判过一次：原先这里还列着 `docs/组会汇报_20260916/**` 的删除、`docs/组会汇报_20260923/`、`results/**`、`scan_result.txt` 四项"作者自己没提交的脏项"——那四项已经在这次清理里进仓或删除（见 Global Constraints 第 4 条的补句与 README 的 `results/` 行），所以本条按新名单读；**读到旧名单不要以为是本批漏提交了什么**。
 Run: `git log --oneline -8`
 Expected: 七条本批提交在顶部，标题各不相同且各自描述本次改动（本仓有 6 次复制标题的事故——扫一眼确认没重复）。
 
