@@ -6,10 +6,16 @@
 本仓已经为此付过学费：`以后指格子不指行号`（§4B 的规矩）、Fw-13 的行号被我自己这次
 加说明推歪一行、台账 Hw-17 把 `telecontrol.c` 写成 `uart4/telecontrol.c`。
 
-三档结论：
-  HARD   —— 路径不存在，或行号越界（一定读不到东西）
+四档结论：
+  HARD      —— 路径不存在，或行号越界（一定读不到东西）
+  MISSING   —— 不带行号的路径引用读不到，且同一行没写"已退历史／取回"（删文件后看这一档）
   CHECK  —— 能读到那一行，但引用点旁边被引号包住的那段"被引内容"不在里面（人工看）
   SOFT   —— 大小写与真实目录不符：Windows 看不出来，Linux 克隆下来就断（已实测一例）
+
+MISSING 这一档**故意不报**三类：带盘符的外部绝对路径（对侧机器上没有，不是本仓的缺陷）、
+通配与花括号简写（`firmware/*.c`、`tools/{a,b}.py` 指"这一族"，不存在单一文件）、
+同一行已就地写了"删除／定身份／影子副本／正身／git show <sha>:路径"的归档句（本仓规矩是
+原文不删，坏路径留在句子里后面跟订正——工具对这种情况一直报警，人就开始忽略它，比不查更糟）。
 
 **退出码恒为 0**：这是一份报告，不是一道闸。写成硬失败会诱导人为了变绿去改坐标数字，
 而那正是本工具要防的行为（AGENTS 审查清单第 2 条对基线数字是同一条理由）。
@@ -36,7 +42,34 @@ SKIP_DIR = {'.git', '__pycache__', 'node_modules', '.superpowers', 'avi_frames',
             'calib_imgs', 'OBJ', 'Listings', 'Objects', 'hardware_ref', 'videos'}
 # 仓内引用常用"相对 firmware/大车proj/大车 的写法"（如 `USER/main.c:553`），补全它
 FIRMWARE_ROOT = 'firmware/大车proj/大车/'
-EXT = r'(?:c|h|py|md|mdx|sh|bat|yaml|yml|json|npz|txt)'
+EXTS = ('docx', 'pptx', 'xlsx', 'html', 'htm', 'csv', 'npz', 'yaml', 'yml', 'json',
+        'png', 'jpg', 'jpeg', 'map', 'hex', 'axf', 'bat', 'sh', 'txt', 'md', 'py', 'c', 'h')
+# 扩展名 alternation 必须**按长度降序**，后面再跟一个 `(?![A-Za-z0-9])`。
+# 第一版按可读顺序写 `c|h|…|csv`，于是 `train_metric_log.csv` 被截成 `train_metric_log.c`、
+# `PWM.hex` 被截成 `PWM.h`——工具自己造了 39 条假阳性，而其中真有两条错，混在一起就没人再信这一档。
+EXT_ALT = '|'.join(re.escape(e) for e in sorted(EXTS, key=len, reverse=True))
+TOP_DIRS = r'(?:docs|pc|tools|network|common|config|vehicle|firmware|tests|data)'
+# 路径字符里不含冒号与空格：`台账:42`、`中文。路径` 这类断句处不当成路径的一部分
+SEP = r"[^\s`|，。；、：:()（）【】\"'“”]"
+REL_RE = re.compile(r'(' + TOP_DIRS + r'[/\\]' + SEP + r'*?\.(?:' + EXT_ALT + r')(?![A-Za-z0-9]))')
+ABS_RE = re.compile(r'([A-Za-z]:[/\\]' + SEP + r'*?\.(?:' + EXT_ALT + r')(?![A-Za-z0-9]))')
+# 前一个字是路径字符 ⇒ 命中的是一段更长路径的**中间**，那不是仓内相对路径。
+# 两个真实例子都栽在这条上：`model_data/split_manifest.json` 里的 `data/…`、
+# `autumn_data/raw/…` 里的 `data/raw/…`——`_` 必须在字符类里，否则整个下划线前缀形同没写。
+PATH_CHAR = re.compile(r'[/\\._A-Za-z0-9\-]')
+# 通配／花括号简写（`firmware/*.c`、`tools/{link_probe,bench_status}.py`、`{train,val,test}/`）
+# 是"这一族文件"的写法，不是路径，存在性判它对一切都毫无意义。
+PATTERN_CHARS = ('*', '{', '}', ',')
+# 归档／取回说明：这些行**故意**指向仓内不存在的东西，是登记过的事实不是悬空指针
+ARCHIVE_KEYS = (u'归档', u'取回', u'已删', u'删除', u'作废', u'退到', u'退历史', u'不再', u'~~',
+                u'gitignore', u'历史', u'git show', u'不在本仓', u'外部', u'对侧', u'只读仓',
+                u'定身份', u'影子副本', u'正身', u'Delete', u'git rm')
+SHA_RE = re.compile(r'[0-9a-f]{40}|[0-9a-f]{7,12}:')
+# 归档句的判定窗口：本仓的订正是"就地补一句"，可以落在命中行的紧邻上下行。
+# **窗口只留 2 行**——试过 6 行，结果 `docs/reviews/…` 那两条真悬空被隔壁格子里一个
+# 无关的 `~~` 划掉了：窗口一宽，这一档就从"报告"变成"什么都看不见"。
+ARCHIVE_WINDOW = 2
+EXT = r'(?:' + EXT_ALT + r')(?![A-Za-z0-9])'
 LINE_RE = re.compile(
     r'(?P<path>(?:[A-Za-z0-9._\-]+/)*[A-Za-z0-9._\-]+\.' + EXT + r')'
     r'[:：](?P<lo>\d{1,4})(?:[-–~](?P<hi>\d{1,4}))?')
@@ -115,6 +148,32 @@ def parent_case_ok(rel):
     return os.path.basename(real) in listed
 
 
+def path_refs(text_lines):
+    """抓出所有路径式引用（不带行号的也算），用于存在性检查。
+
+    只认带仓内顶层目录前缀或带盘符的写法，避免把 `§4B`、`ch02`、时间戳当路径。
+    返回 [(行号, 路径, 是否外部绝对路径)]。
+    """
+    out = []
+    for i, ln in enumerate(text_lines):
+        for m in ABS_RE.finditer(ln):
+            out.append((i + 1, m.group(1), True))
+        for m in REL_RE.finditer(ln):
+            s = m.start()
+            if s and PATH_CHAR.match(ln[s - 1]):
+                continue                     # 命中在更长路径的中间，交给 ABS 那一路判
+            out.append((i + 1, m.group(1), False))
+    return out
+
+
+def archived(line):
+    """这一行是否已经自己说明"这里指向仓外／历史"——登记过的归档不算悬空。"""
+    if any(k in line for k in ARCHIVE_KEYS):
+        return True
+    # `<sha>:` 前缀（`b6b369d:"docs/…"`）就是取回写法，不依赖关键字
+    return bool(line and SHA_RE.search(line))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--strict', action='store_true', help='CHECK 档打全量明细')
@@ -168,8 +227,26 @@ def main():
                                   u'被引片段不在那几行: %s（解析为 %s）' % ('、'.join(miss[:3]), rel)))
 
     out = sys.stdout
-    out.write(u'坐标式引用审计：可解析 %d 处｜HARD %d｜CHECK %d｜SOFT(大小写) %d｜跳过(论文等) %d\n'
-              % (ok, len(hard), len(check), len(soft), skipped))
+    # ---- 第三档：纯路径引用的存在性（不带行号的那类，删文件后最容易留下悬空指针）----
+    missing = []
+    for md in tracked_md():
+        lines = read(md) or []
+        for ln_no, ref, is_abs in path_refs(lines):
+            if is_abs:
+                continue                     # 带盘符的外部路径：对侧机器上没有，不在本工具判据内
+            rel = re.sub(r'^\./', '', ref.replace('\\', '/'))
+            if any(ch in rel for ch in PATTERN_CHARS):
+                continue                     # 通配／花括号简写，不是路径
+            if os.path.exists(os.path.join(ROOT, rel)):
+                continue
+            if archived(lines[ln_no - 1]):
+                continue
+            lo = max(0, ln_no - 1 - ARCHIVE_WINDOW)
+            if any(archived(l) for l in lines[lo:ln_no - 1 + ARCHIVE_WINDOW]):
+                continue                     # 同一格内别处已写明归档／删除，就地订正过
+            missing.append((md, ln_no, rel))
+    out.write(u'坐标式引用审计：可解析 %d 处｜HARD %d｜CHECK %d｜SOFT(大小写) %d｜跳过(论文等) %d｜路径不存在 %d\n'
+              % (ok, len(hard), len(check), len(soft), skipped, len(missing)))
     out.write(u'  判据：HARD=读不到东西；CHECK=能读到但对不上被引内容；SOFT=Linux 上会断\n\n')
     for tag, rows in ((u'HARD', hard), (u'SOFT', soft), (u'CHECK', check)):
         if not rows:
@@ -181,9 +258,15 @@ def main():
         if tag == u'CHECK' and not a.strict and len(rows) > len(show):
             out.write(u'  …另 %d 条同类，用 --strict 看全量\n' % (len(rows) - len(show)))
         out.write(u'\n')
+    if missing:
+        out.write(u'== MISSING（路径读不到，且同一行没有归档／取回说明）==\n')
+        for md, ln, rel in missing:
+            out.write(u'  %-52s 行%-6d %s\n' % (md[:52], ln, rel[:70]))
+        out.write(u'  注：删过文件之后这一档最有用；同一行写了"已退历史／取回见 README"的'
+                  u'不算悬空，那是登记过的归档。\n\n')
     out.write(u'注：本工具退出码恒 0（除非 --fail-on-hard）。报告不是闸——把坐标数字写成硬判据，'
               u'下一批就会有为了变绿去改数字的人，那比引用失效更糟。\n')
-    if a.fail_on_hard and hard:
+    if a.fail_on_hard and (hard or missing):
         return 1
     return 0
 

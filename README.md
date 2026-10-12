@@ -157,7 +157,7 @@
 | `docs/superpowers/specs/2026-09-08-v0.9-defense-first-design.md` | 已被 v1.0 取代（顶部有横幅），保留作决策史 |
 | `docs/superpowers/specs/2026-09-09-4ws-steering-design.md` | 4WS 转向设计稿 |
 | `docs/superpowers/specs/2026-08-14-peony-interrow-weeder-design.md` | 最早的系统设计稿 |
-| 外部评审件 | 在 **`D:\ai work\codex\docs\reviews\`**（不在本仓）：09-09 整体审查、09-14 复审、09-15 论文聚焦复审、09-21 增量复审 |
+| 外部评审件 | 在 **`D:\ai work\codex\docs\reviews\`**（不在本仓）：逐份文件名**以该目录当场 `ls` 为准**，本行不列清单（10-12 起：原先手列的四份早已少于目录实际内容，而没人会回来补这一行） |
 
 ### 这几份 md 各管什么（2026-10-12 加：权威分工）
 
@@ -182,7 +182,7 @@
 | 汇报材料 | `docs/组会汇报_20260923/`（现行 deck + `deck_order_map.md` 逐页溯源） | 对外汇报用什么、每页主张的出处 | **里面的数字不是准入证据**：要引用参数一律回台账取（AGENTS 事实权威序） |
 | 原始依据 | `docs/refs/` | 调研记录、大板原理图 PDF 核对、访谈原文、方法章理论材料 | 结论进了台账才算被采用 |
 
-**不在本仓的两处**：外部评审件在 `D:\ai work\codex\docs\reviews\`（09-09 整体审查、09-14 复审、09-15 论文聚焦复审、09-21 增量复审）；论文正文在 `D:\JetBrains\chucao_prj\thesis_cau\`（只读仓里唯一被授权可写的子树，提交要走手术式 `git add thesis_cau/...`）。
+**不在本仓的两处**：外部评审件在 `D:\ai work\codex\docs\reviews\`（**这一行不列文件名**：引用它们的台账／缺口清单各自写了全路径，README 再列一份就是第二张会过期的清单——09-14 复审那条曾在 `docs/缺口清单.md` 里被写成 `docs/reviews/…` 这种本仓不存在的相对路径，10-12 已就地订正，见该节开头）；论文正文在 `D:\JetBrains\chucao_prj\thesis_cau\`（只读仓里唯一被授权可写的子树，提交要走手术式 `git add thesis_cau/...`）。
 
 **一条计数口径**：本节**不写"有几条／有几格／有几份"这类数**（AGENTS 审查清单第 8 条：孤立存在的计数下一批就变成待检查内容）。要数就用命令当场拿，比如台架清单的格数用 `grep -c '^| C' docs/X5验机与接入执行清单.md`。
 
