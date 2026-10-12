@@ -1,0 +1,53 @@
+[8 组向量] hits=0
+[24 列] hits=5
+    docs/参数差异台账.md:84
+    docs/superpowers/plans/2026-10-08-e3-batch-1b-pc-tools.md:1183
+    docs/superpowers/plans/2026-10-08-e3-batch-1b-pc-tools.md:1190
+    docs/superpowers/plans/2026-10-08-e3-batch-1b-pc-tools.md:1747
+    docs/superpowers/plans/2026-10-08-e3-batch-1b-pc-tools.md:1751
+[只收不发] hits=5
+    docs/superpowers/plans/2026-10-08-e3-batch-1a-firmware.md:943
+    tests/test_bench_status.py:430
+    tools/bench_status.py:19
+    tools/link_probe.py:4
+    tools/link_probe.py:91
+[14 字节] hits=8
+    AGENTS.md:55
+    docs/X5验机与接入执行清单.md:217
+    docs/X5验机与接入执行清单.md:218
+    docs/superpowers/plans/2026-10-08-e3-batch-1b-pc-tools.md:15
+    tests/test_status_rx.py:193
+    tests/test_status_rx.py:198
+    tools/link_probe.py:36
+    tools/link_probe.py:353
+[159 passed] hits=3
+    docs/superpowers/plans/2026-10-08-e3-batch-1b-pc-tools.md:17
+    docs/superpowers/plans/2026-10-08-e3-batch-1b-pc-tools.md:1762
+    docs/superpowers/specs/2026-09-16-v1.0-system-validation-design.md:310
+[14 个测试文件] hits=0
+[HEARTBEAT |] hits=3
+    docs/superpowers/specs/2026-10-08-e3-control-authority-design.md:32
+    docs/superpowers/specs/2026-10-08-e3-control-authority-design.md:80
+    docs/superpowers/specs/2026-10-08-e3-control-authority-design.md:248
+[M-3] hits=17
+    README.md:77
+    docs/参数差异台账.md:45
+    docs/参数差异台账.md:84
+    docs/superpowers/plans/2026-10-08-e3-batch-1b-pc-tools.md:1754
+    tests/test_bench_status.py:586
+    tests/test_bench_status.py:736
+    tests/test_latency_probe.py:1240
+    tests/test_latency_probe.py:1268
+    tests/test_latency_probe.py:1270
+    tests/test_latency_probe.py:1394
+    tests/test_latency_probe.py:1504
+    tests/test_latency_probe.py:1505
+    tools/bench_status.py:365
+    tools/latency_probe.py:409
+    tools/latency_probe.py:411
+    tools/latency_probe.py:1045
+    tools/latency_probe.py:1087
+[!mode] hits=3
+    docs/缺口清单.md:98
+    docs/superpowers/specs/2026-10-08-e3-control-authority-design.md:347
+    docs/superpowers/specs/2026-10-08-e3-control-authority-design.md:348

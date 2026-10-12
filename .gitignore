@@ -12,3 +12,5 @@ firmware/大车proj/大车/OBJ/
 .idea/
 *.uvoptx
 *.uvguix.*
+# 组会 deck 的逐页渲染 QA 中间产物（export_png.ps1 可再生，2026-10-12 定）
+docs/组会汇报_*/render_qa/
