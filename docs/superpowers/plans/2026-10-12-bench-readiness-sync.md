@@ -72,7 +72,7 @@
   - `wire.run_log_row(..., tx_frames='-')` — 新关键字参数，落**最后一列**
   - `pc/main.py` 的闭包变量 `tx_this_beat: list` — 每拍清零，只在真的 `sendto` 成功后 append
 
-- [ ] **Step 1: 写失败的测试（`tests/test_wire.py`，追加到文件末尾）**
+- [x] **Step 1: 写失败的测试（`tests/test_wire.py`，追加到文件末尾）**
 
 判据的核心是**位置**而不是数量，所以这里放一张"加列之前的列名快照"，断言写成"与快照逐个相等 + 只长一列"（AGENTS 审查清单第 8 条：列数一旦写死，下一批它就变成待检查内容——这个坑本仓已经踩过两次，Step 3 会顺手拆掉那两处）。
 
@@ -127,12 +127,12 @@ def test_tx_frames_text_names_each_frame_type():
     assert wire.tx_frames_text([P.TYPE_TOOL, P.TYPE_NAV]) == 'TOOL+NAV'
 ```
 
-- [ ] **Step 2: 跑测试，确认它是因为"东西不存在"而红**
+- [x] **Step 2: 跑测试，确认它是因为"东西不存在"而红**
 
 Run: `python -B -m pytest tests/test_wire.py -q -p no:cacheprovider`
 Expected: 三条新测试全红，且红法是 `AttributeError: module 'pc.wire' has no attribute 'tx_frames_text'` 与 `AssertionError`（列名/取值对不上），**不是** import 阶段收集错误。既有测试里 `:145` 与 `:150` 那两条**此刻仍该绿**（列还没加）——如果它们现在也红了，说明 Step 1 的改动跑到了实现之后，回头核对顺序。
 
-- [ ] **Step 3: 实现（`pc/wire.py`）**
+- [x] **Step 3: 实现（`pc/wire.py`）**
 
 3a. `RUN_LOG_COLUMNS` 里 `'l1_events',` 之后、闭合 `]` 之前插入（保留 `'l1_events'` 上面那段"追加在末尾"的既有注释，不改写它）：
 
@@ -195,7 +195,7 @@ def tx_frames_text(ftypes):
         tx_frames,
 ```
 
-- [ ] **Step 4: 接线（`pc/main.py`）**
+- [x] **Step 4: 接线（`pc/main.py`）**
 
 四处，全部是加法。**注意闭包**：`tx_this_beat` 只用方法改动（`append` / `del xs[:]`），从不重新绑定，所以 `send()` 里不需要为它写 `nonlocal`——只有 `seq` 需要。
 
@@ -237,7 +237,7 @@ def tx_frames_text(ftypes):
         wr.writerow(wire.RUN_LOG_COLUMNS)     # 列定义与行构造都在 pc/wire.py（列数不在这里写，AGENTS 清单第 8 条）
 ```
 
-- [ ] **Step 5: 解除两处写死的列数（既有测试的反查，AGENTS 清单第 2 条）**
+- [x] **Step 5: 解除两处写死的列数（既有测试的反查，AGENTS 清单第 2 条）**
 
 `grep -n "25" tests/test_wire.py tests/test_control.py pc/main.py` 会给出下面这三处的位置。逐条改，**取值断言一个字不动**（那些取值就是 spec §6.1 要的"旧数据复现旧结论"对照）：
 
@@ -273,14 +273,14 @@ def test_main_run_log_writes_the_full_header_and_the_e3_fields(tmp_path, monkeyp
         [len(x) for x in r['rows']]
 ```
 
-- [ ] **Step 6: 跑全量，确认只有预期的绿**
+- [x] **Step 6: 跑全量，确认只有预期的绿**
 
 Run: `python -B -m pytest tests/ -q -p no:cacheprovider`
 Expected: **0 failed / 0 error**；条数以这条命令的当场输出为准，**不抄进任何文件**（AGENTS 清单第 8 条）。读数与 `AGENTS.md`『当前状态』那一行写的最近一次相比**只该多不少**（本任务净增 3 条）。
 Run: `python -B -m pytest tests/test_control.py -q -p no:cacheprovider -k "run_log"`
 Expected: 改名后的那条与相邻的 `l1_events` 取值断言全绿——它们证明新列没把前面任何一列的取值挪位。
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
 
 先 `git diff --numstat` 眼看改动只落在 `pc/wire.py`、`pc/main.py`、`tests/test_wire.py`、`tests/test_control.py` 四个文件；然后：
 
@@ -306,6 +306,12 @@ ESTOP 稳态与回放都长这个样子，混成空串就把静默读成日志�
 本任务不动 firmware/、不新增"圈号+短横+圈号"的区间记法。
 EOF
 ```
+
+> **勾选注（10-12 晚，控制器补记）**：Step 1 到 Step 7 由子代理执行，提交 `ddedb98`。下面四件事要写在这一节里，否则下一个人会把它读成"计划原样做完、没有偏差"：
+> ① **控制器在同一个时间窗里往 `tests/test_control.py` 追加了一条 main 侧接线测试**（`test_main_run_log_tx_frames_equals_what_the_socket_actually_saw`），它被 `ddedb98` 那次提交一起带进了仓 ⇒ 那条提交信息里"未新增 main 侧永久测试"这句**作废**（历史提交改不了，这句就是留痕）。**流程教训**：派活时把 `tests/test_control.py` 一并划进了子代理的文件范围，"锁文件范围"没锁住共享文件；下一批并行要么按文件互斥分，要么让子代理提交前先 `git status` 看一次树里有没有别人的改动。
+> ② 为什么这条测试必须有（**计划原本漏了**）：Step 1 那三条验的是 `wire.tx_frames_text()` 与列位置，**没有一条验 `pc/main.py` 的接线**。当场做了两次变异、各跑一次全量：把写行处的 `tx_frames=` 实参去掉 ⇒ 只有这一条新测试红、其余全绿（缺省值让它仍与表头等长，所以既有判据看不见）；把每拍的 `del tx_this_beat[:]` 删掉 ⇒ 同样只有它红（上一拍的帧型会漂进这一拍）。⇒ 本计划这一节的判据面本来就盖不住接线，缺陷在计划不在执行。
+> ③ 两条边界：执行者保留了 Step 4d 那段替换会顺手吞掉的 `# I-6` 注释；**回放模式（`sock is None`）没有实跑过**——本仓所有 `main()` 测试都走 `--live` 加假 socket，所以"回放那一拍记 `-`"目前只有代码位置与 `wire` 层的缺省值单测撑着，属**未验边界**，等台架或回放实测时补。
+> ④ 连带就地订正：`docs/superpowers/plans/2026-10-08-e3-batch-1b-pc-tools.md` 的勘误段里那句"现在是 **25 列**"本次起过期——同一句自己写着"别在任何文档里抄这个数"，而它就把数抄了。已在那一行末尾追加订正，**不写新数**。
 
 ---
 

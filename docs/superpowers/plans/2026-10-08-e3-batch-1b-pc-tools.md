@@ -1191,7 +1191,7 @@ pytest 191 -> 192 passed。固件未动 —— 现在 PC 会对旧固件发 MODE
 EOF
 ```
 
-> **勘误（10-09，Task 10 文档收口）**：上面这条提交草稿写的"冒烟 CSV **24 列**"是**当时那一版**的读数，留原样不抹。Task 6 的 fix round 1（I-6：L1 降级事件计数）之后，`pc/wire.py:RUN_LOG_COLUMNS` 又在**末尾**追加了 `l1_events` ⇒ 现在是 **25 列**（追加在末尾是有意的：前面各列下标不变，按位置读日志的旧消费者不受影响）。**列数的权威是 `pc/wire.py:RUN_LOG_COLUMNS`**，读数用 `python -B -c "from pc import wire; print(len(wire.RUN_LOG_COLUMNS))"` 当场拿，别在任何文档里抄这个数（AGENTS 审查清单第 8 条）。判据本身没变，`tests/test_wire.py` 钉的是"表头 == 列名表 == 每一行的长度"三件一致，不钉具体数字——所以列再加一条时不会有一处文档"为了变绿"要改。
+> **勘误（10-09，Task 10 文档收口）**：上面这条提交草稿写的"冒烟 CSV **24 列**"是**当时那一版**的读数，留原样不抹。Task 6 的 fix round 1（I-6：L1 降级事件计数）之后，`pc/wire.py:RUN_LOG_COLUMNS` 又在**末尾**追加了 `l1_events` ⇒ 现在是 **25 列**（追加在末尾是有意的：前面各列下标不变，按位置读日志的旧消费者不受影响）。**列数的权威是 `pc/wire.py:RUN_LOG_COLUMNS`**，读数用 `python -B -c "from pc import wire; print(len(wire.RUN_LOG_COLUMNS))"` 当场拿，别在任何文档里抄这个数（AGENTS 审查清单第 8 条）。判据本身没变，`tests/test_wire.py` 钉的是"表头 == 列名表 == 每一行的长度"三件一致，不钉具体数字——所以列再加一条时不会有一处文档"为了变绿"要改。⚠️ **10-12 追加一句**：`tx_frames` 这一列又加在末尾了（台架就绪计划 `2026-10-12-bench-readiness-sync.md` 的 Task 1）⇒ 本行那句"现在是 25 列"当场过期，而它正是同一行里"别在任何文档里抄这个数"那条规矩的反例。**这里不写新数**，读数用本行那条命令当场拿；位置契约改由 `tests/test_wire.py` 的`_PRE_TX_FRAMES_COLUMNS` 快照钉（"前面各列逐个相等、总长恰好多 1"）。
 
 ---
 
