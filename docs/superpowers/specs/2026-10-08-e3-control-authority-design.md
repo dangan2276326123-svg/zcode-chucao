@@ -165,7 +165,7 @@ Fw-21 已查明：权限/状态/刀/横移/STATUS 跑在 TIM6 中断（`retrofit
 | # | 条件 | 检查点 | 不满足 |
 |---|---|---|---|
 | ① | 档案握手一致 | 收到过 `MODE(0x20)` 且 `profile` 与固件内置相同 | `reject=0x01` |
-| ② | SBUS 新鲜 | `retrofit_sbus_ok()`（≤500 ms 有效帧）。⚠️ 该函数现在**只在 MANUAL 分支用**（`main.c:560`），必须搬到这道门口 | `reject=0x02` |
+| ② | SBUS 新鲜 | `retrofit_sbus_ok()`（≤500 ms 有效帧）。⚠️ 该函数现在**只在 MANUAL 分支用**（**10-12 换锚点**：此处原写 `main.c:560`，当场按 GBK 读正身量到 `} else if (retrofit_mode() == MODE_MANUAL && !retrofit_sbus_ok()) {` 在 **561**，560 是上一支 ESTOP 的四轮清零——差一行，照旧规矩改用符号定位：`grep -n "MODE_MANUAL && !retrofit_sbus_ok" firmware/大车proj/大车/USER/main.c`），必须搬到这道门口 | `reject=0x02` |
 | ③ | **🔴 10-10 作者改判：本条不实现**（原案：现场拨档在"允许无人"位）。**编号与拒绝码都保留、不复用**；本行只作存档 | ~~`sbus_channel[FIELD_CH]` 在允许区间（§4.3）~~ ⇒ **批 1a 不写这一条判定，固件里没有 `FIELD_*` 宏**（§4.3 存档段与 §16） | `reject=0x03` 保留、不复用（当前固件不会上报） |
 | ④ | 无 ESTOP 锁存 | `estop_latched == 0` | `reject=0x04` |
 | ⑤ | 执行面活着 | `loop_alive` 在最近 5 个 STATUS 周期内变过 | `reject=0x05` |
