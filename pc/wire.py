@@ -29,6 +29,11 @@ RUN_LOG_COLUMNS = [
     # ---- E3 Task 6 fix round 1 / I-6：L1 降级事件计数（spec §5.2）----
     # 追加在**末尾**：前面各列的下标不变，按位置读日志的旧消费者不受影响。
     'l1_events',
+    # ---- T2（2026-10-12 台架就绪）：这一拍 PC 真发上线的帧型 ----
+    # 同样追加在**末尾**，跟着上面那条规矩走。§4B 的 C2 与 C18 要靠它把
+    # "线上只有 HEARTBEAT""交回之后 PC 还在发"从旁证升成字节级证据，
+    # 所以取值是帧型串而不是计数。列名快照与位置判据在 tests/test_wire.py。
+    'tx_frames',
 ]
 
 # HUD 用的 ASCII 短码（fix round 1 I-4）。cv2.putText 画不出 CJK——
@@ -103,16 +108,48 @@ def frames_for_state(state, usable, vl, vr, tool_mm, permit=GATE_N):
             (P.TYPE_TOOL, P.pack_tool(off, lift))]
 
 
+# 帧型 → 本列用的短名。与 REJECT_SHORT 同一个理由：CSV 与 HUD 都要 ASCII，
+# 而 `NAV+TOOL` 这种写法能直接对上 frames_for_state() 的返回顺序。
+TX_FRAME_NAMES = {
+    P.TYPE_NAV: 'NAV',
+    P.TYPE_TOOL: 'TOOL',
+    P.TYPE_HEARTBEAT: 'HB',
+    P.TYPE_ESTOP: 'ESTOP',
+    P.TYPE_MODE: 'MODE',
+}
+
+
+def tx_frames_text(ftypes):
+    """把这一拍**真的写进 socket** 的帧型拼成一列文本：`NAV+TOOL` / `HB` / `-`。
+
+    `'-'` 的意思是"这一拍线上确实一个字节都没有"——ESTOP 稳态是这种（E3 §5.1：
+    稳态由 `frames_for_state('ESTOP', …)` 返回空列表，ESTOP 帧只在跳变那一拍发一次），
+    回放模式也是这种（`pc/main.py` 的 `send()` 在 `sock is None` 时直接 return）。
+    **它不是缺数据**：写成空串就会让人把"急停稳态的静默"当"日志坏了"，
+    而把回放写成 `NAV+TOOL` 更糟——那是在给"这帧上线过"造一条假证据
+    （spec §6.1 点名的就是这个形状：工具伪装成被测机制）。
+
+    认不出的帧型原样给数字，不替它编名字。
+    """
+    if not ftypes:
+        return '-'
+    return '+'.join(TX_FRAME_NAMES.get(t, str(t)) for t in ftypes)
+
+
 def run_log_row(t_rel, fid, state, res, lat_m, lat_comp_m, vl, vr, tool_mm,
                 latency_ms, st, feed_snapshot, permit,
                 rx_good='', rx_bad='', recv_timeouts='', link_drops='',
-                l1_events=0):
+                l1_events=0, tx_frames='-'):
     """按 RUN_LOG_COLUMNS 的顺序拼一行。st 可以是 None（无 STATUS）或 v1 字典。
 
     l1_events 是**累计的 L1 降级事件数**（spec §5.2，I-6），由调用方维护，
-    这里只负责落到最后一列。它写整数而不是空串：这一列的用法是"求和/看趋势"，
+    这里只负责落到自己那一列（10-12 的 T2 之后末位是 tx_frames，它不再是末位）。它写整数而不是空串：这一列的用法是"求和/看趋势"，
     空串会让读日志的人把"没有降级"和"没接线"混成一回事。默认 0 = "没进入过 L1"，
     与 main 的初始值同一个语义。
+
+    `tx_frames` 是这一拍**真的写进 socket** 的帧型串（T2），由调用方从 `send()`
+    的出口收集；缺省 `'-'` = "这一拍线上一个字节都没有"，含义与上面 `l1_events`
+    那句一样：不能拿空串当"没接线"，也不能拿它当"发过了"。
     """
     st = st or {}
     _feed, _seq, age = feed_snapshot if feed_snapshot else ({}, 0, None)
@@ -137,4 +174,5 @@ def run_log_row(t_rel, fid, state, res, lat_m, lat_comp_m, vl, vr, tool_mm,
         _e3('profile'), _e3('authority'), _e3('reject'),
         _e3('loop_alive'), _e3('build_id'), permit,
         '%d' % l1_events,
+        tx_frames,
     ]

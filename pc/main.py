@@ -240,12 +240,15 @@ def main():
             print('WARNING: no fresh MCU STATUS (link down / MCU hung) — '
                   'last-good %s' % ('never' if age is None else '%.1fs' % age))
 
+    tx_this_beat = []   # T2：这一拍**真的写进 socket** 的帧型，run_log 的 tx_frames 列用它
+
     def send(ftype, payload):
         nonlocal seq
         if sock is None:      # replay mode: no radio, no commands leave the PC
             return
         from common import protocol as P
         sock.sendto(P.pack_frame(ftype, payload, seq & 0xFFFF), pi)
+        tx_this_beat.append(ftype)   # 在 sendto 之后：抛了就不算发过（与 bench_status 同纪律）
         seq += 1
 
     from common import protocol as P
@@ -266,7 +269,7 @@ def main():
 
     with open(csv_path, 'w', newline='', encoding='utf-8') as fcsv:
         wr = csv.writer(fcsv)
-        wr.writerow(wire.RUN_LOG_COLUMNS)     # 25 列；列定义与行构造都在 pc/wire.py
+        wr.writerow(wire.RUN_LOG_COLUMNS)     # 列定义与行构造都在 pc/wire.py（列数不在这里写，AGENTS 清单第 8 条）
         src = FrameSource(args.source, args.live, args.step,
                           args.stream_host, args.stream_port)
         for fid, frame in enumerate(src.frames()):
@@ -274,6 +277,7 @@ def main():
             dt = max(t0 - t_prev, 1e-3)
             t_prev = t0
             prev_state = sm.state   # captured BEFORE any state event (P0-4)
+            del tx_this_beat[:]      # T2：这一列只描述这一拍；上一拍的帧型不许漂过来
 
             drain_status(t0)
             # ---- I-5：上电档案握手（MODE 0x20 + 档案号），必须早于任何控制帧 ----
@@ -545,7 +549,8 @@ def main():
                 rx_good=rx.good if rx else '', rx_bad=rx.bad if rx else '',
                 recv_timeouts=_st.get('recv_timeouts', ''),
                 link_drops=_st.get('link_drops', ''),
-                l1_events=l1_events))          # I-6：降级事件落到时间轴上
+                l1_events=l1_events,           # I-6：降级事件落到时间轴上
+                tx_frames=wire.tx_frames_text(tx_this_beat)))   # T2：这一拍线上真有什么
             n += 1
             if n % 20 == 0:
                 print('[%d] %s lat=%.3fm vL=%.2f vR=%.2f tool=%.1fmm %.0fms%s' % (

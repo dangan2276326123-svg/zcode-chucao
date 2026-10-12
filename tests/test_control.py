@@ -769,12 +769,16 @@ def test_main_frame_sequence_holds_authority_and_stays_silent_in_estop(tmp_path,
     assert r['holder']['resets'] == 4, '瞎了/急停/手动三态每一拍都该清积分'
 
 
-def test_main_run_log_writes_25_columns_and_the_e3_fields(tmp_path, monkeypatch):
-    """CSV 不能被接线写坏：表头 = wire.RUN_LOG_COLUMNS，每行 25 项，
+def test_main_run_log_writes_the_full_header_and_the_e3_fields(tmp_path, monkeypatch):
+    """CSV 不能被接线写坏：表头 = wire.RUN_LOG_COLUMNS，每行与表头等长，
     五个 E3 列来自**真解出来**的 STATUS v2，permit 列每行都是档案里那一档。
 
     25 列（原 24 + `l1_events`）是控制器批准的偏差，理由见 fix round 1 的 I-6：
     spec §5.2 的降级事件必须落到时间轴上，24 是计划正文里的旧数。
+
+    10-12 又追加了一列 `tx_frames`（T2）。这一条**不再写死列数**——列名与位置由
+    `tests/test_wire.py` 的 `_PRE_TX_FRAMES_COLUMNS` 快照钉，这里只比"表头 == 现场那张列表"
+    与"每行与表头等长"。（AGENTS 清单第 8 条：抄进来的数字下一批就变成待检查内容。）
 
     另外钉住一件事：不可用那一拍的 lat_m 必须是**空**，不是 '0.0000'——
     日志里的 0.0000 读起来像"实测正好压在行上"，那是伪造证据（旧实现就是这个
@@ -784,8 +788,8 @@ def test_main_run_log_writes_25_columns_and_the_e3_fields(tmp_path, monkeypatch)
                     results=[_USABLE, _BLIND, _USABLE],
                     states=['AUTO', 'AUTO', 'AUTO'], permit=wire.GATE_N, profile_id=1)
     assert r['header'] == list(wire.RUN_LOG_COLUMNS)
-    assert len(r['header']) == 25
-    assert all(len(row) == 25 for row in r['rows']), [len(x) for x in r['rows']]
+    assert all(len(row) == len(r['header']) for row in r['rows']), \
+        [len(x) for x in r['rows']]
 
     idx = {c: i for i, c in enumerate(r['header'])}
     assert [row[idx['permit']] for row in r['rows']] == ['1', '1', '1']
@@ -804,6 +808,40 @@ def test_main_run_log_writes_25_columns_and_the_e3_fields(tmp_path, monkeypatch)
     assert r['rows'][1][idx['lat_m']] == ''                 # 瞎了这拍不写测量值
     assert r['rows'][1][idx['lat_comp_m']] == ''
     assert r['rows'][1][idx['status']] == 'no_frame'
+
+
+def test_main_run_log_tx_frames_equals_what_the_socket_actually_saw(tmp_path, monkeypatch):
+    """T2 的**接线**判据：`tx_frames` 那一列必须等于这一拍真的过 socket 的帧型。
+
+    为什么单独立一条，而不是靠 `tests/test_wire.py` 里 `tx_frames_text()` 的单元测试：
+    那三条只证明"函数会拼字符串"。`pc/main.py` 少写一个 `tx_frames=` 实参时，
+    `run_log_row()` 用缺省 `'-'`，行长仍与表头相等、既有断言一个字都不会红；
+    少写每拍的 `del tx_this_beat[:]` 时，上一拍的帧型会漂进这一拍，把 ESTOP 稳态
+    写成 `MODE+NAV+TOOL`——两种都是"列在表里但说的是假话"，而这正是 §4B 的 C2／C18
+    要拿它当字节级证据的前提（spec §6.1 点名的形状：工具伪装成被测机制）。
+
+    所以判据取自 `_drive_main` 记下的 `sent`（socket 的真收发记录，带拍号），
+    不去从状态推"应该发什么"。第三拍故意设成 ESTOP：那一拍线上只有跳变帧。
+    """
+    r = _drive_main(tmp_path, monkeypatch,
+                    results=[_USABLE, _BLIND, _USABLE],
+                    states=['AUTO', 'AUTO', 'ESTOP'], permit=wire.GATE_N,
+                    profile_id=1)
+    idx = {c: i for i, c in enumerate(r['header'])}
+    col = idx['tx_frames']
+    by_beat = {}
+    for beat, ftype, _payload, _addr in r['sent']:
+        by_beat.setdefault(beat, []).append(ftype)
+    for row in r['rows']:
+        fid = int(row[idx['frame_id']])
+        assert row[col] == wire.tx_frames_text(by_beat.get(fid, [])), (fid, row[col])
+    # 反向闸：整列都是 '-' 就说明根本没接上（上面那条比对会一起绿，看不出问题）
+    assert [row[col] for row in r['rows']] != ['-', '-', '-'], \
+        [row[col] for row in r['rows']]
+    # 逐拍清零真的在起作用：第一拍带开机握手，后两拍不许再出现 MODE
+    assert by_beat[0] and P.TYPE_MODE in by_beat[0]
+    assert P.TYPE_MODE not in by_beat.get(1, [])
+    assert r['rows'][1][col] == 'NAV+TOOL' and r['rows'][2][col] == 'ESTOP'
 
 
 def test_main_permit_and_profile_id_come_from_the_loaded_profile(tmp_path, monkeypatch):

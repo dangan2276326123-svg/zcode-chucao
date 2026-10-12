@@ -142,12 +142,12 @@ def test_run_log_row_carries_l1_events_and_reject_short_codes():
     目前没有生产调用点，只有 `tools/link_probe.py` 在 stdout 打整句。
     """
     assert 'l1_events' in wire.RUN_LOG_COLUMNS
-    assert wire.RUN_LOG_COLUMNS[-1] == 'l1_events'   # 追加在末尾，旧列下标不变
+    assert wire.RUN_LOG_COLUMNS[-2] == 'l1_events'   # T2 之后 l1_events 让出末位，仍是"追加在末尾"的次序
     res = {'status': 'left_only', 'confidence': 0.9, 'lateral_px': 3.0}
     _args = (1.0, 7, 'AUTO', res, 0.01, 0.02, 0.07, 0.07, 0.0, 12.0, None,
              ({}, 0, None), wire.GATE_N)
     row = wire.run_log_row(*_args)
-    assert len(row) == len(wire.RUN_LOG_COLUMNS) == 25
+    assert len(row) == len(wire.RUN_LOG_COLUMNS)     # 列数由 test_tx_frames_is_appended_* 那条按快照钉
     col = wire.RUN_LOG_COLUMNS.index('l1_events')
     assert row[col] == '0'
     assert wire.run_log_row(*_args, l1_events=3)[col] == '3'
@@ -162,3 +162,53 @@ def test_run_log_row_carries_l1_events_and_reject_short_codes():
     assert wire.reject_short(P.REJECT_NONE) == ''      # 没有拒绝 = 不占一行
     assert wire.reject_short(None) == ''               # v1 固件没这个字段
     assert wire.reject_short(200) == 'UNKNOWN-200'     # 未知码：可见兜底，不是空
+
+
+# ---- T2（docs/superpowers/specs/2026-10-12-bench-readiness-sync-design.md §4）----
+# `tx_frames` **追加之前**的列名快照。这张表是"位置契约"的锚：判据是
+# "前 len(快照) 列与快照逐个相等、且总长恰好多 1"，而不是把列数写死在断言里。
+# 为什么需要锚而不是靠人眼看 diff：`pc/wire.py` 的注释自己写着"前面各列的下标不变，
+# 按位置读日志的旧消费者不受影响"，而这句话一旦被破坏，**没有任何一条既有测试会红**
+# （既有测试全部按列名取数）。
+_PRE_TX_FRAMES_COLUMNS = [
+    't', 'frame_id', 'state', 'status', 'lat_m', 'lat_comp_m',
+    'vL', 'vR', 'tool_mm', 'conf', 'latency_ms',
+    'mcu_mode', 'batt_v', 'rx_good', 'rx_bad',
+    'frame_age_s', 'recv_timeouts', 'link_drops',
+    'profile', 'authority', 'reject', 'loop_alive', 'build_id', 'permit',
+    'l1_events',
+]
+
+
+def test_tx_frames_is_appended_without_moving_earlier_columns():
+    n = len(_PRE_TX_FRAMES_COLUMNS)
+    assert wire.RUN_LOG_COLUMNS[:n] == _PRE_TX_FRAMES_COLUMNS
+    assert len(wire.RUN_LOG_COLUMNS) == n + 1
+    assert wire.RUN_LOG_COLUMNS[-1] == 'tx_frames'
+
+
+def test_run_log_row_puts_tx_frames_last_and_defaults_to_the_silent_marker():
+    """缺省 `'-'` 的含义是"这一拍线上确实一个字节都没走"，**不是缺数据**。
+
+    ESTOP 稳态与回放模式都是这种。把它写成空串，读日志的人就会把"急停稳态的
+    静默"当"日志坏了"；反过来把它写成 `NAV+TOOL`，回放模式就会声称发过东西。
+    """
+    res = {'status': 'dual', 'confidence': 0.9, 'lateral_px': 3.0}
+    args = (1.0, 7, 'AUTO', res, 0.01, 0.02, 0.07, 0.07, 0.0, 12.0, None,
+            ({}, 0, None), wire.GATE_N)
+    row = wire.run_log_row(*args)
+    assert len(row) == len(wire.RUN_LOG_COLUMNS)
+    i = len(wire.RUN_LOG_COLUMNS) - 1
+    assert row[i] == '-'
+    assert wire.run_log_row(*args, tx_frames='NAV+TOOL')[i] == 'NAV+TOOL'
+
+
+def test_tx_frames_text_names_each_frame_type():
+    assert wire.tx_frames_text([]) == '-'
+    assert wire.tx_frames_text([P.TYPE_HEARTBEAT]) == 'HB'
+    assert wire.tx_frames_text([P.TYPE_NAV, P.TYPE_TOOL]) == 'NAV+TOOL'
+    assert wire.tx_frames_text([P.TYPE_ESTOP]) == 'ESTOP'
+    assert wire.tx_frames_text([P.TYPE_MODE]) == 'MODE'
+    # 认不出的帧型原样给数字，不替它编名字（与 wire.REJECT_SHORT 同一口径）。
+    assert wire.tx_frames_text([99]) == '99'
+    assert wire.tx_frames_text([P.TYPE_TOOL, P.TYPE_NAV]) == 'TOOL+NAV'
