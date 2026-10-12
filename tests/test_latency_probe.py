@@ -1245,8 +1245,10 @@ def test_estop_caution_says_which_phase_is_silent_and_what_the_bench_must_do():
     assert 'M-3' in text and 'STATUS' in text
     # 等待短于桥窗口时，D1 那句不该出现（不许把没发生的风险写成告警）
     assert LP.estop_caution(0.4) == []
-    # --skip-d2 时没有持停段，D2 那句也不该出现
-    assert len(LP.estop_caution(2.0, settle_s=0.0)) == 1
+    # --skip-d2 时没有持停段，D2 那句也不该出现。10-12 T3 之后 D1 自己占两行，
+    # 所以这里判的是"D2 不许出现"而不是**行数**——行数正是本仓不许抄进文档的那种数。
+    d1_only = LP.estop_caution(2.0, settle_s=0.0)
+    assert d1_only and all('D2' not in ln for ln in d1_only)
 
 
 def test_estop_caution_with_re_sending_off_says_the_run_goes_silent():
@@ -1267,9 +1269,10 @@ def test_estop_caution_with_re_sending_off_says_the_run_goes_silent():
     t2 = '\n'.join(LP.estop_caution(2.0, keepalive_s=0, settle_s=0.0))
     assert 'no hold phase' in t2 and 'every 0.00 s' not in t2
     # keepalive_s=None（main 在 --skip-d2 时传的就是它）：D2 一个字都不发，
-    # 于是关于它的节奏一句都不许说——只有 D1 那句。
+    # 于是关于它的节奏一句都不许说——只有 D1 那几句（10-12 T3 起 D1 占两行，
+    # 所以判据改写成"D2 不许出现"，不写行数）。
     lines = LP.estop_caution(2.0, keepalive_s=None, settle_s=0.0)
-    assert len(lines) == 1 and 'D2' not in lines[0]
+    assert lines and all('D2' not in ln for ln in lines)
     # 正常跑法（0 < keepalive < 桥窗口）仍说"不睡空窗"，并带上 M-3 那句未修的话
     t3 = '\n'.join(LP.estop_caution(2.0, keepalive_s=0.2, settle_s=1.0))
     assert 'does NOT sleep' in t3 and 'every 0.20 s' in t3 and 'M-3' in t3
@@ -1278,6 +1281,29 @@ def test_estop_caution_with_re_sending_off_says_the_run_goes_silent():
     assert '0.35 s settle' in t4 and 'every 0.10 s' in t4
     for t in (text, t2, t3, t4):
         assert t.isascii()
+
+
+def test_d1_silence_names_the_missing_remedies():
+    """T3：D1 每轮的固有静默会锁存板子，而"救不了"这件事以前只在注释里。
+
+    断言四件事：三条软件补救点名（[M] / !clear / link_probe clear）、
+    说清为什么都不存在（都走 TYPE_MODE，未烧批 1a 的板整条丢掉）、
+    只能断电、以及**烧了之后也不是"已知能清"**——那一手要 §4B 的 C11 真过
+    （不许把待台架说成可用，AGENTS 清单第 5 条的四态口径）。
+
+    反向那半是这条测试的重点：D1 不制造静默时**这两句都不许出现**。
+    注意 `estop_caution()` 的 D2 分支里也有 'power cycle' 字样（既有文案），
+    所以反向判据说的是本行独有的那两个特征串，不是笼统的 'power cycle'。
+    """
+    lines = LP.estop_caution(2.0)
+    assert len(lines) >= 2
+    text = '\n'.join(lines)
+    for want in ('[M]', '!clear', 'link_probe clear', 'TYPE_MODE',
+                 'power cycle', 'C11', 'is only proven after'):
+        assert want in text, want
+    quiet = LP.estop_caution(0.4, keepalive_s=LP.DEFAULT_KEEPALIVE_S)
+    assert not any('link_probe clear' in ln for ln in quiet)
+    assert not any('is only proven after' in ln for ln in quiet)
 
 
 def test_main_does_not_describe_d2_pacing_when_d2_was_skipped(monkeypatch, capsys):

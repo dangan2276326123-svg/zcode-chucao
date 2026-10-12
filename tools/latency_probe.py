@@ -1071,6 +1071,15 @@ def estop_caution(timeout_d1_s, keepalive_s=DEFAULT_KEEPALIVE_S, settle_s=0.0):
             'TYPE_MODE too, so it does not work on the flashed firmware either. '
             'Bench procedure: power-cycle the board after this run, before any other '
             'bench action.' % (timeout_d1_s, BRIDGE_ESTOP_AFTER_S))
+        lines.append(
+            'And the software remedies do not exist on that board: [M] in pc/main.py, '
+            '!clear in bench_status stdin and "link_probe clear" all put a TYPE_MODE '
+            'frame on the wire, which the pre-E3 firmware drops whole (the switch has '
+            'no MODE_REQ branch) - a power cycle is the only way out. After batch 1a '
+            'is flashed, MODE_REQ_CLEAR_ESTOP is *coded* to clear the latch, but it is '
+            'only proven after bench cell C11 of the X5 checklist section 4B has '
+            'passed; until then plan every D1 round as costing one power cycle, and '
+            'keep the remedy column of your notes honest about that.')
     if keepalive_s == 0:
         where = ('the hold sends ONE NAV(0,0) and then says nothing until its %.2f s '
                  'window ends, and the step window is fed the same way' % settle_s
