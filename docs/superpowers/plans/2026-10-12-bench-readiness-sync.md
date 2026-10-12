@@ -325,7 +325,7 @@ EOF
 - Consumes：`P.MODE_REQ_PROFILE`（0x20）、`P.MODE_REQ_TELEOP`（0x02）、`P.pack_mode(req, profile)`、既有 `_load_profile_id()`（档案号唯一出处 = `config/vehicle_profile.yaml`）。
 - Produces：`link_probe.MODE_REQUEST_KINDS` 含 5 项、`EXPECTED` 含 `mode_profile`/`mode_teleop`（值都是 `None` = 不以 mode 变化为判据）、`link_probe._judge_new_mode(kind, baseline_mode, seen_modes, rejects)`、`link_probe.check_mode_args(kind, args)`（`main()` 调用它，测试也直接调它）。
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 1a. 把既有的那条参数化测试扩成五条（`tests/test_link_probe.py:289-293` 的列表末尾加两行）——**这是改号的反查重点**：既有测试的参数表就是"三种 MODE 命令"这个旧事实的载体：
 
@@ -397,12 +397,12 @@ def test_judge_mode_profile_and_teleop_say_different_things():
     assert lp.judge('mode_teleop', None, [0], [])[0] == 'INCONCLUSIVE'
 ```
 
-- [ ] **Step 2: 跑测试，确认失败形状**
+- [x] **Step 2: 跑测试，确认失败形状**
 
 Run: `python -B -m pytest tests/test_link_probe.py -q -p no:cacheprovider`
 Expected: 参数化那两条新用例红在 `ValueError: 未知指令` （`build()` 的抛错文案），另外三条红在 `assert 'mode_profile' in …` 与 `AttributeError: module 'tools.link_probe' has no attribute 'check_mode_args'`。
 
-- [ ] **Step 3: 实现（`tools/link_probe.py`）**
+- [x] **Step 3: 实现（`tools/link_probe.py`）**
 
 3a. `EXPECTED` 与 `MODE_REQUEST_KINDS`（`:106-109`）：
 
@@ -530,7 +530,7 @@ def check_mode_args(kind, args):
 
 3h. `_run_serial()` 末尾那句中文 INCONCLUSIVE 打印（`:355-360`）里"mode_auto / mode_manual / clear 这三条"改成"这一族（`MODE_REQUEST_KINDS`）这几条"，别在第二处再枚举一遍——两处枚举就是两个事实源。
 
-- [ ] **Step 4: 跑测试**
+- [x] **Step 4: 跑测试**
 
 Run: `python -B -m pytest tests/test_link_probe.py -q -p no:cacheprovider`
 Expected: 全绿。
@@ -539,7 +539,7 @@ Expected: 全量 0 failed / 0 error（条数以当场输出为准）。
 Run: `python -B tools/link_probe.py mode_profile --help` 之后再跑 `python -B tools/link_probe.py mode_profile 2`
 Expected: 前者正常打印用法（choices 里能看见 `mode_profile` 与 `mode_teleop`）；后者**立刻**退出并说明"不接受参数：档案号从 config/vehicle_profile.yaml 取"，且**不**留下任何 socket 相关报错——这一步同时验证 3f 的"位置不许漂"。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add tools/link_probe.py tests/test_link_probe.py
@@ -581,7 +581,7 @@ EOF
 - Consumes：`P.MODE_REQ_PROFILE`、`P.pack_mode`、既有 `TxSender.send_line()` 的三类出口计数（`unparsed` / `refused` / `errors`）。
 - Produces：`build_command('!profile', profile_id, seq)` → `('tx_profile', <TYPE_MODE 帧>)`；`'tx_profile' in TX_MODE_KINDS`（于是那一行的 `profile` 列有值）。
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 ```python
 # ---- T1（2026-10-12）：!profile —— 不重启 pc/main.py 也能重放档案握手 ----
@@ -628,12 +628,12 @@ def test_tx_profile_row_fills_profile_and_stays_out_of_the_rx_side(tmp_path):
 
 同时把既有 `test_build_command_parses_each_kind` 的元组表（`:307-312`）加一行 `('!profile', P.TYPE_MODE)`——那条表就是"记录器能发哪几条"的事实源，漏更新的话它会成为下一处过期枚举。
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `python -B -m pytest tests/test_bench_status.py -q -p no:cacheprovider`
 Expected: 新用例红在 `assert None == 'tx_profile'` 之类（`build_command` 认不出 `!profile` 返回 None）。
 
-- [ ] **Step 3: 实现（`tools/bench_status.py`）**
+- [x] **Step 3: 实现（`tools/bench_status.py`）**
 
 3a. `TX_MODE_KINDS`（`:103`）：
 
@@ -664,12 +664,12 @@ TX_MODE_KINDS = ('tx_auto', 'tx_manual', 'tx_clear', 'tx_profile')
                   % line)
 ```
 
-- [ ] **Step 4: 跑测试**
+- [x] **Step 4: 跑测试**
 
 Run: `python -B -m pytest tests/test_bench_status.py -q -p no:cacheprovider` → 全绿。
 Run: `python -B -m pytest tests/ -q -p no:cacheprovider` → 全量 0 failed / 0 error。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add tools/bench_status.py tests/test_bench_status.py
@@ -705,7 +705,7 @@ EOF
 - Consumes：`BRIDGE_ESTOP_AFTER_S`、既有 `estop_caution(timeout_d1_s, keepalive_s, settle_s)` 签名（**不改**）。
 - Produces：`lines` 在 D1 分支里多一个元素，内容 ASCII，说明"三条软件补救都不存在"。
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 ```python
 def test_d1_silence_names_the_missing_remedies():
@@ -731,12 +731,12 @@ def test_d1_silence_names_the_missing_remedies():
     assert not any('is only proven after' in ln for ln in quiet)
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `python -B -m pytest tests/test_latency_probe.py -q -p no:cacheprovider`
 Expected: 新用例红在 `assert len(lines) >= 2`（当前 D1 分支只 append 一行；`timeout_d1=2.0` 时 D2 那句因走 `elif` 而不出现）。
 
-- [ ] **Step 3: 实现（`tools/latency_probe.py`）**
+- [x] **Step 3: 实现（`tools/latency_probe.py`）**
 
 在 `estop_caution()` 的 `if timeout_d1_s is not None and timeout_d1_s > BRIDGE_ESTOP_AFTER_S:` 分支里，**既有 `lines.append(...)` 之后**追加（纯 ASCII；不含"台账里已有这一条"那类措辞；行号引用只写符号名不写行号——本仓的规矩是"以后指格子不指行号"）：
 
@@ -752,7 +752,7 @@ Expected: 新用例红在 `assert len(lines) >= 2`（当前 D1 分支只 append 
             'keep the remedy column of your notes honest about that.')
 ```
 
-- [ ] **Step 4: 把新行纳入既有 ASCII 静态扫描**
+- [x] **Step 4: 把新行纳入既有 ASCII 静态扫描**
 
 `tests/test_latency_probe.py` 那片 `targets`（列着若干 `'\n'.join(LP.estop_caution(...))` 的地方）里，在已有条目之后加一条同形状的：
 
@@ -760,13 +760,13 @@ Expected: 新用例红在 `assert len(lines) >= 2`（当前 D1 分支只 append 
                '\n'.join(LP.estop_caution(2.0, keepalive_s=None, settle_s=0.0)),
 ```
 
-- [ ] **Step 5: 跑测试**
+- [x] **Step 5: 跑测试**
 
 Run: `python -B -m pytest tests/test_latency_probe.py -q -p no:cacheprovider` → 全绿（含 ASCII 扫描与"不许声称台账"那条 NEW-3 静态断言）。
 Run: `python -B -m pytest tests/ -q -p no:cacheprovider` → 全量 0 failed / 0 error。
 Run: `python -B tools/latency_probe.py --help` → 正常打印，且这条路径不报错（help 也在 ASCII 扫描面里）。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add tools/latency_probe.py tests/test_latency_probe.py
@@ -800,7 +800,7 @@ EOF
 
 **Interfaces:** 无代码接口。产出的是"§2 判据第 4 条能被机检"的形状：C2／C6／C10／C13／C14／C18／C19／C20 八格的最后一列里出现"已补入口（未台架）"或"两遍跑 + 人工对齐"，且这八格不再有"待补工具"。
 
-- [ ] **Step 1: 写追加脚本（先落文件再执行，Global Constraint 9）**
+- [x] **Step 1: 写追加脚本（先落文件再执行，Global Constraint 9）**
 
 判据：只改**唯一匹配**那一行；行的竖线数对不上就整文件不写；已经有这段文字就跳过（可重跑）。
 
@@ -934,14 +934,14 @@ def main():
 main()
 ```
 
-- [ ] **Step 2: 跑脚本**
+- [x] **Step 2: 跑脚本**
 
 Run: `python -B .superpowers/sdd/2026-10-12-bench-readiness-sync/append_cell.py`
 Expected: `appended 14, already-there 0`（C8 那格是"登记裁定"，不是补工具）。任何 `SystemExit` 都**不许绕过**——它说的是"这一行的形状我读不出来"，那就改用 Edit 工具按该行原文手工追加，并回头修正脚本里的前缀。
 Run: `python -B .superpowers/sdd/2026-10-12-bench-readiness-sync/append_cell.py`（**再跑一次**）
 Expected: `appended 0, already-there 14` —— 这条同时证明"重跑不会追加两遍"，因为现场真会重跑。
 
-- [ ] **Step 3: 机检八格 + 不许留悬置**
+- [x] **Step 3: 机检八格 + 不许留悬置**
 
 Run（先 Write 成 `.py` 文件再执行，别把中文塞进 `bash -c`）：
 
@@ -980,12 +980,12 @@ sys.exit(1 if bad else 0)
 
 Expected: `violations=0`、退出码 **0**。
 
-- [ ] **Step 4: 表格与文档不变量**
+- [x] **Step 4: 表格与文档不变量**
 
 Run: `python -B tools/check_doc_invariants.py` → 退出码 **0**（本任务不许新增任何"圈号+短横+圈号"的记法；脚本里的文案已按这条写）。
 Run: `python -B -m pytest tests/ -q -p no:cacheprovider` → 全量 0 failed / 0 error（本任务只动 md，读数应与 Task 4 收尾那次一致）。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add docs/X5验机与接入执行清单.md
@@ -1024,7 +1024,7 @@ EOF
 
 **Interfaces:** 无。产出是 spec §2 第 3 条能被 grep 机检的形状。
 
-- [ ] **Step 1: 逐锚点确认唯一性（动手之前）**
+- [x] **Step 1: 逐锚点确认唯一性（动手之前）**
 
 Run：把下面这个小检查 Write 成 `.py` 再执行（Global Constraint 9）。
 Expected: 每条命中数都是 **1**。任何一条不是 1 就停下来改锚点，不许"就近改第一处"。
@@ -1052,7 +1052,7 @@ for path, needle in CHECKS:
 print('ALL UNIQUE' if ok else 'FIX ANCHORS')
 ```
 
-- [ ] **Step 2: 缺口清单的标题行与口径行（一次 Edit，两格连着改）**
+- [x] **Step 2: 缺口清单的标题行与口径行（一次 Edit，两格连着改）**
 
 `old_string`（`:9-12` 那四行原文，逐字）：
 
@@ -1073,7 +1073,7 @@ print('ALL UNIQUE' if ok else 'FIX ANCHORS')
 > **标题里的日期只说明"这块板最后一次逐格复核是哪天"，不代表每一格都停在那一天**：每格现状以该格自己的续写日期为准，别拿本标题当全局状态。（原标题还带着一个 qoder HEAD 哈希，10-12 起删掉——哈希属基线类数字，抄进来就变成待检查内容。）
 ```
 
-- [ ] **Step 3: 三处"10 月中"统一成硬时限 2026-10-15**
+- [x] **Step 3: 三处"10 月中"统一成硬时限 2026-10-15**
 
 三处分别 Edit（`old_string` 用 Step 1 里验过的那三条原文)：
 
@@ -1090,7 +1090,7 @@ print('ALL UNIQUE' if ok else 'FIX ANCHORS')
 ### H1. 🔴 数据资产安全（秋采 2026-10-15 开拍前必修）
 ```
 
-- [ ] **Step 4: 缺口清单 ③ 板 B 类新增 T1／T2／T3 三条**
+- [x] **Step 4: 缺口清单 ③ 板 B 类新增 T1／T2／T3 三条**
 
 插到 `**C. 等对侧（zcode）**` 之前（`old_string` 就是那一行，`new_string` = 三条 + 那一行）。每条四要素齐全：现状 / 卡住 §4B 哪几格 / 补法一句话 / 本设计后的状态。
 
@@ -1100,13 +1100,13 @@ print('ALL UNIQUE' if ok else 'FIX ANCHORS')
 - **T3（同上）"D1 每轮自带 >500 ms 静默、而锁存清不掉"只活在注释里**：`tools/latency_probe.py` 的 `estop_caution()` 说清了"会锁存"，没说 `[M]`／`!clear`／`link_probe clear` 三条在**未烧批 1a 的板上都发的是同一个会被整条丢掉的 TYPE_MODE**，只能断电——而台架上没人翻源码，后果却是现场动作。补法 = 同一个分支里多打一行（纯 ASCII，进既有静态扫描）。措辞留一条边界：烧了批 1a 之后 `MODE_REQ_CLEAR_ESTOP` 只是"coded to clear"，**能不能清要等 §4B 的 C11 真过**。→ **已编码 + 已单测，未台架**。
 ```
 
-- [ ] **Step 5: `AGENTS.md:56` 只改两个小片段**
+- [x] **Step 5: `AGENTS.md:56` 只改两个小片段**
 
 5a. ③ 段：`**③C1 秋采最紧（10 月中前）**` → `**③C1 秋采最紧（硬时限 2026-10-15；10-12 复核剩 3 个白天）**`。
 5b. ② 段：在 `这是 H2 从「已编码」到「已台架」的唯一途径；` 之后插入 `逐格清单见 `docs/X5验机与接入执行清单.md` §4B（17 格：格号／触发／看哪里／算过／不算过／前置）；`。
 5c. **两处之外一个字符不动**：那一行里 ⑥ 段、四态口径、硬禁令、"警告数不是签名"那几段全部原样留着；审查清单第 2 条所在的行块不碰。
 
-- [ ] **Step 6: `README.md` 的 `bench_status.py` 行**
+- [x] **Step 6: `README.md` 的 `bench_status.py` 行**
 
 `old_string` = `开机那行会把 permit 印出来。 |`（Step 1 已验唯一）
 `new_string` =
@@ -1115,7 +1115,7 @@ print('ALL UNIQUE' if ok else 'FIX ANCHORS')
 开机那行会把 permit 印出来。**10-12 加**：stdin 另有一条 `!profile`（发 `MODE(0x20)` 档案握手，档案号仍只从 `config/vehicle_profile.yaml` 取、带参数就拒），用途是**不重启 `pc/main.py` 也能重放握手**。⚠️ 本工具与 `pc/main.py` **都独占绑 UDP 9100**（09-22 实测 Windows 上 `SO_REUSEADDR` 会"bind 成功但包只给先绑上的那个"，所以这里故意不用它），同一时刻只能开一个；`tools/link_probe.py` 的发送**不 bind**，是唯一能与本工具并存的那一路。台架那 17 格的逐格判据与这条互斥关系写在 `docs/X5验机与接入执行清单.md` **§4B**。 |
 ```
 
-- [ ] **Step 7: grep 判据（spec §2 第 3 条）**
+- [x] **Step 7: grep 判据（spec §2 第 3 条）**
 
 Write 成 `.py` 再跑：
 
@@ -1141,12 +1141,12 @@ sys.exit(1 if bad else 0)
 
 Expected: `violations=0`、退出码 0。⚠️ 若 `docs/X5验机与接入执行清单.md` 里那处"10 月中"来自别的历史登记（不是时限），**不要为了变绿而删它**——那说明判据写宽了，按 AGENTS 第 2 条 b) 项的规矩先解释命中，再决定是改文档还是改判据（改判据必须附理由）。
 
-- [ ] **Step 8: 跑两条检查**
+- [x] **Step 8: 跑两条检查**
 
 Run: `python -B tools/check_doc_invariants.py` → 退出码 **0**。
 Run: `python -B -m pytest tests/ -q -p no:cacheprovider` → 全量 0 failed / 0 error。
 
-- [ ] **Step 9: 提交**
+- [x] **Step 9: 提交**
 
 ```bash
 git add docs/缺口清单.md AGENTS.md README.md
@@ -1187,7 +1187,7 @@ EOF
 
 **Interfaces:** 无。
 
-- [ ] **Step 1: 逐条对 spec §2 的六条机检判据**
+- [x] **Step 1: 逐条对 spec §2 的六条机检判据**
 
 Write 成 `.py` 执行，**每条都要打印命中数**（零命中必须给出解释，AGENTS 第 2 条 b) 项）：
 
@@ -1245,17 +1245,17 @@ sys.exit(1 if bad else 0)
 
 **这条脚本自己的两条使用边界**：① 第 1、2 条判据是"由那两条命令当场给"，所以在这里恒真——恒真的格子留在表里是为了让六条一眼看全，不许把它读成"已经验过"；② 第 6 条找的是 `unpack_mode(payload) == (want, 2)` 这一行，也就是 Task 2 Step 1a 那张参数化表里的**字节断言**，判据要的是"断言落在上线字节上"，不是"某个函数存在"。它红了先去看那张表是否被改坏，**不要**放宽这条判据。第 4 条若 `assert` 直接炸（某格匹配不到 1 行），那是 Task 5 的前缀写错了，同样按"零命中先怀疑自己"处置。
 
-- [ ] **Step 2: 全量测试**
+- [x] **Step 2: 全量测试**
 
 Run: `python -B -m pytest tests/ -q -p no:cacheprovider`
 Expected: **0 failed / 0 error**；条数以这条命令的当场输出为准，**不抄进任何文档**（AGENTS 审查清单第 8 条）。与 Task 4 收尾那次相比只该多不该少；若**少了**，先怀疑测试被误删或被 skip，不要先怀疑计数。
 
-- [ ] **Step 3: 文档不变量**
+- [x] **Step 3: 文档不变量**
 
 Run: `python -B tools/check_doc_invariants.py`
 Expected: 退出码 **0**；受保护记号的命中数等于工具自己声明的基线（数值以这条命令的输出为准，本计划正文不抄——Global Constraints 第 6 条）。退出码 2 = 漂移，必须解释"是加对了还是改错了"，**禁止为变绿改基线**。退出码 3 = 有 md 读不进去——先清理 `.superpowers/` 草稿目录里可能存在的非 UTF-8 临时文件（Step 5）。
 
-- [ ] **Step 4: 工作树自查**
+- [x] **Step 4: 工作树自查**
 
 Run: `git status --porcelain | head -40`
 Expected: 只剩**三个 Keil 脏项**（`firmware/大车proj/大车/USER/` 下的 `PWM.uvguix.22763`、`PWM.uvoptx`、`build_log.txt`）。本批五个代码文件、四个测试文件、四份文档都应已提交、不出现在列表里。
@@ -1263,7 +1263,7 @@ Expected: 只剩**三个 Keil 脏项**（`firmware/大车proj/大车/USER/` 下�
 Run: `git log --oneline -8`
 Expected: 七条本批提交在顶部，标题各不相同且各自描述本次改动（本仓有 6 次复制标题的事故——扫一眼确认没重复）。
 
-- [ ] **Step 5: 清草稿 + 交接口径**
+- [x] **Step 5: 清草稿 + 交接口径**
 
 ```bash
 rm -rf .superpowers/sdd/2026-10-12-bench-readiness-sync
@@ -1277,7 +1277,7 @@ git status --porcelain | head -5
 - 四态口径：本批全部只到「已编码 + 已单测」与「已文档化」；
 - 下一步归作者：10-13／10-14 白天秋采（10-15 硬时限），当晚哪一晚做第一次台架由他定，**只跑三格**（B1 烧录 + 认版四样一起看、档案握手成功、`loop_alive` 持续在变），并预期"卡在 X5 的 `start_bridge.sh`"（该脚本从未真跑过）——那是排障不是测试，不许写成机制结论；顺手两件：B3 油门三位置 `ch[4]` 读数、下田那趟带横断面 + M3／M14／M15 + 四轮方向重测（先拨一下杆）。
 
-- [ ] **Step 6: 提交（若 Step 1/4 产生了文档侧的收尾改动）**
+- [x] **Step 6: 提交（若 Step 1/4 产生了文档侧的收尾改动）**
 
 ```bash
 git add docs/缺口清单.md
@@ -1302,3 +1302,52 @@ EOF
 1. **spec 覆盖**：§3 六处 → Task 5（§4B 前置栏那条属 §1"做"的第三条）+ Task 6 的 Step 2/3/4/5/6；§4 T1 → Task 2 + Task 3 + Task 5 的 C6／C10／C13／C14／C19／C21；T2 → Task 1 + Task 5 的 C2／C18；T3 → Task 4 + Task 5 的 C21／§E 第三行；§2 六条判据 → Task 7 Step 1；§7 测试设计 → Task 1 Step 1、Task 2 Step 1、Task 3 Step 1、Task 4 Step 1；§1"明确不做"四条 → 分别落在 Global Constraints 1／2、Task 3 的接口（不加自动对齐）、Task 2 的 Step 3f（不改握手语义、闸门位置）、Task 5 的 C8（不做旗标）。
 2. **占位符扫描**：全文没有 TBD／待补／"类似 Task N"；每个代码步都给完整片段与真实锚点行号。
 3. **类型一致性**：`tx_frames_text(ftypes) -> str`（Task 1 Step 3b 定义 = Step 1 断言 = Step 4d 调用）；`check_mode_args(kind, args)`（Task 2 Step 3f 定义 = Step 1b 调用）；`_judge_new_mode(kind, baseline_mode, seen_modes, rejects)` 收**已过滤过的**非零 reject 列表（Step 3e 传 `[c for c in reject_codes if c]`，与 Step 1b 直接用 `[P.REJECT_PROFILE]` 一致）；`'tx_profile'` 既是 `build_command` 返回的 kind，也是 `TX_MODE_KINDS` 的成员（Task 3 Step 3a/3b）。
+
+
+---
+
+## 执行记录与勘误（10-12 晚收口）
+
+七条任务全部做完，四态口径统一：**只到「已编码 + 已单测」与「已文档化」**，
+没有一格台架结论被预勾，`firmware/` 一行未动、Keil 未重编译。下面的"计划与现状对不上"
+**都是计划自身的错**，逐条写在这一节里，是为了让下一批人别把计划当逐字正确的图纸。
+
+### 计划正文的错（执行者当场发现、没有为凑数改现实）
+
+1. **Task 5 Step 2 写"appended 14"，而 `APPENDS` 实列 13 条**（八格 + C21 + C8 + §E 三行）。
+   执行者判定为计划算术笔误，**没有为凑 14 造出第 14 格**；脚本两次运行分别是
+   `appended 13 / already-there 0` 与 `appended 0 / already-there 13`（幂等成立）。
+2. **Task 6 Step 3 的锚点行号写 `:423`，实际在 `:424`**（同一批前面的改动把行数推上去了一行）。
+   锚点字符串本身仍唯一，所以只是行号漂移——这正是"以后指格子不指行号"那条规矩的又一个实例。
+3. **Task 6 Step 4 没说要留空行**：T1／T2／T3 三条与 `**C. 等对侧（zcode）**` 之间**必须空一行**，
+   否则 CommonMark 会把小节标题惰性吞进 T3 那一条里。执行者补了那个空行，是唯一多写的字节。
+4. **Task 3 把命令枚举说成两处，实际四处**：模块文档串、`[TX SKIPPED]` 那行、开机 `commands:` 打印、
+   `--to` 的 help。四处都补齐了，`load_profile_id()` 改成指向 `TX_MODE_KINDS` 本身。
+   ——"枚举写两处就是两个事实源"这条计划里说了，但把数量数错了。
+5. **Task 3 Step 1 把 `'!profile '`（行尾一个空格）列为"带参数应拒"**：实测不成立，
+   `strip().split()` 会把行尾空白吃掉。改判成三种**真**带参数的写法各测一次，
+   另加一条测试钉住"行尾空白不算参数"这个既有行为，**没有新增解析规则**。
+6. **Task 4 Step 4 要求新增的 ASCII `targets` 条目其实已存在**（既有那片里已有同形状的一条），
+   没有重复添加。D1 从一行变两行之后，既有两条 `len(...) == 1` 断言变红——
+   改写成"D2 那两句不许出现"，判据不变而**不再数行数**。
+7. **Task 2 的 FAIL 文案与它自己的断言不自洽**：计划写的文案里没有断言要的那个词，
+   执行者把文案对齐到"从没握过手"，而不是放宽断言。另外既有
+   `test_mode_name_and_expected_tables_match_the_e3_contract` 断言 `EXPECTED` **全等**，
+   计划没列出它——补了两项（都是 None），判据同样没放宽。
+
+### 流程事实（不是缺陷，但必须留痕）
+
+- **控制器自己犯的一次错，写在这里**：验收 Task 6 时我用"把 HEAD 那行只做计划规定的替换、再与实际新行逐字比"的办法去查 `AGENTS.md`，报出"执行者多写了一个括注"——**那句结论是错的**：那个 `（17 格：格号／触发／看哪里／算过／不算过／前置）` 正是本计划 Step 5b 逐字要求的内容，是**我核对脚本里的期望串自己打错了**。执行者按计划执行无误。教训与 AGENTS 第 2 条 b) 项同源：**"对不上"先怀疑自己的判据写错了，再怀疑别人做错了**；当场把 Step 5b 的原文取回来比对才是正确的做法。
+- **由此产生的一条裁定**：既然那个括注里的"17 格"是本计划自己要求写的，就顺手把它改掉——**"§4B 那 17 格"这类计数不写进活文档**（AGENTS 审查清单第 8 条点的就是"没有命令、没有日期、没有指向权威处"的孤立计数，而 §4B 将来加格时**没有任何一条命令会提醒你这个数变了**）。AGENTS 与 README 两处已改成不带数的"那张待执行清单（逐格给六要素）"；本计划与 spec 里的提法属设计时陈述，原地保留不追改。
+
+### 流程事实（不是缺陷，但必须留痕）
+
+- Task 1 由子代理实现、控制器在同一时间窗里往 `tests/test_control.py` 追加了一条 main 侧接线测试，
+  两边改动被同一次提交一起带进仓 ⇒ 那条提交信息里"未新增 main 侧永久测试"作废（详见 Task 1 的勾选注）。
+  **教训**：并行派活时"锁文件范围"必须真锁住共享文件；从 Task 5／Task 6 起改成
+  **执行者一律不许碰 git，提交由控制器做**，两批文档改动因此零交错。
+- Task 5／Task 6 各自留下临时脚本目录（`.superpowers/sdd/2026-10-12-bench-readiness-sync*/`），
+  本次收口一并删除——该目录被它自己那层 `.gitignore`（内容 `*`）全量忽略，
+  zcode 侧读不到，所以交接事实全部落进了 §4B、缺口清单、README 与台账。
+- 判据读数一律不抄进文档：测试条数、检查器圈号命中数都只写"以当场命令输出为准"，
+  现行测试基线唯一一处仍写在 `AGENTS.md`『当前状态』。
