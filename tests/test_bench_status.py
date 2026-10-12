@@ -307,7 +307,8 @@ def test_build_command_parses_each_kind():
     for text, want_type in (('!beat', P.TYPE_HEARTBEAT),
                             ('!auto', P.TYPE_MODE),
                             ('!manual', P.TYPE_MODE),
-                            ('!clear', P.TYPE_MODE)):
+                            ('!clear', P.TYPE_MODE),
+                            ('!profile', P.TYPE_MODE)):
         kind, frame = bs.build_command(text, 1, 7)
         assert P.unpack_frame(frame)[0] == want_type
         assert kind.startswith('tx_')
@@ -914,3 +915,60 @@ def test_verdict_denominator_is_a_named_keyword():
         bs.verdict(0, 0, 0, 0, 0, 30.0)          # 旧写法：把行数按位置塞进来
     v = bs.verdict(0, 0, 0, 0, 30.0, rx_rows=0, tx_rows=40)
     assert any('一行都没收到' in l for l in v), v
+
+
+# ---- T1（2026-10-12）：!profile —— 不重启 pc/main.py 也能重放档案握手 ----
+
+
+def test_build_command_profile_is_a_mode_frame():
+    kind, frame = bs.build_command('!profile', 2, 11)
+    assert kind == 'tx_profile'
+    t, seq, payload = P.unpack_frame(frame)
+    assert (t, seq) == (P.TYPE_MODE, 11)
+    assert P.unpack_mode(payload) == (P.MODE_REQ_PROFILE, 2)
+
+
+@pytest.mark.parametrize('bad', ['!profile 2', '!profile 0', '!profile x'])
+def test_build_command_profile_takes_no_argument(bad):
+    """档案号不在输入行上给（与 `!auto` 同一条纪律：改档案号 = 改一台车的权限）。
+
+    计划原文把第三例写成 `'!profile '`（行尾一个空格），解释是"cmd='profile'、
+    args=[''] ⇒ 有参数就等于拒"——当场实测**不成立**：`line.strip().split()` 会吃掉
+    行尾空白，`args` 是空列表，这一例与 `'!auto '` 一样按"无参数"解析。把一条假的
+    判据留在表里就是留一颗雷（AGENTS 清单第 2 条：自检"恒真/零命中"要先怀疑自己），
+    所以这里举的是三种**真带参数**的写法，行尾空白那条真实语义另用一条测试钉住。
+    """
+    assert bs.build_command(bad, 1, 1) is None
+
+
+def test_trailing_space_is_not_an_argument_for_profile_either():
+    """`'!profile '` 与既有的 `'!auto '` 同形：行尾空白**不是**参数。
+
+    这是既有解析器（`strip().split()`）的行为，本批没改它；写出来是为了让下一批人
+    别把"行尾多打一个空格"读成"带了档案号"，也别照字面去补一条根本不成立的判据。
+    """
+    kind, frame = bs.build_command('!profile ', 2, 3)
+    assert kind == 'tx_profile'
+    assert P.unpack_mode(P.unpack_frame(frame)[2]) == (P.MODE_REQ_PROFILE, 2)
+
+
+def test_tx_profile_row_fills_profile_and_stays_out_of_the_rx_side(tmp_path):
+    """`tx_profile` 进 TX_MODE_KINDS：它是这一族里唯一"载荷真带档案号"的新命令。
+
+    同时钉两条既有纪律：tx 行只算 `tx_rows`、**不碰 `rx_rows`**（verdict 的分母
+    用后者，共用就等于给自己那套新鲜度/重同步判据喂假数据），
+    且用的是发送侧那套独立序号。
+    """
+    assert 'tx_profile' in bs.TX_MODE_KINDS
+    log = _mklog(tmp_path)
+    sock = _FakeSock()
+    s = bs.TxSender('192.168.127.10', 9000, sock=sock)
+    kind, seq = s.send_line('!profile', 2, log)
+    assert (kind, seq) == ('tx_profile', 0)
+    assert s.seq == 1 and s.sent == 1
+    assert (log.tx_rows, log.rx_rows) == (1, 0)
+    row = _rows(log)[-1]
+    assert row['kind'] == 'tx_profile' and row['profile'] == '2'
+    # tx 行不许伪造收到的证据：mode/loop_alive 那几列留空
+    assert row['mode'] == '' and row['loop_alive'] == ''
+    log.close()

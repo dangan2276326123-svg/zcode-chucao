@@ -25,8 +25,9 @@ X5 侧配套一条命令：`sh ~/qoder/vehicle/start_bridge.sh`（清掉抢串�
 不往外发**，`!nav` 之类的输入也只打一行"没启用"的提示。填了才**另开一个不 bind 的**
 UDP socket 往 `<桥IP>:<桥端口>` 发（收帧那个 socket 独占 0.0.0.0:9100，不复用它），
 stdin 上多一套命令：`!nav vL vR` / `!tool mm lift` / `!beat` / `!auto` / `!manual` /
-`!clear`；档案号只从 `config/vehicle_profile.yaml` 取，不在命令行或输入行上给（spec §6，
-换档案号 = 换一台车的权限）。**发出的每一帧同样落进那张 CSV**（`kind=tx_*`，带自己的
+`!clear` / `!profile`（最后一条 10-12 加，T1：发 `MODE(0x20)` 档案握手，用途是**不重启
+`pc/main.py` 也能重放一次握手**）；档案号只从 `config/vehicle_profile.yaml` 取，不在命令行
+或输入行上给（spec §6，换档案号 = 换一台车的权限）。**发出的每一帧同样落进那张 CSV**（`kind=tx_*`，带自己的
 发送序号），否则"边发边记"的时间轴对不上；发送序号与 STATUS 的接收序号是**两套计数**——
 `StatusReceiver` 靠接收序号判新鲜度/重同步（out_of_order、resynced、RESYNC_RUN），
 共用就等于自己给自己的判据喂假数据。有了它，验收表里"PC 持续发 NAV/TOOL 的同时看
@@ -98,9 +99,10 @@ MODE_NAME = {0: 'MANUAL', 1: 'AUTO', 2: 'ESTOP'}
 # 限位位定义来自固件 read_limits()：PD15 原点 / PD10 左 / PD11 右，低有效。
 LIMIT_NAME = [(0x01, 'origin'), (0x02, 'left'), (0x04, 'right')]
 GAP_NOTICE_S = 1.0            # 静默超过这个数就记一条 gap（与 STALE_S 同量级）
-# 只有这三条 ! 命令的载荷里带 profile（TYPE_MODE，spec §3.1）⇒ 只有它们的 tx 行该填
+# 只有这几条 ! 命令的载荷里带 profile（TYPE_MODE，spec §3.1）⇒ 只有它们的 tx 行该填
 # profile 列。NAV/TOOL 填了就是给"线上根本没带的字段"造一条看起来像证据的数。
-TX_MODE_KINDS = ('tx_auto', 'tx_manual', 'tx_clear')
+# 10-12 加 tx_profile（T1）：档案握手，用途是**不重启 pc/main.py 也能重放握手**。
+TX_MODE_KINDS = ('tx_auto', 'tx_manual', 'tx_clear', 'tx_profile')
 
 
 def local_has_ip(addr):
@@ -340,9 +342,10 @@ def build_command(line, profile_id, seq):
             return 'tx_tool', P.pack_frame(P.TYPE_TOOL, payload, seq)
         if cmd == 'beat' and not args:
             return 'tx_beat', P.pack_frame(P.TYPE_HEARTBEAT, b'', seq)
-        if cmd in ('auto', 'manual', 'clear') and not args:
+        if cmd in ('auto', 'manual', 'clear', 'profile') and not args:
             req = {'auto': P.MODE_REQ_AUTO, 'manual': P.MODE_REQ_MANUAL,
-                   'clear': P.MODE_REQ_CLEAR_ESTOP}[cmd]
+                   'clear': P.MODE_REQ_CLEAR_ESTOP,
+                   'profile': P.MODE_REQ_PROFILE}[cmd]
             return ('tx_' + cmd,
                     P.pack_frame(P.TYPE_MODE, P.pack_mode(req, profile_id), seq))
     except (ValueError, TypeError, OverflowError, struct.error):
@@ -447,7 +450,8 @@ class TxSender:
         if parsed is None:
             self.unparsed += 1
             print('  [TX SKIPPED] cannot parse %r  (want: !nav vL vR | '
-                  '!tool mm lift | !beat | !auto | !manual | !clear)' % line)
+                  '!tool mm lift | !beat | !auto | !manual | !clear | !profile)'
+                  % line)
             return None
         kind, frame = parsed
         if kind == 'tx_nav':
@@ -526,7 +530,8 @@ def handle_command_line(line, log, sender, profile_id=P.PROFILE_NONE):
 
 
 def load_profile_id():
-    """!auto/!manual/!clear 载荷里的档案号**只从车辆档案取**（spec §6；与
+    """TX_MODE_KINDS 那几条（!auto/!manual/!clear/!profile）载荷里的档案号
+    **只从车辆档案取**（spec §6；与
     `tools/link_probe.py` 同一个口径：档案号 = 哪台车的权限，不在命令行/输入行上给）。
 
     读不到就用 PROFILE_NONE=0 并打一行 ASCII 警告。0 一定被固件 reject=0x01 拒掉，
@@ -648,7 +653,7 @@ def build_argparser():
     ap.add_argument('--to', default=None, metavar='HOST:PORT',
                     help='**opt-in**：往 X5 的 bridge 发送（例如 192.168.127.10:9000，'
                          '桥的收帧端口），stdin 上的 !nav/!tool/!beat/!auto/!manual/'
-                         '!clear 才生效。**不填 = 彻底禁用发送**，一个字节都不外发。'
+                         '!clear/!profile 才生效。**不填 = 彻底禁用发送**，一个字节都不外发。'
                          '填了但写错（缺端口、端口非数字、广播/组播/未指定地址、'
                          '定向广播 x.x.x.255 与网络号 x.x.x.0、端口正好是本机的收帧端口）'
                          '会报错退出，不会静默降级成"只收"。开启后驱动轮必须**离地**，'
@@ -713,7 +718,8 @@ def main():
 
     print('STATUS 记录中 → %s' % csv_path)
     print('每一行字 + 回车 = 打一条场景标记；Ctrl-C 结束并打印小结。')
-    print('  commands: !nav vL vR | !tool mm lift | !beat | !auto | !manual | !clear')
+    print('  commands: !nav vL vR | !tool mm lift | !beat | !auto | !manual | '
+          '!clear | !profile')
     # 发送状态必须**开机就看得见**：它决定你正在做的场景是不是"边发边记"。
     if sender is None:
         print('send: DISABLED (receive-only) -- nothing is sent unless this run was '
