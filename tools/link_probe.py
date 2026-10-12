@@ -19,6 +19,10 @@
             发送前就已经是那个态 => INCONCLUSIVE（不能证明是本次发送引发的）；
             连发送前基线都没采到（暖机期内一帧 STATUS 都没读到）=> 同样 INCONCLUSIVE——
             初始态证明不了因果，`judge()` 作为公开纯函数也不给这种入参印 PASS。
+  mode_profile / mode_teleop
+         -> 两条都**不以 mode 变化为判据**（握手的产物是 handshake_ok 那一位，不在 STATUS
+            里；TELEOP 本批未实现）。能判的只有"链路活着 + 板子挂在哪条 reject 上"，
+            文案各写各的，见 `_judge_new_mode`（T1，2026-10-12 加）。
   estop  -> 预期 MANUAL -> ESTOP（这是旧判据误报的那一条）。
   nav    -> A2 之后 NAV **不再改 mode**，判据反过来：收到 STATUS 且 mode 没变才算 PASS；
             mode 变了说明板上还是旧固件（F1 那个洞还没补）、另有东西在发帧、
@@ -32,9 +36,10 @@
 只是权限没给，所以要报中文原因，不许写成"链路不通"。
 
 注意：现在烧在板上的还是 **E3 之前的固件**（批 1a 未实施、未烧），三条后果必须知道：
-  - 它的 switch 没有 TYPE_MODE 这一支（`retrofit.c:60-75`），三条 MODE 命令会被丢弃；
+  - 它的 switch 没有 TYPE_MODE 这一支（`retrofit.c:60-75`），`MODE_REQUEST_KINDS` 这一族
+    的命令会被丢弃；
   - 它发的 STATUS 是 14 字节 v1，没有 reject/authority 字段 -> 探针打一行 v1 提示，
-    并对三条 MODE 命令直接给 INCONCLUSIVE，不给"接线有问题"的假结论；
+    并对这一族（`MODE_REQUEST_KINDS`）的命令直接给 INCONCLUSIVE，不给"接线有问题"的假结论；
   - 它仍然在 `retrofit.c:93/:102` 拿 NAV 当进 AUTO 的钥匙（F1 洞），所以**现在**跑 `nav`
     会判 FAIL（"NAV 之后 mode 变了"）——那是**预期**结果，读作"板上还是旧固件"，
     不是链路坏了。批 1a 烧进去之后这条 FAIL 才变成真问题。
@@ -50,8 +55,9 @@
 
 这样 NAV 每 0.2 秒一条、空窗永远不到 500ms，注入不会触发；数发完停手时反过来**应该**
 看到 mode 自己跳成 ESTOP——那正是失联注入这条安全路径在动的证据。
-MODE 三条不受这条影响（一条请求就够，之后的 reject/态从 STATUS 里读），但同一块板子上
-如果 NAV/TOOL 还在别处发着（`pc/main.py --live`），那条注入逻辑照样会咬。
+MODE 这一族（`MODE_REQUEST_KINDS`）不受这条影响（一条请求就够，之后的 reject/态从 STATUS
+里读），但同一块板子上如果 NAV/TOOL 还在别处发着（`pc/main.py --live`），那条注入逻辑
+照样会咬。
 
 两种接法（09-28 加第二种，用来把"是板子收不进"和"是 X5 发不出"分开）：
 
@@ -104,17 +110,24 @@ MODE_NAME = {0: 'MANUAL', 1: 'AUTO', 2: 'ESTOP', 3: 'TELEOP'}
 # 'beat': None 因为心跳在 MANUAL 下本来就不动 mode（AUTO 下放回 MANUAL 才是预期，:73），
 # 单独发心跳观察不到转移属正常，不能算失败。
 EXPECTED = {'nav': None, 'mode_auto': 1, 'mode_manual': 0,
-            'estop': 2, 'clear': 0, 'tool': None, 'beat': None}
-# 这三条走 MODE 帧（TYPE_MODE），是"会被权限拒绝"的命令；reject 码只对它们给结论。
-MODE_REQUEST_KINDS = ('mode_auto', 'mode_manual', 'clear')
+            'estop': 2, 'clear': 0, 'tool': None, 'beat': None,
+            # T1（2026-10-12）新增两条。都是 None：**握手与 TELEOP 都不该改 mode**——
+            # 握手的产物是 handshake_ok 这一位（不在 STATUS 里），TELEOP 本批未实现。
+            # 能判的只有"链路活着 + 板子挂在哪条 reject 上"，文案见 _judge_new_mode。
+            'mode_profile': None, 'mode_teleop': None}
+# 走 MODE 帧（TYPE_MODE）的命令都在这一族里。族本身是判据的一部分：
+# _run_serial() 靠它 + STATUS 版本把未烧批 1a 的板压成 INCONCLUSIVE（见测试
+# test_new_mode_kinds_belong_to_the_v1_inconclusive_gate）。
+MODE_REQUEST_KINDS = ('mode_auto', 'mode_manual', 'clear',
+                      'mode_profile', 'mode_teleop')
 
 # 新加的提示行一律 ASCII：本机控制台是 cp936，中文靠 stdout reconfigure 兜，
 # 但把"能不能读懂"押在编码上不如直接写英文（AGENTS 纪律）。
 _V1_NOTE = ('note: STATUS payload is v1 (14 B) -> the board runs pre-E3 firmware. '
             'MODE frames are dropped (retrofit.c:60-75) and the reject/authority '
             'fields do not exist, so "refused by the authority gate" and "the frame '
-            'never reached the MCU" cannot be told apart here; mode_auto / '
-            'mode_manual / clear are judged INCONCLUSIVE.')
+            'never reached the MCU" cannot be told apart here; every command in '
+            'MODE_REQUEST_KINDS is judged INCONCLUSIVE.')
 
 
 def _name(mode):
@@ -127,6 +140,53 @@ def _name(mode):
 def _mode_text(modes):
     """把观察到的态序列印成 MANUAL->ESTOP；未知值原样给数字。"""
     return '->'.join(_name(m) for m in dict.fromkeys(modes))
+
+
+def _judge_new_mode(kind, baseline_mode, seen_modes, rejects):
+    """T1 两条新命令的判据：都不以 mode 变化为判据，能判的只有链路 + reject。
+
+    两条各说一句，不共用文案：
+      · 握手（mode_profile）——固件的 `enter_unmanned()` 第一条件就是这一位，
+        成功会写 reject=0、失败写 reject=0x01；而**"从没握过手"的板子读到 0x01
+        是同一种长相**（§4B 读表须知第 3 句已经把这个坑登记过），所以这里
+        不许把 0x01 直接写成"档案不符"就完事。
+      · TELEOP（mode_teleop）——预期答复就是 0x06（该模式本批未实现）。
+        它同时证明两件事：MODE 真的进了分派、未实现通路诚实。**不能写成
+        "TELEOP 可用"**，那是批 2（spec §4 T1 的原话）。
+    """
+    if not seen_modes:
+        if baseline_mode is None:
+            return 'INCONCLUSIVE', '一帧 STATUS 都没收到：查串口/桥接/接线，不是查权限'
+        return 'INCONCLUSIVE', ('发送开始之后一帧 STATUS 都没有（发送前是 %s）：'
+                                '收的方向在发送之后就断了，不能对发送方向下结论'
+                                % _name(baseline_mode))
+    last = rejects[-1] if rejects else None
+    name = P.REJECT_TEXT.get(last, '未知拒绝码 %s' % last)
+    if kind == 'mode_profile':
+        if last == P.REJECT_PROFILE:
+            return 'FAIL', ('板子挂着 reject=0x01：可能是"这个档案号真的不匹配"，'
+                            '也可能是"这块板从没握过手"——两种 0x01 长得一样，'
+                            '分开要靠"是否先有过一次握手"这个流程前提（§4B 读表须知'
+                            '第 3 句），不能只读这一个字节')
+        if last is None:
+            return 'PASS', ('握手帧已上线（MODE 0x20 + 档案号取自 '
+                            'config/vehicle_profile.yaml），本轮没读到非零 reject。'
+                            '这一格看的是 reject 不是态：它不改 mode。'
+                            '⚠️ reject 记的是"最近一次"，成功会写回 0')
+        return 'INCONCLUSIVE', ('握手之后板子挂的是 reject=0x%02X（%s），不是 0 也不是 '
+                                '0x01：这一条不是握手本身产生的，别算成握手的结论'
+                                % (last, name))
+    if last == P.REJECT_NOT_IMPL:
+        return 'PASS', ('reject=0x06（该模式本批未实现）正是预期答复：它同时证明 MODE '
+                        '进了分派、TELEOP 的未实现通路诚实。**这不等于 TELEOP 可用**，'
+                        '实现属批 2')
+    if last is None:
+        return 'INCONCLUSIVE', ('收到 STATUS 但没读到非零 reject：没烧批 1a 的板就是把 '
+                                'MODE 整条丢掉、reject 字段根本不存在，这一格与'
+                                '"什么都没发生"分不开')
+    return 'FAIL', ('TELEOP 请求被排在它前面的判据挡了：reject=0x%02X（%s）——'
+                    '四条判据的顺序是固件写死的，本格没测到未实现通路'
+                    % (last, name))
 
 
 def judge(kind, baseline_mode, seen_modes, reject_codes):
@@ -158,6 +218,10 @@ def judge(kind, baseline_mode, seen_modes, reject_codes):
     if kind not in EXPECTED:
         return 'INCONCLUSIVE', ('判据表里没有 %r 这条命令，不给结论'
                                 '（拼错命令名不该印出一个 PASS）' % kind)
+
+    if kind in ('mode_profile', 'mode_teleop'):
+        return _judge_new_mode(kind, baseline_mode, seen_modes,
+                               [c for c in reject_codes if c])
 
     want = EXPECTED[kind]
     rejects = [c for c in reject_codes if c]      # 0 = "没有拒绝"，不是拒绝码
@@ -213,7 +277,8 @@ def judge(kind, baseline_mode, seen_modes, reject_codes):
 def build(kind, args, seq, profile=P.PROFILE_NONE):
     """把命令行选择变成一条完整协议帧。未知 kind 必须抛，不能静默发空包。
 
-    profile 只在三条 MODE 命令里有意义（spec §3.1 / §6）：默认 PROFILE_NONE。
+    profile 只在 MODE 这一族（`MODE_REQUEST_KINDS`）里有意义（spec §3.1 / §6），而其中只有
+    档案握手那条（`MODE_REQ_PROFILE`）让这个字段真的有效：默认 PROFILE_NONE。
     `main()` 从车辆档案取真值；取不到就带着 0 发出去，固件按 reject=0x01 拒——
     探针**不替板子猜一个"看起来合法"的档案号**，那样场景"用错档案号申请无人"
     就会被测成"档案握手一致"。
@@ -227,10 +292,12 @@ def build(kind, args, seq, profile=P.PROFILE_NONE):
         return P.pack_frame(t, b'', seq)
     if kind in MODE_REQUEST_KINDS:
         req = {'mode_auto': P.MODE_REQ_AUTO, 'mode_manual': P.MODE_REQ_MANUAL,
-               'clear': P.MODE_REQ_CLEAR_ESTOP}[kind]
+               'clear': P.MODE_REQ_CLEAR_ESTOP,
+               'mode_profile': P.MODE_REQ_PROFILE,
+               'mode_teleop': P.MODE_REQ_TELEOP}[kind]
         return P.pack_frame(P.TYPE_MODE, P.pack_mode(req, profile), seq)
     raise ValueError('未知指令 %r：只有 nav / tool / beat / estop / mode_auto / '
-                     'mode_manual / clear' % kind)
+                     'mode_manual / clear / mode_profile / mode_teleop' % kind)
 
 
 def _load_profile_id():
@@ -355,7 +422,7 @@ def _run_serial(a, frame_iter):
     if a.kind in MODE_REQUEST_KINDS and out.get('versions') == {1}:
         print('判定：INCONCLUSIVE —— 板上是 E3 之前的固件（STATUS 14 字节 v1），'
               '它的 switch 没有 TYPE_MODE 这一支（retrofit.c:60-75），MODE 帧整条被丢弃 -> '
-              'mode_auto / mode_manual / clear 这三条要等批 1a 烧进去才测得了。'
+              '这一族（MODE_REQUEST_KINDS）这几条要等批 1a 烧进去才测得了。'
               '顺带：锁存清不掉是 Fw-14（`retrofit_clear_estop()` 全工程无调用点），'
               '在这块旧板上只能断电清。')
     else:
@@ -420,13 +487,27 @@ def _tool_gate_or_exit(args):
                  'B5 全项 + 刀控接线。' % (mm, lift, permit))
 
 
+def check_mode_args(kind, args):
+    """MODE 命令不接受命令行参数（spec §6：改档案号 = 改一台车的权限）。
+
+    从 main() 抽出来有两个理由：① 它能被测试直接钉住（见
+    tests/test_link_probe.py::test_mode_commands_still_refuse_a_command_line_profile）；
+    ② 位置不许漂——它必须跑在**建 socket 之前**，与 bench_status 的 --to 同一条纪律：
+    先拒、后碰资源。
+    """
+    if kind in MODE_REQUEST_KINDS and args:
+        raise SystemExit('%s 不接受参数：档案号从 config/vehicle_profile.yaml 取，'
+                         '不在命令行上给' % kind)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('kind', choices=['nav', 'tool', 'beat', 'estop']
                     + list(MODE_REQUEST_KINDS))
     ap.add_argument('args', nargs='*',
                     help='nav: vL vR (m/s)   tool: mm lift位   '
-                         'mode_auto/mode_manual/clear: 不需要参数')
+                         'the five MODE kinds: no arguments (profile comes from '
+                         'config/vehicle_profile.yaml)')
     ap.add_argument('--host', default='192.168.127.10', help='X5 地址（网桥阶段改这里）')
     ap.add_argument('--port', type=int, default=9000, help='bridge 监听端口')
     ap.add_argument('--every', type=float, default=0.0,
@@ -451,11 +532,9 @@ def main():
                      % NAV_BENCH_LIMIT_MPS)
     if a.kind == 'tool':
         _tool_gate_or_exit(a.args)
-    # MODE 三条的参数只有一个 profile 号，而它**必须**来自车辆档案：让用户在命令行
+    # MODE 这一族的参数只有一个档案号，而它**必须**来自车辆档案：让用户在命令行
     # 上敲一个档案号，等于允许拿另一台车的权限去申请无人（spec §6）。
-    if a.kind in MODE_REQUEST_KINDS and a.args:
-        sys.exit('%s 不接受参数：档案号从 config/vehicle_profile.yaml 取，'
-                 '不在命令行上给' % a.kind)
+    check_mode_args(a.kind, a.args)
     profile = _load_profile_id() if a.kind in MODE_REQUEST_KINDS else P.PROFILE_NONE
 
     def frames():

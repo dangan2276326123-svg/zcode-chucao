@@ -244,10 +244,16 @@ def test_judge_nav_fail_names_a_human_at_the_tx_as_a_cause():
 
 
 def test_mode_name_and_expected_tables_match_the_e3_contract():
-    """两张表是 brief 定下的契约：MODE 含 TELEOP，nav 的预期不再是 mode=1。"""
+    """两张表是 brief 定下的契约：MODE 含 TELEOP，nav 的预期不再是 mode=1。
+
+    10-12（T1）把 `mode_profile` / `mode_teleop` 也写进这张表——**两条都是 None**：
+    握手与 TELEOP 都不以 mode 变化为判据（握手的产物是 handshake_ok 那一位、
+    TELEOP 本批未实现），所以这条等式断言仍然成立，只是表长了两项。
+    """
     assert lp.MODE_NAME == {0: 'MANUAL', 1: 'AUTO', 2: 'ESTOP', 3: 'TELEOP'}
     assert lp.EXPECTED == {'nav': None, 'mode_auto': 1, 'mode_manual': 0,
-                           'estop': 2, 'clear': 0, 'tool': None, 'beat': None}
+                           'estop': 2, 'clear': 0, 'tool': None, 'beat': None,
+                           'mode_profile': None, 'mode_teleop': None}
 
 
 # ---- 采集侧：发送前基线 / 发送后变化 / reject / 帧形态版本 ----
@@ -292,6 +298,8 @@ def test_read_status_marks_v1_frames_as_pre_e3_firmware():
     ('mode_auto', P.MODE_REQ_AUTO),
     ('mode_manual', P.MODE_REQ_MANUAL),
     ('clear', P.MODE_REQ_CLEAR_ESTOP),
+    ('mode_profile', P.MODE_REQ_PROFILE),
+    ('mode_teleop', P.MODE_REQ_TELEOP),
 ])
 def test_build_mode_frames_carry_the_request_and_profile(kind, want):
     frame = lp.build(kind, [], 7, profile=2)
@@ -561,3 +569,53 @@ def test_cli_tool_gate_fails_closed_when_the_profile_is_unavailable(monkeypatch)
     assert exc is not None and _rc(exc) != 0, '取不到许可位不许当作"允许落刀"'
     assert sent == []
     assert '读不到' in _msg(exc)
+
+
+# ---- T1（2026-10-12）：档案握手与 TELEOP 的入口 ----
+
+
+def test_new_mode_kinds_belong_to_the_v1_inconclusive_gate():
+    """两条新命令**必须**挂在 MODE_REQUEST_KINDS 上，而不是另开一条通道。
+
+    这条归属决定的是"未烧批 1a 的板上会不会出现假 PASS"：`_run_serial()` 用
+    `kind in MODE_REQUEST_KINDS and versions == {1}` 把结论压成 INCONCLUSIVE，
+    因为 v1 那块板的 switch 里根本没有 TYPE_MODE 这一支、MODE 帧整条被丢。
+    握手在那块板上从来没成功过，可"这轮没读到非零 reject"读起来**像**成功
+    （spec §6.1 点名的形状就是它）。所以这不是代码组织问题，是判据问题。
+    """
+    for kind in ('mode_profile', 'mode_teleop'):
+        assert kind in lp.MODE_REQUEST_KINDS
+        assert kind in lp.EXPECTED          # 不在判据表里，judge() 只会给"没有这一条"
+        assert lp.EXPECTED[kind] is None    # 两条都不以 mode 变化为判据
+
+
+@pytest.mark.parametrize('kind', ['mode_auto', 'mode_manual', 'clear',
+                                  'mode_profile', 'mode_teleop'])
+def test_mode_commands_still_refuse_a_command_line_profile(kind):
+    """T1 不许绕过那条老约束：档案号只能来自 config/vehicle_profile.yaml。
+
+    闸门从 main() 里抽成 check_mode_args() 是为了能被直接钉住——测 main() 里那段
+    顺序代码要构造 argv 并真的往发送那一步走，而这条闸门的意义恰恰是**不许走到发送**。
+    """
+    with pytest.raises(SystemExit):
+        lp.check_mode_args(kind, ['2'])
+    lp.check_mode_args(kind, [])            # 不传参数才是合法用法
+
+
+def test_judge_mode_profile_and_teleop_say_different_things():
+    """握手的 0x01 有两种成因，TELEOP 的 0x06 是**预期答复**——两句不能共用文案。"""
+    # 握手：没读到非零 reject = 板子认了这个档案号
+    assert lp.judge('mode_profile', 0, [0], [])[0] == 'PASS'
+    # 握手：挂着 0x01 —— 要说清"这个号真的不匹配"与"从没握过手"分不开
+    verdict, text = lp.judge('mode_profile', 0, [0], [P.REJECT_PROFILE])
+    assert verdict == 'FAIL' and '从没' in text
+    # 握手：板子回的是别的码 ⇒ 这条码不是握手产生的，不给结论
+    assert lp.judge('mode_profile', 0, [0], [P.REJECT_RCS_STALE])[0] == 'INCONCLUSIVE'
+    # TELEOP：0x06 就是这一格要的答复，且必须带上"不等于 TELEOP 可用"那句
+    verdict, text = lp.judge('mode_teleop', 0, [0], [P.REJECT_NOT_IMPL])
+    assert verdict == 'PASS' and 'TELEOP 可用' in text
+    # TELEOP：读不到非零 reject ⇒ 与"帧整条被丢掉"分不开（v1 上就是这个长相）
+    assert lp.judge('mode_teleop', 0, [0], [])[0] == 'INCONCLUSIVE'
+    # 两条共同的最外层：一帧 STATUS 都没有，只能说不计结论
+    assert lp.judge('mode_profile', 0, [], [])[0] == 'INCONCLUSIVE'
+    assert lp.judge('mode_teleop', None, [0], [])[0] == 'INCONCLUSIVE'
