@@ -27,7 +27,8 @@ TYPE_MODE = 5           # E3: 权限申请/交回/解除急停/档案握手（sp
 # MODE.request（spec §3.1）
 MODE_REQ_MANUAL = 0x00        # 交回人工
 MODE_REQ_AUTO = 0x01          # 申请无人
-MODE_REQ_TELEOP = 0x02        # 申请遥操作（批 2 实现；固件回 REJECT_NOT_IMPL）
+MODE_REQ_TELEOP = 0x02        # 申请手操（2026-10-13 已在固件+PC 双侧落地，**尚未烧录**；
+                              # 旧镜像仍走 default 分支回 REJECT_NOT_IMPL=0x06）
 MODE_REQ_CLEAR_ESTOP = 0x10   # 解除急停（A3 单确认）
 MODE_REQ_PROFILE = 0x20       # 档案握手，profile 字段有效
 

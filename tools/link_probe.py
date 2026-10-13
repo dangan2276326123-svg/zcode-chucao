@@ -20,9 +20,11 @@
             连发送前基线都没采到（暖机期内一帧 STATUS 都没读到）=> 同样 INCONCLUSIVE——
             初始态证明不了因果，`judge()` 作为公开纯函数也不给这种入参印 PASS。
   mode_profile / mode_teleop
-         -> 两条都**不以 mode 变化为判据**（握手的产物是 handshake_ok 那一位，不在 STATUS
-            里；TELEOP 本批未实现）。能判的只有"链路活着 + 板子挂在哪条 reject 上"，
-            文案各写各的，见 `_judge_new_mode`（T1，2026-10-12 加）。
+         -> 两条都**不进下面那张 mode 转移表**（判据在 `_judge_new_mode` 里各写各的）。
+            握手的产物是 handshake_ok 那一位，不在 STATUS 里，所以它只看 reject；
+            TELEOP 有两种成功形状——烧了手操档那一版会看到 mode=3，旧版答 0x06——
+            一张表装不下，见 `_judge_new_mode`（T1 于 2026-10-12 加，判据于
+            2026-10-13 手操档落地后改成两种都认）。
   estop  -> 预期 MANUAL -> ESTOP（这是旧判据误报的那一条）。
   nav    -> A2 之后 NAV **不再改 mode**，判据反过来：收到 STATUS 且 mode 没变才算 PASS；
             mode 变了说明板上还是旧固件（F1 那个洞还没补）、另有东西在发帧、
@@ -102,18 +104,27 @@ from tools.bench_limits import (NAV_BENCH_LIMIT_MPS,          # noqa: E402
                                 nav_exceeds_bench_limit,
                                 tool_command_allowed, load_permit)
 
-# 与固件 retrofit.h:11-13 及 spec §3.1 一致（TELEOP 是 E3 加的位，批 2 才实现）；
+# 与固件 `retrofit.h` 的 `MODE_MANUAL / MODE_AUTO / MODE_ESTOP / MODE_TELEOP` 四个宏
+# 及 spec §3.1 一致（锚点用符号名不用行号——10-13 手操档落地后行号已经漂了，
+# 原来那句写的 "retrofit.h:11-13" 现在只盖到 ESTOP，TELEOP 在 14 行）；
 # 不在这四个值里的原样打印数字，不替它编名字。
 MODE_NAME = {0: 'MANUAL', 1: 'AUTO', 2: 'ESTOP', 3: 'TELEOP'}
+# STATUS 里 mode 字段的"手操档"取值。它和上面的 3 是同一个数，起名是因为
+# `_judge_new_mode` 要拿它跟观察序列比——裸写 3 在这里读起来像"第 3 号状态"，
+# 而线上这个值的权威出处是固件 `retrofit.h` 的 `MODE_TELEOP`（协议层没有它，
+# 协议层只有申请码 `MODE_REQ_TELEOP=0x02`，两者不是一个东西，别混用）。
+MODE_VAL_TELEOP = 3
 # 每种命令**应当**把 mode 推到哪一态；None = 不以 mode 变化为判据。
 # 'nav': None 是 A2 的直接后果——NAV 不再隐含进 AUTO，判据反过来变成"mode 不许变"。
 # 'beat': None 因为心跳在 MANUAL 下本来就不动 mode（AUTO 下放回 MANUAL 才是预期，:73），
 # 单独发心跳观察不到转移属正常，不能算失败。
 EXPECTED = {'nav': None, 'mode_auto': 1, 'mode_manual': 0,
             'estop': 2, 'clear': 0, 'tool': None, 'beat': None,
-            # T1（2026-10-12）新增两条。都是 None：**握手与 TELEOP 都不该改 mode**——
-            # 握手的产物是 handshake_ok 这一位（不在 STATUS 里），TELEOP 本批未实现。
-            # 能判的只有"链路活着 + 板子挂在哪条 reject 上"，文案见 _judge_new_mode。
+            # T1（2026-10-12）新增两条。都是 None = **不走下面那张 mode 转移表**：
+            # 握手的产物是 handshake_ok 这一位（不在 STATUS 里）；TELEOP 的判据在
+            # `_judge_new_mode` 里自己写（它有两种成功形状，一张表装不下），
+            # 所以这里留 None 只是"别落到通用分支"，不是"TELEOP 不改 mode"。
+            # 能判的还有"链路活着 + 板子挂在哪条 reject 上"，文案见 _judge_new_mode。
             'mode_profile': None, 'mode_teleop': None}
 # 走 MODE 帧（TYPE_MODE）的命令都在这一族里。族本身是判据的一部分：
 # _run_serial() 靠它 + STATUS 版本把未烧批 1a 的板压成 INCONCLUSIVE（见测试
@@ -143,16 +154,19 @@ def _mode_text(modes):
 
 
 def _judge_new_mode(kind, baseline_mode, seen_modes, rejects):
-    """T1 两条新命令的判据：都不以 mode 变化为判据，能判的只有链路 + reject。
+    """T1 两条新命令的判据：先看链路，再看 reject；TELEOP 额外看 mode 有没有跳 3。
 
     两条各说一句，不共用文案：
       · 握手（mode_profile）——固件的 `enter_unmanned()` 第一条件就是这一位，
         成功会写 reject=0、失败写 reject=0x01；而**"从没握过手"的板子读到 0x01
         是同一种长相**（§4B 读表须知第 3 句已经把这个坑登记过），所以这里
         不许把 0x01 直接写成"档案不符"就完事。
-      · TELEOP（mode_teleop）——预期答复就是 0x06（该模式本批未实现）。
-        它同时证明两件事：MODE 真的进了分派、未实现通路诚实。**不能写成
-        "TELEOP 可用"**，那是批 2（spec §4 T1 的原话）。
+      · TELEOP（mode_teleop）——**这一条的判据随镜像变**，两种长相分别说：
+        烧了手操档那一版（2026-10-13 已写进仓库、尚未烧录），成功的形状是 mode 跳 3 且
+        reject 归 0（`retrofit.c` 的 `enter_unmanned()` 成功路径写 `REJ_NONE`）；
+        烧之前那一版答 0x06（该模式未实现）。0x06 只证明"MODE 进了分派 +
+        未实现通路诚实"，**不等于 TELEOP 可用**——判据文案必须把这一点说明白，
+        否则下一代会把一块旧板读成"手操档测过了"。
     """
     if not seen_modes:
         if baseline_mode is None:
@@ -176,16 +190,36 @@ def _judge_new_mode(kind, baseline_mode, seen_modes, rejects):
         return 'INCONCLUSIVE', ('握手之后板子挂的是 reject=0x%02X（%s），不是 0 也不是 '
                                 '0x01：这一条不是握手本身产生的，别算成握手的结论'
                                 % (last, name))
+    # ---- TELEOP：先认"真的进档了"这一种形状，再退回旧镜像的 0x06 ----
+    if MODE_VAL_TELEOP in seen_modes:
+        if baseline_mode is None:
+            return 'INCONCLUSIVE', ('看到 TELEOP（mode=3）但发送前没有基线：'
+                                    '这个 3 可能一直就在，不能算本次请求的功劳')
+        if baseline_mode == MODE_VAL_TELEOP:
+            return 'INCONCLUSIVE', ('发送前就已经是 TELEOP，本次请求没有可观察的效果'
+                                    '（要重测先 `[M]` 交回，或断电重来）')
+        if last is not None:
+            return 'INCONCLUSIVE', ('看到 TELEOP（mode=3）但同一窗口里还挂着 '
+                                    'reject=0x%02X（%s）：固件进档成功会把 reject 写回 0，'
+                                    '所以那个拒绝码是更早一条请求留下的，两者不能同时当结论'
+                                    % (last, name))
+        return 'PASS', ('基线 %s -> TELEOP（mode=3），且 reject 归 0：'
+                        '手操档在固件侧真的开了（`enter_unmanned()` 的成功路径）。'
+                        '这一句只到"进档"，不含限速/刀/停车——那是 C23/C24/C25/C26'
+                        % _name(baseline_mode))
     if last == P.REJECT_NOT_IMPL:
-        return 'PASS', ('reject=0x06（该模式本批未实现）正是预期答复：它同时证明 MODE '
-                        '进了分派、TELEOP 的未实现通路诚实。**这不等于 TELEOP 可用**，'
-                        '实现属批 2')
+        return 'PASS', ('reject=0x06（该模式本批未实现）：说明这块板还是手操档之前那一版'
+                        '镜像。它证明 MODE 进了分派、未实现通路诚实，**不等于 TELEOP 可用**'
+                        '——手操档的代码已在仓库里（`retrofit.c` 的 `MODE_TELEOP` 分支 + '
+                        'PC 侧 `TELEOP` 态），重烧之后再跑这条才会看到 mode=3')
     if last is None:
-        return 'INCONCLUSIVE', ('收到 STATUS 但没读到非零 reject：没烧批 1a 的板就是把 '
-                                'MODE 整条丢掉、reject 字段根本不存在，这一格与'
-                                '"什么都没发生"分不开')
+        return 'INCONCLUSIVE', ('收到 STATUS、reject 没挂非零码，但 mode 也没进 TELEOP：'
+                                '这既可能是 MODE 帧整条被丢（v1 那块板就是这个长相，'
+                                '见 _V1_NOTE），也可能是发完之后收的方向断了——'
+                                '两种都判不了进档，别写成"测过了"')
     return 'FAIL', ('TELEOP 请求被排在它前面的判据挡了：reject=0x%02X（%s）——'
-                    '四条判据的顺序是固件写死的，本格没测到未实现通路'
+                    '进档判据的先后顺序是固件写死的（手操走的是去掉"遥控新鲜"那三道），'
+                    '本格没测到"能不能进"，只测到"被哪一道挡了"。'
                     % (last, name))
 
 

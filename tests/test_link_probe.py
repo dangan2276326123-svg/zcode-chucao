@@ -247,8 +247,10 @@ def test_mode_name_and_expected_tables_match_the_e3_contract():
     """两张表是 brief 定下的契约：MODE 含 TELEOP，nav 的预期不再是 mode=1。
 
     10-12（T1）把 `mode_profile` / `mode_teleop` 也写进这张表——**两条都是 None**：
-    握手与 TELEOP 都不以 mode 变化为判据（握手的产物是 handshake_ok 那一位、
-    TELEOP 本批未实现），所以这条等式断言仍然成立，只是表长了两项。
+    它们都不走这张通用转移表（握手的产物是 handshake_ok 那一位，不在 STATUS 里；
+    TELEOP 有两种成功形状，一张表装不下，判据在 `_judge_new_mode` 里自己写）。
+    10-13 手操档落地后这条等式**仍然成立**，因为留 None 的含义是"别落到通用分支"，
+    不是"TELEOP 不会改 mode"——后者恰好现在会（成功时 mode 跳 3）。
     """
     assert lp.MODE_NAME == {0: 'MANUAL', 1: 'AUTO', 2: 'ESTOP', 3: 'TELEOP'}
     assert lp.EXPECTED == {'nav': None, 'mode_auto': 1, 'mode_manual': 0,
@@ -603,7 +605,7 @@ def test_mode_commands_still_refuse_a_command_line_profile(kind):
 
 
 def test_judge_mode_profile_and_teleop_say_different_things():
-    """握手的 0x01 有两种成因，TELEOP 的 0x06 是**预期答复**——两句不能共用文案。"""
+    """握手的 0x01 有两种成因；TELEOP 的 0x06 只在**旧镜像**上是预期答复——两句不能共用文案。"""
     # 握手：没读到非零 reject = 板子认了这个档案号
     assert lp.judge('mode_profile', 0, [0], [])[0] == 'PASS'
     # 握手：挂着 0x01 —— 要说清"这个号真的不匹配"与"从没握过手"分不开
@@ -611,11 +613,34 @@ def test_judge_mode_profile_and_teleop_say_different_things():
     assert verdict == 'FAIL' and '从没' in text
     # 握手：板子回的是别的码 ⇒ 这条码不是握手产生的，不给结论
     assert lp.judge('mode_profile', 0, [0], [P.REJECT_RCS_STALE])[0] == 'INCONCLUSIVE'
-    # TELEOP：0x06 就是这一格要的答复，且必须带上"不等于 TELEOP 可用"那句
+    # TELEOP（旧镜像那一版）：0x06 给 PASS，但必须带上"不等于 TELEOP 可用"那句
     verdict, text = lp.judge('mode_teleop', 0, [0], [P.REJECT_NOT_IMPL])
     assert verdict == 'PASS' and 'TELEOP 可用' in text
-    # TELEOP：读不到非零 reject ⇒ 与"帧整条被丢掉"分不开（v1 上就是这个长相）
+    # TELEOP：mode 没进 3、reject 也没挂非零码 ⇒ 与"帧整条被丢掉"分不开
     assert lp.judge('mode_teleop', 0, [0], [])[0] == 'INCONCLUSIVE'
     # 两条共同的最外层：一帧 STATUS 都没有，只能说不计结论
     assert lp.judge('mode_profile', 0, [], [])[0] == 'INCONCLUSIVE'
     assert lp.judge('mode_teleop', None, [0], [])[0] == 'INCONCLUSIVE'
+
+
+def test_judge_mode_teleop_accepts_the_flashed_image_shape():
+    """烧了手操档之后，`mode_teleop` 的成功形状是 mode 跳 3 且 reject 归 0。
+
+    这条测试是 10-13 那次判据改动唯一的行为证据。改之前同样入参返回的是
+    INCONCLUSIVE，而且理由是"没烧批 1a 的板就是把 MODE 整条丢掉"——那句话说的是
+    另一块板。后果不是"少一条结论"，是**台架上真的进了手操档、工具却说判不了，
+    并给出一个会把人引向查接线的错因**（§4B 读表须知第 3 句同一个坑）。
+    """
+    # 正常进档：基线 MANUAL(0) -> 观察到 TELEOP(3)，窗口内 reject 全为 0
+    verdict, text = lp.judge('mode_teleop', 0, [0, 3], [])
+    assert verdict == 'PASS' and 'TELEOP（mode=3）' in text
+    # 因果：没有发送前基线不给 PASS（与通用分支同一把尺）
+    assert lp.judge('mode_teleop', None, [0, 3], [])[0] == 'INCONCLUSIVE'
+    # 因果：发送前就已经是 3 ⇒ 这次请求没有可观察的效果
+    assert lp.judge('mode_teleop', 3, [3], [])[0] == 'INCONCLUSIVE'
+    # 同窗口里既看到 3 又挂着非零 reject ⇒ 两个证据互相矛盾，不给结论
+    verdict, text = lp.judge('mode_teleop', 0, [0, 3], [P.REJECT_PERMIT])
+    assert verdict == 'INCONCLUSIVE' and '更早' in text
+    # 被排在前面那道门挡了（手操的三道门之一）：FAIL 要说清"是被挡"不是"未实现"
+    verdict, text = lp.judge('mode_teleop', 0, [0], [P.REJECT_ESTOP_LATCHED])
+    assert verdict == 'FAIL' and '未实现' not in text
