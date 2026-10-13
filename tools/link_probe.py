@@ -167,6 +167,9 @@ def _judge_new_mode(kind, baseline_mode, seen_modes, rejects):
         烧之前那一版答 0x06（该模式未实现）。0x06 只证明"MODE 进了分派 +
         未实现通路诚实"，**不等于 TELEOP 可用**——判据文案必须把这一点说明白，
         否则下一代会把一块旧板读成"手操档测过了"。
+        第三种单独列出：**答 0x02（遥控链路不新鲜）是缺陷不是拒得对**。② 就是手操档
+        让开的那一道，末位的通用 FAIL 那句"被排在它前面的判据挡了"对 0x02 是**假话**
+        （②前面只剩①，而它拒的正是②本身），所以这一支单独给文案与去向（认版，§4B B1）。
     """
     if not seen_modes:
         if baseline_mode is None:
@@ -212,6 +215,14 @@ def _judge_new_mode(kind, baseline_mode, seen_modes, rejects):
                         '镜像。它证明 MODE 进了分派、未实现通路诚实，**不等于 TELEOP 可用**'
                         '——手操档的代码已在仓库里（`retrofit.c` 的 `MODE_TELEOP` 分支 + '
                         'PC 侧 `TELEOP` 态），重烧之后再跑这条才会看到 mode=3')
+    if last == P.REJECT_RCS_STALE:
+        return 'FAIL', ('手操请求被 reject=0x02（遥控链路不新鲜）拒了。这一条**不是**'
+                        '"被排在前面的判据挡了"：0x02 就是条件② 本身，而②正是手操档'
+                        '让开的那一道（10-13 那版 `enter_unmanned()` 写的是'
+                        '`want_mode != MODE_TELEOP` 才查②，见'
+                        '`docs/superpowers/specs/2026-10-13-pc-manual-channel-design.md` §2）。'
+                        '它还挡着手操 ⇒ **门槛拆档没进这块板的镜像**，先按 §4B B1 认版'
+                        '（build_id + `Code` 尺寸那四样一起看，单靠 build_id 会撞）再谈别的')
     if last is None:
         return 'INCONCLUSIVE', ('收到 STATUS、reject 没挂非零码，但 mode 也没进 TELEOP：'
                                 '这既可能是 MODE 帧整条被丢（v1 那块板就是这个长相，'

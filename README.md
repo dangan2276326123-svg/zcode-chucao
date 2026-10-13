@@ -94,6 +94,25 @@
 | **只**用于打开 labelme 图形界面 | `chucao_prj\annotation_tools\labelme_env\Scripts\python.exe` | ⚠️ 该 venv **只有 labelme 5.10.1 + numpy**，没有 torch/albumentations/cv2 —— 拿它跑 `.py` 必然 `ModuleNotFoundError: No module named 'cv2'` |
 | matplotlib 绑图 | ❌ 两个环境都不可用 | numpy 2.0.2 与已编译的 1.x 冲突（ImportError）。曲线改用 python-pptx 原生图表或 CSV |
 
+**`cv2.imshow` 能不能开窗（10-13 傍晚实测，09-21 那张表没覆盖这件事）**：上面那行的判据是
+"预标注跑通"，而预标注不开窗，所以 GUI 能力一直没被记过——代价是手操档当天现场炸的：
+键盘输入长在 `imshow`/`waitKey` 上，`python -B pc/main.py --live` 第一拍就抛
+`OpenCV ... The function is not implemented. Rebuild the library with Windows, GTK+ 2.x or Cocoa support`。
+
+- 成因（当场 `pip list` 读到的）：同一个解释器里**同时装着** `opencv-python 4.13.0.90` 和
+  `opencv-python-headless 5.0.0.93`。两个包都往 `site-packages\cv2\` 落文件，`import cv2` 拿到
+  谁取决于安装顺序，而 headless 那份的 `imshow` **必抛**。
+- 修 = 两个都卸、只留 GUI 那一份（版本号不变，所以 HUD 那个每行 85 字符预算的实测前提不动）：
+  `python -m pip uninstall -y opencv-python-headless opencv-python` 然后
+  `python -m pip install opencv-python==5.0.0.93`。
+- 判据 = **窗口真开出来**，不是 `getBuildInformation()` 里找 `WIN32:`——这两个 wheel 的
+  Video I/O 段根本没有那一行，只有 `imshow` + `waitKey(30)` + `getWindowProperty(name,
+  WND_PROP_VISIBLE)` 返回可见才算过（10-13 当场：base 与 `envs\deeplab` 两个解释器都过，
+  `window visible=1.0`）。
+- 影响面不止手操：`pc/calib_ipm.py`（IPM 外参标定——门 N 那个横向指标卡的正是它）、
+  `tools/stream_view.py`、`tools/udp_view.py`、`network/local_single_station.py` 都调
+  `imshow`。田里那两天要用它们之前，先照上面三行测一遍。
+
 **PyCharm 里"点运行没反应"的原因（09-21 实例）**：工程开成了父目录 `D:\JetBrains`。`D:\JetBrains\.idea\workspace.xml` 里运行配置数为 **0**，而 `pre_annotate` 那条配置存在 `chucao_prj\.idea\workspace.xml` 里并绑定 `<module name="chucao_prj"/>` —— **PyCharm 不加载嵌套子目录的 `.idea`**。正确做法：以 `D:\JetBrains\chucao_prj` 为工程打开（它自带 4 条配置与 deeplab SDK）。另：设置窗口未关闭时主窗口 ▶ 不响应。
 
 ### `firmware/` — 下位机固件（STM32F407，Keil）

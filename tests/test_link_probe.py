@@ -644,3 +644,23 @@ def test_judge_mode_teleop_accepts_the_flashed_image_shape():
     # 被排在前面那道门挡了（手操的三道门之一）：FAIL 要说清"是被挡"不是"未实现"
     verdict, text = lp.judge('mode_teleop', 0, [0], [P.REJECT_ESTOP_LATCHED])
     assert verdict == 'FAIL' and '未实现' not in text
+
+
+def test_judge_mode_teleop_reads_reject_0x02_as_the_split_defect():
+    """0x02 是**被去掉的那一道自己**在拒，不是"被排在它前面的判据挡了"。
+
+    通用那条 FAIL 的文案对 0x02 是假话：手操档的查序是 ① 档案 →（② 只 AUTO 查）→
+    ③ 急停 → ④ 主循环，②前面只剩①；一块烧了 10-13 那版的板答 0x02，唯一说得通的
+    是 `enter_unmanned()` 里"TELEOP 跳过②"那句没进镜像。这条判据把现场直接引向认版
+    （§4B B1），而不是引向"再拨一次遥控/再等一次新鲜"——后者会让人对着一条没拆成的
+    门反复试，而 §4B C22 要的恰恰就是"遥控不通时也能进"。
+
+    变异记录（证明这条测试真咬）：把 `last == P.REJECT_RCS_STALE` 改成 `False` 之后，
+    0x02 落回通用那条 FAIL，第一条断言当场红；改回全绿。
+    """
+    verdict, text = lp.judge('mode_teleop', 0, [0], [P.REJECT_RCS_STALE])
+    assert verdict == 'FAIL'
+    assert '拆档' in text and '遥控' in text
+    assert '排在它前面' not in text        # 不许再用通用那句错文案
+    # 同一条 0x02 在握手那一格仍是"不是握手产生的、不给结论"（别把两条判据并成一条）
+    assert lp.judge('mode_profile', 0, [0], [P.REJECT_RCS_STALE])[0] == 'INCONCLUSIVE'
