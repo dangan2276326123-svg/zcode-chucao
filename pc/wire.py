@@ -17,7 +17,50 @@ GATE_F = 2     # 允许落刀作业与横移
 PERMIT_BY_NAME = {'gate_n': GATE_N, 'gate_f': GATE_F}
 
 # 持权的 PC 状态。ESTOP 不持权（谁都不能动），MANUAL 是遥控持权。
-HOLDING = ('AUTO', 'LIFT')
+# TELEOP（2026-10-13 手操档）必须在持权名单里：漏了它，手操期间这一拍会掉进
+# else 发 HEARTBEAT，而固件收心跳就把权限交回遥控——PC 屏幕写着手操、车上其实是遥控，
+# 那正是 E3 契约记过的"codex 新发现一"的形状，不许在这里重犯一遍。
+HOLDING = ('AUTO', 'TELEOP', 'LIFT')
+
+# 手操档的速度包络（spec §5，作者 10-13 定 0.1）。
+# 钳位放在**发帧层**而不是调用方：线上来什么速度不能假定发送方自觉。
+# 第一阶段只放前进，负值钳成 0——四轮行走方向那张实测表没填完之前，
+# "给负值四轮是不是真反、左右对不对称"没有任何凭据（Hw-26/27 的复位循环
+# 已经把行走方向的定案作废过一次）。
+TELEOP_MAX_MPS = 0.1
+TELEOP_NEGATIVE_LOCKED = True
+
+# 松手归零的超时（spec §4）。cv2.waitKey 在按住时靠系统重复投递，"松开"没有可靠事件，
+# 所以这里按"最后一次按键距今多久"判：超过这个窗口就归零。
+# ⚠️ 这个值**还没在真机上量过**（spec §12 第一行），100 ms 是设计初值而不是标定值。
+TELEOP_HOLD_S = 0.1
+
+# 手操键位 → (左轮, 右轮)。第一阶段不配后退键：按了不动比"能按"更容易被读成坏了。
+_TELEOP_KEY_SPEEDS = {
+    'w': (TELEOP_MAX_MPS, TELEOP_MAX_MPS),   # 直行前进
+    's': (0.0, TELEOP_MAX_MPS),              # 左转（差速，不是转角）
+    'd': (TELEOP_MAX_MPS, 0.0),              # 右转
+}
+
+
+def teleop_speeds(key, held_s):
+    """把"按住哪个键 + 按住多久"翻成两侧轮速。纯函数，好单测。
+
+    没有匹配键、或按键已超出 `TELEOP_HOLD_S` 窗口 ⇒ (0, 0)。
+    **不用松开事件**：那会让车在事件丢失时多走一段，而那一段在田间是压苗。
+    """
+    if key is None or held_s is None or held_s > TELEOP_HOLD_S:
+        return 0.0, 0.0
+    return _TELEOP_KEY_SPEEDS.get(key, (0.0, 0.0))
+
+
+def clamp_teleop(v):
+    """手操速度钳位：上限 0.1，第一阶段负值钳成 0。"""
+    v = min(v, TELEOP_MAX_MPS)
+    if TELEOP_NEGATIVE_LOCKED:
+        v = max(v, 0.0)
+    return v
+
 
 RUN_LOG_COLUMNS = [
     't', 'frame_id', 'state', 'status', 'lat_m', 'lat_comp_m',
@@ -70,8 +113,9 @@ def frames_for_state(state, usable, vl, vr, tool_mm, permit=GATE_N):
     """返回 [(frame_type, payload), ...]。
 
     规则（spec §5.1 表）：
-      - 持权（AUTO/LIFT）→ 必须发 NAV+TOOL，**永不发 HEARTBEAT**；
-        视觉不可用或处于 LIFT 时速度锁零、刀位提刀。
+      - 持权（AUTO/TELEOP/LIFT）→ 必须发 NAV+TOOL，**永不发 HEARTBEAT**；
+        AUTO/LIFT 在视觉不可用或处于 LIFT 时速度锁零、刀位提刀；
+        **TELEOP 不锁零**（速度来自人，见 2026-10-13 手操 spec §2），且刀/横移绑死门 N。
       - MANUAL → 只发 HEARTBEAT。
       - ESTOP → 稳态不发帧（跳变那一拍由调用方发一次 ESTOP 帧）。
     许可位（spec §5.3）：GATE_N 下横移恒 0、刀位恒 0x07；
@@ -89,6 +133,16 @@ def frames_for_state(state, usable, vl, vr, tool_mm, permit=GATE_N):
     """
     if permit not in (GATE_N, GATE_F):
         raise ValueError('unknown permit %r' % permit)
+
+    if state == 'TELEOP':
+        # 手操档（2026-10-13 spec §2/§5，作者 B3/B4）：
+        #   速度来自**人按住的那个键**，所以 `usable` 不参与锁零——把 AUTO 那套
+        #   "瞎了就锁零"套到人手开车上，等于他一丢墙方向盘就被抽走，现场会读成板子抽风；
+        #   刀与横移**绑死门 N**：不进档条件里不查刀，进来之后三路刀钉提位、横移恒 0，
+        #   即使 permit 被配成门 F 也不放开（手操档不是落刀的入口）。
+        # 钳位放在这里而不是调用方：线来的速度不能假定发送方自觉。
+        return [(P.TYPE_NAV, P.pack_nav(clamp_teleop(vl), clamp_teleop(vr))),
+                (P.TYPE_TOOL, P.pack_tool(0.0, 0x07))]
 
     if state not in HOLDING:
         if state == 'ESTOP':

@@ -14,6 +14,7 @@ from pc import wire
 class StateMachine:
     MANUAL = 'MANUAL'
     AUTO = 'AUTO'
+    TELEOP = 'TELEOP'      # 手操档（2026-10-13 拆档）：PC 持权，速度来自人按的键
     LIFT = 'LIFT'
     ESTOP = 'ESTOP'
 
@@ -43,8 +44,22 @@ class StateMachine:
         self._to(self.AUTO)
         return True
 
+    def go_teleop(self):
+        """手操档进档（2026-10-13 spec §2，作者决定 B1/B2）。
+
+        **与 go_auto 的唯一差别是它不查视觉信心，也不消费 L2.5 闸门**：
+        指令源就是人自己，台架上没有行墙、信心永远不够，把无人的判据套过来
+        等于这条档位在台架上根本不可达；而 L2.5 那道闸门保护的是"车自己在跑时
+        丢了边界要不要继续"，人在开车时这件事由人判。
+        唯一拒绝的仍是急停锁存——那是一条状态，不是一个告警（同 confirm_continue
+        的 I-2 裁定口径）。
+        """
+        if self.state == self.ESTOP:
+            return False
+        self._to(self.TELEOP)
+        return True
+
     def go_manual(self):
-        """Operator override always allowed (except latched ESTOP)."""
         if self.state != self.ESTOP:
             self._to(self.MANUAL)
             return True
@@ -110,7 +125,10 @@ class StateMachine:
 
     @property
     def wheels_enabled(self):
-        return self.state == self.AUTO
+        """TELEOP 也算"轮子被 PC 驱动"（2026-10-13 拆档）：手操时线上一边是
+        人按出来的 NAV，一边是 STATUS 回传，凡按"轮子是否由 PC 给速"分支的地方
+        都要把两档一起算上，否则手操会被读成"PC 没在开车"。"""
+        return self.state in (self.AUTO, self.TELEOP)
 
     @property
     def tools_raised(self):

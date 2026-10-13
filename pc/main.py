@@ -75,7 +75,10 @@ L1_SPEED_SCALE = 0.5        # x v_nominal，spec §5.2 L1（初始值，待台�
 HUD_MAX_CHARS = 85
 HUD_ORIGIN = (10, 40)       # 第一行的左下角
 HUD_LINE_H = 30             # 行间距（px）
-HUD_KEYS = '[A]uto [M]anual [E]stop [R]eset [C]onfirm [Q]uit'
+HUD_KEYS = '[A]uto [T]eleop [M]anual [E]stop [R]eset [C]onfirm [Q]uit'
+# 手操档的方向键（W 直行 / S 左转 / D 右转）单列一行：它们不是「按一下切换」的状态键，
+# 是每拍重读的「按住」键，混进上面那行会让人以为按一次就一直走（2026-10-13 手操 spec §4）。
+HUD_TELEOP = 'HOLD [W]fwd [S]left [D]right  (release => stop; no reverse yet)'
 AUTO_REFUSE_NOTICE_S = 3.0  # "AUTO REFUSED" 在 HUD 上停留多久（I-3：被拒必须看得见）
 
 
@@ -266,6 +269,11 @@ def main():
     l1_events = 0            # 累计 L1 降级事件数（进 run_log 的 l1_events 列 + HUD）
     auto_refusal = ''        # I-3：最近一次 [A] 被拒的原因，HUD 上要看得见
     t_refuse = 0.0
+    # 手操档（2026-10-13 spec §4）只记两件事：最后一次方向键是哪个、什么时候按的。
+    # 归零判据是超时而不是松开事件——cv2.waitKey 没有可靠的松开事件，拿它当存在性判据
+    # 会让车多走一段，而那一段在田间是压苗。
+    tele_key = None
+    tele_key_t = 0.0
 
     with open(csv_path, 'w', newline='', encoding='utf-8') as fcsv:
         wr = csv.writer(fcsv)
@@ -350,7 +358,13 @@ def main():
             # 状态与 run_log 仍写 AUTO（codex 新发现一）。发帧内容整个交给 wire。
             vl = vr = 0.0
             tool_mm = 0.0
-            if sm.state == 'AUTO' and usable:
+            if sm.state == 'TELEOP':          # 字面量，与本文件其余判据同一写法；单测把 StateMachine 换成工厂函数，引类属性会撞
+                # 手操档：两侧速度就是「按住哪个键 + 按住多久」，视觉那条链整个不参与。
+                # 钳位（0.1 上限、第一阶段负值钳 0）在 wire.frames_for_state 里再做一遍——
+                # 两层都要，发帧那一道不依赖这里的自觉。
+                vl, vr = wire.teleop_speeds(tele_key, time.time() - tele_key_t)
+                pid.reset()          # 这一拍不驱动工具轴，积分不许跨过手操段
+            elif sm.state == 'AUTO' and usable:
                 tool_px = res.get('tool_offset_px')
                 if tool_px is None:      # far field ok, near field lost (P1-3)
                     tool_px = 0.0
@@ -442,6 +456,12 @@ def main():
                     auto_refusal = ''            # 过期就不许一直挂着（I-3 的 TTL）
                 if auto_refusal:
                     alerts.append(auto_refusal)  # I-3：被拒不许只剩"按了没反应"
+                hud_extra = []
+                if sm.state == 'TELEOP':          # 字面量，与本文件其余判据同一写法；单测把 StateMachine 换成工厂函数，引类属性会撞
+                    # 手操时人必须一眼看见两件事：现在是谁在说话、这一拍给出去多少。
+                    # 松手归零要看得见——看不见就会有人以为「按了没反应」是坏了。
+                    alerts.append('TELEOP v=%.2f/%.2f (hold W/S/D)' % (vl, vr))
+                    hud_extra = [HUD_TELEOP]
                 if frame is None:
                     alerts.append('*** NO FRAME - vision lost ***')
                 if _age is not None:
@@ -453,7 +473,7 @@ def main():
                 for bits, color in ((state_bits, (255, 255, 0)),
                                     (mcu_bits, (255, 255, 0)),
                                     (alerts, (0, 0, 255)),
-                                    ([HUD_KEYS], (255, 255, 255))):
+                                    ([HUD_KEYS] + hud_extra, (255, 255, 255))):
                     hud_lines += [(ln, color) for ln in _hud_wrap(bits)]
                 for i, (ln, color) in enumerate(hud_lines):
                     # 每行自己的 y：都画在同一个 y 上等于叠在一起，仍然看不见。
@@ -493,6 +513,23 @@ def main():
                               ' (ENTER_MIN_CONF=%.2f)'
                               % (why, pre_state, pre_gate, usable,
                                  res['confidence'], ENTER_MIN_CONF))
+                elif k == ord('t'):
+                    # 手操档进档（spec §2）：门槛比无人少一道（不查视觉信心、不消费 L2.5
+                    # 闸门），但顺序规矩一样不能少——先问状态机，它点头才把申请发上线。
+                    # 反过来的话，急停锁存下 PC 一帧不发而 MCU 已收到申请（同 [A] 的 I-3）。
+                    pre_state = sm.state
+                    if sm.go_teleop():
+                        send(P.TYPE_MODE, P.pack_mode(P.MODE_REQ_TELEOP, profile_id))
+                        auto_refusal = ''
+                    else:
+                        auto_refusal = 'TELEOP REFUSED:ESTOP'
+                        t_refuse = time.time()
+                        print('TELEOP request refused: state=%s' % pre_state)
+                elif k in (ord('w'), ord('s'), ord('d')):
+                    # 方向键只在手操档里有意义。不在手操时也记时间戳，但发帧那条路不进
+                    # TELEOP 分支，所以不会偷偷把速度塞给 AUTO。
+                    tele_key = chr(k)
+                    tele_key_t = time.time()
                 elif k == ord('m'):
                     send(P.TYPE_MODE, P.pack_mode(P.MODE_REQ_MANUAL, profile_id))
                     sm.go_manual()
