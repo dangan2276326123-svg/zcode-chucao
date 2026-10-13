@@ -14,7 +14,7 @@
 #define MODE_TELEOP 3      /* PC 手操档：速度来自人按的键（2026-10-13 填上批 1a 留的空位） */
 /* 手操档速度上限（spec §5）。与 pc/wire.py 的 TELEOP_MAX_MPS 各写一份、都要写：
    两层的值一旦漂开，现场真正生效的是漂移的那一个，所以两边都别偷偷改。 */
-#define RETRO_TELEOP_MAX 0.1f
+#define RETRO_TELEOP_MAX 0.2f
 
 /* ---- MODE.request (must equal common/protocol.py) ---- */
 #define MODE_REQ_MANUAL       0x00

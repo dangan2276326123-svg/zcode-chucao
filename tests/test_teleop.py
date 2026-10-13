@@ -7,6 +7,8 @@
   3. 0.1 m/s 与"第一阶段负值钳成 0"这两条钳位必须在发帧层，不靠调用方自觉；
   4. 手操绑门 N：permit 配成门 F 也不许落刀、不许横移。
 """
+import os
+import re
 import struct
 
 from common import protocol as P
@@ -148,3 +150,28 @@ def test_teleop_releases_to_zero_after_the_hold_window():
 def test_no_backward_key_is_bound_in_phase_one():
     """第一阶段不给后退配键——按了不动比"能按"更容易被误读成坏了。"""
     assert wire.teleop_speeds('x', 0.01) == (0.0, 0.0)
+
+
+# ---- 5. 两层限速值不许各说一套（10-13 晚 0.1 -> 0.2 这次改判时补） ----------
+
+FIRMWARE_RETROFIT_H = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    'firmware', '大车proj', '大车', 'HARDWARE', 'retrofit', 'retrofit.h')
+
+
+def test_teleop_cap_matches_the_firmware_constant():
+    """PC 的 `TELEOP_MAX_MPS` 与固件的 `RETRO_TELEOP_MAX` 必须是同一个数。
+
+    这条钉的不是数值本身，是**只改一层**那个错法。手操限速在两侧各写一份，固件那一份
+    是编译期钳位（`retrofit_on_nav_frame` 里 `cmd_v* > RETRO_TELEOP_MAX` 就压回去），
+    所以"改了 PC、忘了固件"的症状最阴：CSV 的 `vL`/`vR` 会老老实实写着 0.200（那是
+    PC 自己算的给定值），车上却还是 0.1 —— 读数看起来"改生效了"，实际没改。
+    10-13 晚这次 0.1 -> 0.2 就是两层同改，本测试当场先红（PC=0.2 / 固件=0.1）再绿。
+    """
+    with open(FIRMWARE_RETROFIT_H, 'rb') as f:      # 字节级读：firmware/ 下不按文本编码假设
+        text = f.read().decode('latin-1')           # 只找 ASCII 的 #define，中文注释不参与
+    hits = re.findall(r'#\s*define\s+RETRO_TELEOP_MAX\s+([0-9]*\.?[0-9]+)f?', text)
+    assert len(hits) == 1, '固件里 RETRO_TELEOP_MAX 应当只有一份定义，实测 %r' % (hits,)
+    assert abs(float(hits[0]) - wire.TELEOP_MAX_MPS) < 1e-9, (
+        '限速两层不一致：PC=%.3f 固件=%.3f —— 只改一层等于没改'
+        % (wire.TELEOP_MAX_MPS, float(hits[0])))

@@ -22,12 +22,17 @@ PERMIT_BY_NAME = {'gate_n': GATE_N, 'gate_f': GATE_F}
 # 那正是 E3 契约记过的"codex 新发现一"的形状，不许在这里重犯一遍。
 HOLDING = ('AUTO', 'TELEOP', 'LIFT')
 
-# 手操档的速度包络（spec §5，作者 10-13 定 0.1）。
+# 手操档的速度包络（spec §5，作者 10-13 当场定 0.1；**同日台架真机后改 0.2**：
+# 0.1 m/s = 每秒 10 cm，落地带动力推不动这台 3.25 m 的上代车——命令层 CSV 里
+# 连续 350 拍都是 0.100，轮子只转了一下、车没行走。改判留痕见 spec §5 与台账 §4）。
+# 这个值 PC 与固件**各写一份**（另一份是 `retrofit.h:RETRO_TELEOP_MAX`），只改一层
+# 必然无效：PC 发 0.2 会被固件钳回 0.1。两边不许漂，由 tests/test_teleop.py 里
+# test_teleop_cap_matches_the_firmware_constant 钉住。
 # 钳位放在**发帧层**而不是调用方：线上来什么速度不能假定发送方自觉。
 # 第一阶段只放前进，负值钳成 0——四轮行走方向那张实测表没填完之前，
 # "给负值四轮是不是真反、左右对不对称"没有任何凭据（Hw-26/27 的复位循环
 # 已经把行走方向的定案作废过一次）。
-TELEOP_MAX_MPS = 0.1
+TELEOP_MAX_MPS = 0.2
 TELEOP_NEGATIVE_LOCKED = True
 
 # 松手归零的超时（spec §4）。cv2.waitKey 在按住时靠系统重复投递，"松开"没有可靠事件，
@@ -55,7 +60,7 @@ def teleop_speeds(key, held_s):
 
 
 def clamp_teleop(v):
-    """手操速度钳位：上限 0.1，第一阶段负值钳成 0。"""
+    """手操速度钳位：上限 TELEOP_MAX_MPS（0.2），第一阶段负值钳成 0。"""
     v = min(v, TELEOP_MAX_MPS)
     if TELEOP_NEGATIVE_LOCKED:
         v = max(v, 0.0)
