@@ -530,19 +530,19 @@ while(1)
 	  /* steering takeover (Fw-11): in AUTO the four angles are forced to
 	     the calibrated straight position BEFORE send_angle runs - the
 	     gate further below is too late, path_plan() rewrote angle[]. */
-	  if (retrofit_mode() == MODE_AUTO) {
+	  if (retrofit_mode() == MODE_AUTO || retrofit_mode() == MODE_TELEOP) {
 	      angle[0] = angle[1] = angle[2] = angle[3] = 0.0;
 	  }
-	  send_angle(4,-(angle[0]-wheel_Angle_correct[0]-Last_wheel_Angle_correct_run[1]-(retrofit_mode()==MODE_AUTO?0.0:Switch_direction)));   //角度控制  adress, angle    四个轮子 但是一个伺服电机控制两个  所以只控制两个就可以
+	  send_angle(4,-(angle[0]-wheel_Angle_correct[0]-Last_wheel_Angle_correct_run[1]-((retrofit_mode()==MODE_AUTO||retrofit_mode()==MODE_TELEOP)?0.0:Switch_direction)));   //角度控制  adress, angle    四个轮子 但是一个伺服电机控制两个  所以只控制两个就可以
 	  delay_ms(12);
  
-	  send_angle(1,(angle[1]+wheel_Angle_correct[1]-Last_wheel_Angle_correct_run[1]+(retrofit_mode()==MODE_AUTO?0.0:Switch_direction)));   //角度控制  adress, angle    四个轮子 但是一个伺服电机控制两个  所以只控制两个就可以
+	  send_angle(1,(angle[1]+wheel_Angle_correct[1]-Last_wheel_Angle_correct_run[1]+((retrofit_mode()==MODE_AUTO||retrofit_mode()==MODE_TELEOP)?0.0:Switch_direction)));   //角度控制  adress, angle    四个轮子 但是一个伺服电机控制两个  所以只控制两个就可以
 	  delay_ms(12);
 	
-	  send_angle(2,(angle[2]-wheel_Angle_correct[2]-Last_wheel_Angle_correct_run[1]+(retrofit_mode()==MODE_AUTO?0.0:Switch_direction)));   //角度控制  adress, angle    四个轮子 但是一个伺服电机控制两个  所以只控制两个就可以
+	  send_angle(2,(angle[2]-wheel_Angle_correct[2]-Last_wheel_Angle_correct_run[1]+((retrofit_mode()==MODE_AUTO||retrofit_mode()==MODE_TELEOP)?0.0:Switch_direction)));   //角度控制  adress, angle    四个轮子 但是一个伺服电机控制两个  所以只控制两个就可以
 	  delay_ms(12);
 	
-	  send_angle(3,-(angle[3]+wheel_Angle_correct[3]-Last_wheel_Angle_correct_run[1]-(retrofit_mode()==MODE_AUTO?0.0:Switch_direction)));   //角度控制  adress, angle    四个轮子 但是一个伺服电机控制两个  所以只控制两个就可以
+	  send_angle(3,-(angle[3]+wheel_Angle_correct[3]-Last_wheel_Angle_correct_run[1]-((retrofit_mode()==MODE_AUTO||retrofit_mode()==MODE_TELEOP)?0.0:Switch_direction)));   //角度控制  adress, angle    四个轮子 但是一个伺服电机控制两个  所以只控制两个就可以
 	  delay_ms(12);
 		
 	//控制伺服电机
@@ -551,7 +551,7 @@ while(1)
 /* RETROFIT safety gate: AUTO uses slew-limited vision commands;
    ESTOP or retrofit fault forces zero. MANUAL falls through to the
    original SBUS path below, unchanged. */
-	if (retrofit_mode() == MODE_AUTO) {
+	if (retrofit_mode() == MODE_AUTO || retrofit_mode() == MODE_TELEOP) {
 		float vl = 0.0f, vr = 0.0f;
 		retrofit_get_wheel_cmd(&vl, &vr);
 		veloc[0] = veloc[2] = vl;   /* left front/rear */

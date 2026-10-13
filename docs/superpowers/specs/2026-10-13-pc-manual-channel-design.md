@@ -42,6 +42,8 @@
 
 ## 3. 现状（当场读码，2026-10-13；行号会漂，一律附定位命令）
 
+⚠️ **本节写的是"动手之前"的现状**（2026-10-13 上午读码所得）。同日晚些时候 PC 侧与固件侧已按 §8 落地并编译通过，所以这里的四条"还没做"里有三条已经不成立——**留在原处不删，是为了让"当初是按什么事实做的决定"这句话还有据**；实现后的状态记在 §8 末尾与台账 §4。
+
 - 固件进档判定：`retrofit.c` 的 `enter_unmanned()`，四道门依次为 `REJ_PROFILE` / `REJ_RCS_STALE` / `REJ_ESTOP_LATCHED` / `REJ_LOOP_STALLED`，其后紧跟一行 `if (want_mode == MODE_TELEOP) { reject_code = REJ_NOT_IMPL; return 0; }` ⇒ **手操今天被最后一行挡死，且挡死之前它已经查完了无人那四道门**。定位：`grep -n "enter_unmanned\|REJ_NOT_IMPL" firmware/大车proj/大车/HARDWARE/retrofit/retrofit.c`
 - 执行面**已经预留**：`retrofit_on_nav_frame()` 存速度那段的判据是 `if (mode == MODE_AUTO || mode == MODE_TELEOP)` ⇒ 批 2 只差"允许进入 + 限速"。定位：`grep -n "MODE_AUTO || mode == MODE_TELEOP" firmware/大车proj/大车/HARDWARE/retrofit/retrofit.c`
 - **厂商 `main.c` 两处只认 AUTO**，这是本批最要紧的一处漏洞：转角清零（`if (retrofit_mode() == MODE_AUTO) { angle[0]=angle[1]=angle[2]=angle[3]=0.0; }`）与四轮速度覆盖（同一分支里 `veloc[0]=veloc[2]=vl` 等）都用 `== MODE_AUTO` 判。⇒ **若手操档不改这两处，进 TELEOP 后四个转角仍沿用 `path_plan()` 从遥控通道算出来的旧值**，遥控器没开时那是个没人维护的残值，车会朝你没收的方向拐。定位：`grep -n "retrofit_mode() == MODE_AUTO" firmware/大车proj/大车/USER/main.c`
@@ -84,8 +86,8 @@
 
 | 层 | 文件 | 改什么 | 坑 |
 |---|---|---|---|
-| 固件 | `firmware/.../HARDWARE/retrofit/retrofit.c` | `enter_unmanned()` 按目标模式分档（TELEOP 跳过②、其余三道照查、去掉那行 `REJ_NOT_IMPL`）；TELEOP 分支加 0.1 钳位；负速度第一阶段钳 0 | 文件 UTF-8；改完**必须重编译**，`build_id` 会变 |
-| 固件 | `firmware/.../USER/main.c` | 把转角清零与四轮速度覆盖的判据从 `== MODE_AUTO` 放宽成"AUTO 或 TELEOP" | **这文件是 GBK，必须按字节改**；普通 grep/Edit 会漏检或写坏中文（AGENTS 审查清单第 4 条） |
+| 固件 | `firmware/大车proj/大车/HARDWARE/retrofit/retrofit.c` | `enter_unmanned()` 按目标模式分档（TELEOP 跳过②、其余三道照查、去掉那行 `REJ_NOT_IMPL`）；TELEOP 分支加 0.1 钳位；负速度第一阶段钳 0 | 文件 UTF-8；改完**必须重编译**，`build_id` 会变 |
+| 固件 | `firmware/大车proj/大车/USER/main.c` | 把转角清零与四轮速度覆盖的判据从 `== MODE_AUTO` 放宽成"AUTO 或 TELEOP" | **这文件是 GBK，必须按字节改**；普通 grep/Edit 会漏检或写坏中文（AGENTS 审查清单第 4 条） |
 | PC | `pc/state_machine.py` | 加 `TELEOP` 态与进入/退出路径；进入**不查视觉信心**；失视觉对手操不改状态（人还在开） | 与 `wire.HOLDING` 同源，不许各写一份 |
 | PC | `pc/wire.py` | `HOLDING` 加 `'TELEOP'`；`frames_for_state()` 对手操返回 `NAV(手给速度) + TOOL(0, 0x07)`；0.1 与负值钳位 | 新列不许动 `RUN_LOG_COLUMNS` 既有位置（本批不加列） |
 | PC | `pc/main.py` | `[T]` 键 + 按住键语义 + 100 ms 超时归零 + HUD 显示 | 按键只在 GUI 路生效 |
@@ -93,6 +95,18 @@
 | 现场 | `docs/X5验机与接入执行清单.md` | 手操档的格（含"不许 `--no-gui`"、"按住键怎么算过"）+ §6 那两格停车实测 | 指格子不指行号 |
 | 台账 | `docs/参数差异台账.md` | 新 `Fw`/`Pc` 项：TELEOP 门槛分档、0.1 双层钳位、负速度待实测 | 编译读数只写一处 |
 | 状态 | `README.md` / `AGENTS.md` | 当前状态同步（四态、禁令不撤） | 基线数不抄第二份 |
+
+## 8b. 落地之后（同日晚些时候；实现层的三件事实）
+
+**做完了什么**：PC 侧（`pc/state_machine.py` 的 TELEOP 态与 `go_teleop()`、`pc/wire.py` 的 `HOLDING`/`TELEOP_MAX_MPS`/`teleop_speeds()`/发帧层钳位、`pc/main.py` 的 `[T]` 与 W/S/D 按住语义）+ 固件侧（`retrofit.c` 进档分档、TELEOP 独立钳位、链路看门狗纳入 TELEOP、持续复查里的遥控失联分档；`main.c` 的转角清零与四轮速度覆盖两处判据）。当场重编译 0 Error，`Code` 与警告数的读数**只写在台账 §4 那一行**（AGENTS 审查清单第 8 条：同一个读数不许抄两处）。
+
+**还没做什么**：未烧录、未上台架、§6 那两格带动力停车实测一格都没做、负速度仍钳在 0、§12 表里的数还空着。**四态只到「已编码 + 已单测 + 已编译」。**
+
+**实现过程中新发现的三件事，都是这份 spec 事前没写对的**：
+
+1. **`main.c` 里不是一处而是六处 AUTO 判据**：除 §3 点名的转角清零与速度覆盖两个 `if`，四条 `send_angle` 里还各藏着一次 `retrofit_mode()==MODE_AUTO?0.0:Switch_direction`。只改两个 `if` 的结果是"轮速听 PC、转角仍叠加遥控档位"——正是 §10 变异清单担心的那种"漏改一处"。落地时六处一起改。
+2. **还有第三道隐形的②**：`retrofit_poll_1ms()` 的持续复查里有一条"遥控失联就锁零 + 提刀"，它不分档位。只把进档处的②让开、不改这一条，效果是**车能进手操、但一松遥控器就每一拍被锁零**——门在进档处开了、在复查处还关着。已按档位分开（AUTO 仍查，TELEOP 不查），而链路看门狗反过来**必须**纳入 TELEOP，否则笔记本死掉时没人停车。
+3. **`retrofit.c` 不是纯 UTF-8**：第 357/572/694 行含 GBK 字节。整个文件按文本读回再写会静默改掉那三行的字节，所以这一批固件改动全部走字节级替换（AGENTS 审查清单第 4 条讲的是 `main.c`，这条把同一个坑扩展到 retrofit）。构建日志里 `retrofit.c(199) #111-D 语句不可达` 也顺带说明白了：那条 `last_tool_ms = tick_ms;` 在批 1a 的编译期门 N 早退之后本来就不可达，我把上面的注释与钳位插进去只是把它的行号从 189 推到 199——**不是新引入的警告，但我也没拿旧日志证明过它当时就在**（那一次构建日志没入库），要钉死得单独把改动前的源码编一遍。
 
 ## 9. 验收场景（实现后逐格过；未过不许写"已台架"）
 

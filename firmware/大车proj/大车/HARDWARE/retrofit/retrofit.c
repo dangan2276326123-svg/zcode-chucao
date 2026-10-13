@@ -157,6 +157,16 @@ void retrofit_on_nav_frame(const uint8_t *payload, uint16_t len, uint16_t seq)
     if (cmd_vl >  1.0f) cmd_vl =  1.0f;
     if (cmd_vr < -1.0f) cmd_vr = -1.0f;
     if (cmd_vr >  1.0f) cmd_vr =  1.0f;
+    /* 手操档独立钳位（spec §5，作者 B4 定 0.1；第一阶段不放后退）。
+       PC 侧那道钳位不算数：线来的速度不能假定发送方自觉，也不能假定对侧跑的
+       是同一份档案，所以这里再钳一遍——两层都写，少一层就少一层。
+       上面 ±1.0 的通用钳位保留不动，它是无人的兜底。 */
+    if (mode == MODE_TELEOP) {
+        if (cmd_vl > RETRO_TELEOP_MAX) cmd_vl = RETRO_TELEOP_MAX;
+        if (cmd_vr > RETRO_TELEOP_MAX) cmd_vr = RETRO_TELEOP_MAX;
+        if (cmd_vl < 0.0f) cmd_vl = 0.0f;
+        if (cmd_vr < 0.0f) cmd_vr = 0.0f;
+    }
 }
 
 void retrofit_on_tool_frame(const uint8_t *payload, uint16_t len)
@@ -218,11 +228,20 @@ void retrofit_clear_estop(void)
 static uint8_t enter_unmanned(uint8_t want_mode)
 {
     if (!handshake_ok || pc_profile != PROFILE_ID) { reject_code = REJ_PROFILE;       return 0; }
-    if (!retrofit_sbus_ok())                       { reject_code = REJ_RCS_STALE;    return 0; }
+    /* 2026-10-13 手操档（spec §2，作者决定 B1/B2）：条件②"遥控新鲜"只对无人查。
+       手操时指令源就是站在车边的那个人，遥控可以不开；②保护的是"自主跑时遥控随时能
+       抢回来"，把它套到手操上等于这个档位永远进不去（遥控器一关就 reject=0x02）。
+       代价写在同一节表下面：少了"摸一下遥控器就抢回来"这条保底，能停它的只剩 [E]、
+       链路 500 ms 看门狗（retrofit_poll_1ms 那条，本档已一并纳入）与断电；
+       前两条必须带动力实测过才算保底（spec §6 的子准入）——代码写了不等于验过。 */
+    if (want_mode != MODE_TELEOP && !retrofit_sbus_ok())
+                                                   { reject_code = REJ_RCS_STALE;    return 0; }
     /* (condition 3 removed 10-10: field lever not implemented this batch) */
     if (estop_latched)                             { reject_code = REJ_ESTOP_LATCHED; return 0; }
     if (loop_stall_run >= LOOP_STALL_FRAMES)       { reject_code = REJ_LOOP_STALLED;  return 0; }
-    if (want_mode == MODE_TELEOP)                  { reject_code = REJ_NOT_IMPL;     return 0; }
+    /* 这里原来是一行 `if (want_mode == MODE_TELEOP) { reject_code = REJ_NOT_IMPL; return 0; }`
+       —— 批 1a 留的空位，2026-10-13 手操档填上。REJ_NOT_IMPL(0x06) 这个码保留不复用：
+       retrofit_on_mode_frame 末尾的 default 分支还在用它。 */
 
     /* Order matters (spec 4.2): safe the tools FIRST, then hand over. */
     lift_bits = 0x07;
@@ -562,8 +581,10 @@ void retrofit_poll_1ms(void)
 {
     tick_ms++;
 
-    /* link watchdog: in AUTO, no PC frame for 500 ms -> estop */
-    if (mode == MODE_AUTO && !estop_latched &&
+    /* link watchdog: while the PC holds the wheels (AUTO **or TELEOP**), no PC
+       frame for 500 ms -> estop.  手操档必须一起算进来：拆掉条件②之后，这是
+       "笔记本死掉 / 线被踩断"时唯一还在车这边自动起作用的东西。 */
+    if ((mode == MODE_AUTO || mode == MODE_TELEOP) && !estop_latched &&
         (uint32_t)(tick_ms - last_pc_ms) > LINK_TIMEOUT_MS) {
         retrofit_on_estop();
     }
@@ -592,7 +613,10 @@ void retrofit_poll_1ms(void)
         /* RC link lost while the PC holds authority: zero the wheel targets
            and raise the knives, but do NOT hand authority back -- passing the
            car to a dead receiver is not a safer state (spec 4.2). */
-        if (!retrofit_sbus_ok()) {
+        /* 手操档不适用这一条（2026-10-13 spec §2）：人在开车时遥控失联是**常态**
+           （遥控器可以没开）。拿它去锁零等于把②从"进档时查"搬到"每一拍都查"——
+           进档处让开了、复查处又关上，等于那道门没拆。 */
+        if (mode != MODE_TELEOP && !retrofit_sbus_ok()) {
             cmd_vl = 0.0f; cmd_vr = 0.0f;
             lift_bits = 0x07;
             auth_reason = AUTH_RCS_LOST;
