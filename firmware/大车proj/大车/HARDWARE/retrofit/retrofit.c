@@ -23,6 +23,14 @@
    common/protocol.py.  Do not create a same-concept symbol with a
    different value on either side. */
 #define PROFILE_NONE_SAFE 0
+/* HW-17 BENCH PROBE (temporary, 2026-10-14): STATUS has no spare byte, so the
+   raw SBUS flag byte (telecontrol.c: flag_sbus = rec_sbus_data[33]) is shipped in
+   the battery_v slot -- which is a placeholder anyway (Fw-5 TODO below).  The PC
+   already logs that slot as CSV column `batt_v`, so nothing on the Python side
+   changes.  THESE ARE NOT VOLTS.  Set the macro to 0 and rebuild to go back to the
+   48.0f placeholder once the polarity is settled (ledger Hw-17 / Hw-28). */
+#define RETRO_REPORT_SBUS_FLAG 1
+extern u16 flag_sbus;             /* telecontrol.c: last accepted SBUS flag byte */
 
 /* ---------- state ---------- */
 static uint8_t  mode = MODE_MANUAL;
@@ -447,7 +455,11 @@ static void status_report(void)
     uint8_t frame[2 + 5 + 19 + 2];
     float speed = retrofit_wheel_speed();
     float cur = adc_current_a();
+#if RETRO_REPORT_SBUS_FLAG
+    float bat = (float)flag_sbus;   /* NOT volts: raw SBUS flag, Hw-17 probe */
+#else
     float bat = 48.0f;  /* TODO bench: ADC divider channel (Fw-5) */
+#endif
     memcpy(&pl[0], &speed, 4);
     memcpy(&pl[4], &cur, 4);
     memcpy(&pl[8], &bat, 4);
