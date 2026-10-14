@@ -23,7 +23,14 @@
 #define TELEOP_GEAR_STRAIGHT 0
 #define TELEOP_GEAR_LEFT     1
 #define TELEOP_GEAR_RIGHT    2
-#define TELEOP_GEAR_MAX      TELEOP_GEAR_RIGHT
+#define TELEOP_GEAR_LATERAL  3   /* crab attempt: all four wheels same sign */
+#define TELEOP_GEAR_MAX      TELEOP_GEAR_LATERAL
+/* Steering magnitude for the manual gears.  20 deg is NOT derived here -- it is
+   the value the vendor's own steering patterns use (path_plan.c:97-110 sets the
+   pair to +/-20 deg).  Author ruling 2026-10-14: ship it for the previous
+   generation of the vehicle and fix it against what is actually observed;
+   the sample machine must be re-checked before inheriting any of it. */
+#define TELEOP_STEER_DEG     20.0
 /* STATUS has no spare byte, so the accepted gear is echoed through the
    current_a placeholder (adc_current_a() returns 0.0f; Fw-5 TODO).  THE A FIELD
    IS NOT AMPS WHILE THIS IS 1.  Same borrowed-slot trick as the Hw-17 battery_v
@@ -110,6 +117,7 @@ void retrofit_clear_estop(void);   /* manual reset only (key/button path) */
 /* mode getter for main loop / telemetry */
 uint8_t retrofit_mode(void);
 uint8_t retrofit_sbus_ok(void); /* H2.3: SBUS fresh within timeout? */
+uint8_t retrofit_teleop_gear(void);  /* 2026-10-14: gear read by main.c */
 uint8_t retrofit_estop_latched(void);   /* 1 while ESTOP latched */
 
 

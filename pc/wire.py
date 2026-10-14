@@ -42,29 +42,34 @@ TELEOP_HOLD_S = 0.1
 
 # ---- 手操转向档位（2026-10-14 加，走 NAV 载荷里那个一直没人读的 flags 字节） ----
 # 低 2 bit 是档位；0 直行（现状，转角被钉零）、1 左、2 右、3 保留=横移。
-# 3 现在**不给用**：横移角要按轮距/轴距算，而固件那四个几何常数没有一个对得上实测
-# （台账 Hw-23：实车 B=3010 / L=1620，固件写 1530/2550 与 2780/1390），
-# 拿厂商那个 45 度去跑真车就是蹭胎。几何定下来之前它按"未知档位"处理。
+# 3 = 横移（四轮同角）。作者 10-14 裁定：先按上代车跑，看现场表现再改，所以本批放开它。
+# 但它的角度是抄厂商那对 20 度、不是按真实轮距/轴距算出来的（实测 B=3010 / L=1620，
+# 固件常数对不上，见 Hw-23）⇒ 这一档现在跑出来是「斜行 20 度」，不是 90 度平移。
+# 未知档位（4 及以上）仍然一律折回直行，这条不跟着放开。
 GEAR_STRAIGHT = 0
 GEAR_LEFT = 1
 GEAR_RIGHT = 2
 GEAR_LATERAL = 3            # 保留，本批不可用
 GEAR_NAMES = {GEAR_STRAIGHT: 'STRAIGHT', GEAR_LEFT: 'LEFT',
-              GEAR_RIGHT: 'RIGHT', GEAR_LATERAL: 'LATERAL(locked)'}
-GEAR_MAX = GEAR_RIGHT       # > 这个值 = 未知或保留，一律 fail-closed 到直行
+              GEAR_RIGHT: 'RIGHT', GEAR_LATERAL: 'LATERAL'}
+GEAR_MAX = GEAR_LATERAL       # > 这个值 = 未知或保留，一律 fail-closed 到直行
 
 
 def gear_text(gear):
     return GEAR_NAMES.get(gear, 'UNKNOWN-%d' % gear)
 
 
+_GEAR_CYCLE = (GEAR_STRAIGHT, GEAR_LEFT, GEAR_RIGHT, GEAR_LATERAL)
+
+
 def cycle_gear(gear):
-    """`g` 键循环：直行 -> 左 -> 右 -> 直行。横移档不在循环里（它还没解锁）。"""
-    if gear == GEAR_STRAIGHT:
-        return GEAR_LEFT
-    if gear == GEAR_LEFT:
-        return GEAR_RIGHT
-    return GEAR_STRAIGHT
+    """`g` 键循环：直行 -> 左 -> 右 -> 横移 -> 直行（作者 10-14 放开横移档）。
+
+    不认识的值一律回到直行，不顺着往下走——按键的人手一抖就该回到最保守那一档。
+    """
+    if gear not in _GEAR_CYCLE:
+        return GEAR_STRAIGHT
+    return _GEAR_CYCLE[(_GEAR_CYCLE.index(gear) + 1) % len(_GEAR_CYCLE)]
 
 
 # 手操键位 → (左轮, 右轮)。第一阶段不配后退键：按了不动比"能按"更容易被读成坏了。
@@ -173,7 +178,8 @@ def frames_for_state(state, usable, vl, vr, tool_mm, permit=GATE_N, gear=GEAR_ST
     if state == 'TELEOP':
         # 档位进 NAV 的 flags 字节。未知/保留档位在这里就折回直行 —— 发出去的那一帧
         # 永远只带 0/1/2，固件侧还有一道同样的检查，两层各不自责（与限速两层同钳同理）。
-        nav_gear = gear if gear in (GEAR_STRAIGHT, GEAR_LEFT, GEAR_RIGHT) else GEAR_STRAIGHT
+        nav_gear = gear if gear in (GEAR_STRAIGHT, GEAR_LEFT, GEAR_RIGHT,
+                              GEAR_LATERAL) else GEAR_STRAIGHT
         # 手操档（2026-10-13 spec §2/§5，作者 B3/B4）：
         #   速度来自**人按住的那个键**，所以 `usable` 不参与锁零——把 AUTO 那套
         #   "瞎了就锁零"套到人手开车上，等于他一丢墙方向盘就被抽走，现场会读成板子抽风；

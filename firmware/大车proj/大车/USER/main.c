@@ -530,8 +530,35 @@ while(1)
 	  /* steering takeover (Fw-11): in AUTO the four angles are forced to
 	     the calibrated straight position BEFORE send_angle runs - the
 	     gate further below is too late, path_plan() rewrote angle[]. */
-	  if (retrofit_mode() == MODE_AUTO || retrofit_mode() == MODE_TELEOP) {
+	  if (retrofit_mode() == MODE_AUTO) {
 	      angle[0] = angle[1] = angle[2] = angle[3] = 0.0;
+	  } else if (retrofit_mode() == MODE_TELEOP) {
+	      /* TELEOP steering gears (2026-10-14, author ruling: ship for the
+	         previous-generation vehicle and fix against what is observed).
+	         +/-20 deg is COPIED from the vendor's own pattern at
+	         path_plan.c:97-110; nothing here derives an angle.  Index-to-wheel
+	         mapping is the vendor's own comment above this block (4=LF 1=RF
+	         2=LR 3=RR).  WATCH ON THE FIRST LIFTED-WHEEL TEST: path_plan calls
+	         the pair it steers "front" while that comment puts those indices on
+	         the rear -- if LEFT points the wrong way, flip the two signs, do not
+	         re-derive anything.  LATERAL here is a 20 deg diagonal, NOT a true
+	         90 deg crab: the real crab angle needs the measured track/wheelbase
+	         (ledger Hw-23: firmware constants match nothing measured). */
+	      double tg = TELEOP_STEER_DEG / 180.0 * 3.14159265358979;
+	      switch (retrofit_teleop_gear()) {
+	      case TELEOP_GEAR_LEFT:
+	          angle[0] = tg;  angle[1] = -tg; angle[2] = 0.0; angle[3] = 0.0;
+	          break;
+	      case TELEOP_GEAR_RIGHT:
+	          angle[0] = -tg; angle[1] = tg;  angle[2] = 0.0; angle[3] = 0.0;
+	          break;
+	      case TELEOP_GEAR_LATERAL:
+	          angle[0] = tg;  angle[1] = tg;  angle[2] = tg;  angle[3] = tg;
+	          break;
+	      default:                    /* 0 = straight, and the safe fallback */
+	          angle[0] = angle[1] = angle[2] = angle[3] = 0.0;
+	          break;
+	      }
 	  }
 	  send_angle(4,-(angle[0]-wheel_Angle_correct[0]-Last_wheel_Angle_correct_run[1]-((retrofit_mode()==MODE_AUTO||retrofit_mode()==MODE_TELEOP)?0.0:Switch_direction)));   //角度控制  adress, angle    四个轮子 但是一个伺服电机控制两个  所以只控制两个就可以
 	  delay_ms(12);

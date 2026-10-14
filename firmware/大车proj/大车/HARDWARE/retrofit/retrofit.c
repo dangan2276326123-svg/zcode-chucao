@@ -600,6 +600,11 @@ static void stepper_update(void)
 }
 
 /* ---------------- 1 ms tick ---------------- */
+uint8_t retrofit_teleop_gear(void)
+{
+    return nav_gear;   /* last gear accepted by retrofit_on_nav_frame */
+}
+
 uint8_t retrofit_estop_latched(void)
 {
     return estop_latched;

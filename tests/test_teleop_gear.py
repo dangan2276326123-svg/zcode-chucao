@@ -35,29 +35,33 @@ def test_gear_reaches_the_wire_only_in_teleop():
     assert _nav_flags('LIFT', wire.GEAR_LEFT) == 0
 
 
-def test_unknown_and_locked_gears_fail_closed_to_straight():
-    """档位不认识（4/7/255/-1）或横移档（3，几何常数未定）⇒ **发 0**。
+def test_lateral_gear_is_sent_and_unknown_ones_fold_to_straight():
+    """10-14 作者裁定：横移档（3）放开，先按上代车跑；不认识的值（4/7/255/-1）
+    仍一律折回直行——这条是"拿不到的量不得当作满足"在 PC 侧的版本，不跟着放开。
 
-    这是"拿不到的量不得当作满足"那条约束在 PC 侧的版本。把 3 原样发出去尤其危险：
-    固件将来一旦给 3 配上角，就等于今天顺手把门 N 的禁横移解掉了。
+    放开的是"能发出去"，不是"角度算对了"：这一档的角度抄的是厂商那对 20 度，
+    所以现场应当看到**斜行**而不是 90 度平移，下一版按现场表现改。
     """
-    for bad in (wire.GEAR_LATERAL, 4, 7, 255, -1):
+    assert _nav_flags('TELEOP', wire.GEAR_LATERAL) == wire.GEAR_LATERAL
+    for bad in (4, 7, 255, -1):
         assert _nav_flags('TELEOP', bad) == 0, bad
 
 
-def test_cycle_gear_never_lands_on_the_locked_lateral_gear():
+def test_cycle_gear_visits_all_four_gears_and_resets_on_junk():
     g = wire.GEAR_STRAIGHT
     seen = [g]
-    for _ in range(9):
+    for _ in range(8):
         g = wire.cycle_gear(g)
         seen.append(g)
-    assert set(seen) == {wire.GEAR_STRAIGHT, wire.GEAR_LEFT, wire.GEAR_RIGHT}
-    assert wire.GEAR_LATERAL not in seen
+    assert set(seen) == {wire.GEAR_STRAIGHT, wire.GEAR_LEFT,
+                         wire.GEAR_RIGHT, wire.GEAR_LATERAL}
+    # 手一抖传进一个不认识的值：回直行，不是"下一个"
+    assert wire.cycle_gear(42) == wire.GEAR_STRAIGHT
 
 
 def test_gear_text_is_ascii_and_says_lateral_is_locked():
     assert wire.gear_text(0) == 'STRAIGHT'
-    assert wire.gear_text(3) == 'LATERAL(locked)'
+    assert wire.gear_text(3) == 'LATERAL'
     assert wire.gear_text(42) == 'UNKNOWN-42'      # 未知档位要看得见，不许静默变空
     for g in (0, 1, 2, 3, 42):
         assert all(ord(c) < 128 for c in wire.gear_text(g))   # cv2.putText 画不出中文
