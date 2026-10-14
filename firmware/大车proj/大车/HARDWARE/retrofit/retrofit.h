@@ -14,6 +14,21 @@
 #define MODE_TELEOP 3      /* PC 手操档：速度来自人按的键（2026-10-13 填上批 1a 留的空位） */
 /* 手操档速度上限（spec §5）。与 pc/wire.py 的 TELEOP_MAX_MPS 各写一份、都要写：
    两层的值一旦漂开，现场真正生效的是漂移的那一个，所以两边都别偷偷改。 */
+/* Teleop steering gear, carried in NAV.flags -- the byte that has been on the
+   wire since batch 1a and that nobody read until 2026-10-14.
+   0 straight / 1 left / 2 right.  3 is RESERVED for lateral (crab) and stays
+   refused: the crab angle needs the real track/wheelbase, and none of the four
+   geometry constants in this firmware matches what was measured (ledger Hw-23),
+   so shipping 45 deg now would scrub the tyres. */
+#define TELEOP_GEAR_STRAIGHT 0
+#define TELEOP_GEAR_LEFT     1
+#define TELEOP_GEAR_RIGHT    2
+#define TELEOP_GEAR_MAX      TELEOP_GEAR_RIGHT
+/* STATUS has no spare byte, so the accepted gear is echoed through the
+   current_a placeholder (adc_current_a() returns 0.0f; Fw-5 TODO).  THE A FIELD
+   IS NOT AMPS WHILE THIS IS 1.  Same borrowed-slot trick as the Hw-17 battery_v
+   probe; set to 0 and rebuild to give the slot back. */
+#define RETRO_REPORT_TELEOP_GEAR 1
 #define RETRO_TELEOP_MAX 0.2f
 
 /* ---- MODE.request (must equal common/protocol.py) ---- */
@@ -58,6 +73,7 @@
 #define REJ_NOT_IMPL      6
 #define REJ_FIELD_LATCHED 7   /* reserved number; this firmware never reports it */
 #define REJ_PERMIT        8
+#define REJ_GEAR          9   /* NAV.flags held an unknown or locked gear */
 
 /* ---- field takeover switch (A4): 10-10 AUTHOR RULING, NOT WRITTEN ----
    The six FIELD_* macros (FIELD_CH, FIELD_SW_CALIBRATED, FIELD_ALLOW_HI,

@@ -40,6 +40,7 @@ static uint8_t  estop_latched = 0;
 static uint8_t  owner = OWNER_RC;          /* who may drive right now */
 static uint8_t  auth_reason = AUTH_BOOT;   /* last transition, reported in STATUS */
 static uint8_t  reject_code = REJ_NONE;    /* last refusal, reported in STATUS */
+static volatile uint8_t nav_gear = TELEOP_GEAR_STRAIGHT;  /* last accepted gear */
 static uint8_t  pc_profile = PROFILE_NONE_SAFE;  /* 0 until handshake */
 static uint8_t  handshake_ok = 0;
 /* 10-10 AUTHOR RULING: field lever revoked -- field_latched and
@@ -160,6 +161,17 @@ void retrofit_on_nav_frame(const uint8_t *payload, uint16_t len, uint16_t seq)
     /* payload: vL f32le, vR f32le, flags u8 */
     memcpy(&cmd_vl, &payload[0], 4);
     memcpy(&cmd_vr, &payload[4], 4);
+    /* Gear lives in flags bit 0-1.  Anything above TELEOP_GEAR_MAX -- which
+       includes 3 = lateral, locked until the geometry is measured -- is refused
+       AND driven as straight.  Never let an unread number fall through as a
+       motion: that is the fail-open shape this project bans (the same reason
+       unknown permits raise instead of defaulting). */
+    if (payload[8] > TELEOP_GEAR_MAX) {
+        nav_gear = TELEOP_GEAR_STRAIGHT;
+        reject_code = REJ_GEAR;
+    } else {
+        nav_gear = payload[8];
+    }
     /* guard: sane range only */
     if (cmd_vl < -1.0f) cmd_vl = -1.0f;
     if (cmd_vl >  1.0f) cmd_vl =  1.0f;
@@ -454,7 +466,11 @@ static void status_report(void)
     uint8_t pl[19];
     uint8_t frame[2 + 5 + 19 + 2];
     float speed = retrofit_wheel_speed();
+#if RETRO_REPORT_TELEOP_GEAR
+    float cur = (float)nav_gear;   /* NOT amps: gear echo, see retrofit.h */
+#else
     float cur = adc_current_a();
+#endif
 #if RETRO_REPORT_SBUS_FLAG
     float bat = (float)flag_sbus;   /* NOT volts: raw SBUS flag, Hw-17 probe */
 #else

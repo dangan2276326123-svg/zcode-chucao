@@ -142,7 +142,7 @@ def test_run_log_row_carries_l1_events_and_reject_short_codes():
     目前没有生产调用点，只有 `tools/link_probe.py` 在 stdout 打整句。
     """
     assert 'l1_events' in wire.RUN_LOG_COLUMNS
-    assert wire.RUN_LOG_COLUMNS[-2] == 'l1_events'   # T2 之后 l1_events 让出末位，仍是"追加在末尾"的次序
+    assert wire.RUN_LOG_COLUMNS[-3] == 'l1_events'   # 两次追加（tx_frames、nav_flags）之后仍在倒数第三
     res = {'status': 'left_only', 'confidence': 0.9, 'lateral_px': 3.0}
     _args = (1.0, 7, 'AUTO', res, 0.01, 0.02, 0.07, 0.07, 0.0, 12.0, None,
              ({}, 0, None), wire.GATE_N)
@@ -152,9 +152,13 @@ def test_run_log_row_carries_l1_events_and_reject_short_codes():
     assert row[col] == '0'
     assert wire.run_log_row(*_args, l1_events=3)[col] == '3'
 
-    for code in (P.REJECT_PROFILE, P.REJECT_RCS_STALE, P.REJECT_FIELD_SWITCH,
-                 P.REJECT_ESTOP_LATCHED, P.REJECT_LOOP_STALLED, P.REJECT_NOT_IMPL,
-                 P.REJECT_FIELD_LATCHED, P.REJECT_PERMIT):
+    # 按 protocol 里的常量表枚举，不再手写名单：10-14 加 REJECT_GEAR 时，手写名单
+    # 会安静地漏掉新码，而漏掉的码正是现场最需要看得懂的那一个。
+    for code in sorted(v for k, v in vars(P).items()
+                         if k.startswith('REJECT_') and isinstance(v, int)
+                         and v != P.REJECT_NONE):   # NONE 的短码按设计是空串，由下面单独钉
+        # isinstance 这一道不可省：`REJECT_TEXT` 也是 REJECT_* 开头的名字，
+        # 把它当码喂进去，短码表只会回 UNKNOWN-<dict> —— 那是自造的红，不是缺陷。
         short = wire.reject_short(code)
         assert short and short == short.upper()
         assert all(ord(c) < 128 for c in short)
@@ -181,10 +185,17 @@ _PRE_TX_FRAMES_COLUMNS = [
 
 
 def test_tx_frames_is_appended_without_moving_earlier_columns():
+    """位置锚：前 n 列一字不动，之后每追加一列只许往末尾挂。
+
+    10-14 手操档位又追加了一列 `nav_flags` ⇒ 这里从 `n + 1` 改成 `n + 2`、
+    `tx_frames` 从末位让到倒数第二。**改的是锚，不是历史**：快照本身没动，
+    所以"前面那些列的列位被动过"这种破坏照样会红。
+    """
     n = len(_PRE_TX_FRAMES_COLUMNS)
     assert wire.RUN_LOG_COLUMNS[:n] == _PRE_TX_FRAMES_COLUMNS
-    assert len(wire.RUN_LOG_COLUMNS) == n + 1
-    assert wire.RUN_LOG_COLUMNS[-1] == 'tx_frames'
+    assert len(wire.RUN_LOG_COLUMNS) == n + 2
+    assert wire.RUN_LOG_COLUMNS[-2] == 'tx_frames'
+    assert wire.RUN_LOG_COLUMNS[-1] == 'nav_flags'
 
 
 def test_run_log_row_puts_tx_frames_last_and_defaults_to_the_silent_marker():
@@ -198,9 +209,10 @@ def test_run_log_row_puts_tx_frames_last_and_defaults_to_the_silent_marker():
             ({}, 0, None), wire.GATE_N)
     row = wire.run_log_row(*args)
     assert len(row) == len(wire.RUN_LOG_COLUMNS)
-    i = len(wire.RUN_LOG_COLUMNS) - 1
+    i = len(wire.RUN_LOG_COLUMNS) - 2      # tx_frames：10-14 之后是倒数第二列
     assert row[i] == '-'
     assert wire.run_log_row(*args, tx_frames='NAV+TOOL')[i] == 'NAV+TOOL'
+    assert row[-1] == ''                   # nav_flags：非手操拍留空，不写 0
 
 
 def test_tx_frames_text_names_each_frame_type():

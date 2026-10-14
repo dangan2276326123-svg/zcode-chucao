@@ -40,6 +40,33 @@ TELEOP_NEGATIVE_LOCKED = True
 # ⚠️ 这个值**还没在真机上量过**（spec §12 第一行），100 ms 是设计初值而不是标定值。
 TELEOP_HOLD_S = 0.1
 
+# ---- 手操转向档位（2026-10-14 加，走 NAV 载荷里那个一直没人读的 flags 字节） ----
+# 低 2 bit 是档位；0 直行（现状，转角被钉零）、1 左、2 右、3 保留=横移。
+# 3 现在**不给用**：横移角要按轮距/轴距算，而固件那四个几何常数没有一个对得上实测
+# （台账 Hw-23：实车 B=3010 / L=1620，固件写 1530/2550 与 2780/1390），
+# 拿厂商那个 45 度去跑真车就是蹭胎。几何定下来之前它按"未知档位"处理。
+GEAR_STRAIGHT = 0
+GEAR_LEFT = 1
+GEAR_RIGHT = 2
+GEAR_LATERAL = 3            # 保留，本批不可用
+GEAR_NAMES = {GEAR_STRAIGHT: 'STRAIGHT', GEAR_LEFT: 'LEFT',
+              GEAR_RIGHT: 'RIGHT', GEAR_LATERAL: 'LATERAL(locked)'}
+GEAR_MAX = GEAR_RIGHT       # > 这个值 = 未知或保留，一律 fail-closed 到直行
+
+
+def gear_text(gear):
+    return GEAR_NAMES.get(gear, 'UNKNOWN-%d' % gear)
+
+
+def cycle_gear(gear):
+    """`g` 键循环：直行 -> 左 -> 右 -> 直行。横移档不在循环里（它还没解锁）。"""
+    if gear == GEAR_STRAIGHT:
+        return GEAR_LEFT
+    if gear == GEAR_LEFT:
+        return GEAR_RIGHT
+    return GEAR_STRAIGHT
+
+
 # 手操键位 → (左轮, 右轮)。第一阶段不配后退键：按了不动比"能按"更容易被读成坏了。
 _TELEOP_KEY_SPEEDS = {
     'w': (TELEOP_MAX_MPS, TELEOP_MAX_MPS),   # 直行前进
@@ -82,6 +109,9 @@ RUN_LOG_COLUMNS = [
     # "线上只有 HEARTBEAT""交回之后 PC 还在发"从旁证升成字节级证据，
     # 所以取值是帧型串而不是计数。列名快照与位置判据在 tests/test_wire.py。
     'tx_frames',
+    # ---- 2026-10-14 手操转向档位：这一拍发出去的 NAV.flags ----
+    # 仍然追加在末尾。没有这一列，事后无法区分"按了 g 但车没转"与"g 根本没发出去"。
+    'nav_flags',
 ]
 
 # HUD 用的 ASCII 短码（fix round 1 I-4）。cv2.putText 画不出 CJK——
@@ -103,6 +133,7 @@ REJECT_SHORT = {
     P.REJECT_NOT_IMPL: 'NOT-IMPL',
     P.REJECT_FIELD_LATCHED: 'FIELD-LATCH',
     P.REJECT_PERMIT: 'PERMIT',
+    P.REJECT_GEAR: 'GEAR',
 }
 
 
@@ -114,7 +145,7 @@ def reject_short(code):
     return REJECT_SHORT.get(code, 'UNKNOWN-%d' % code)
 
 
-def frames_for_state(state, usable, vl, vr, tool_mm, permit=GATE_N):
+def frames_for_state(state, usable, vl, vr, tool_mm, permit=GATE_N, gear=GEAR_STRAIGHT):
     """返回 [(frame_type, payload), ...]。
 
     规则（spec §5.1 表）：
@@ -140,13 +171,16 @@ def frames_for_state(state, usable, vl, vr, tool_mm, permit=GATE_N):
         raise ValueError('unknown permit %r' % permit)
 
     if state == 'TELEOP':
+        # 档位进 NAV 的 flags 字节。未知/保留档位在这里就折回直行 —— 发出去的那一帧
+        # 永远只带 0/1/2，固件侧还有一道同样的检查，两层各不自责（与限速两层同钳同理）。
+        nav_gear = gear if gear in (GEAR_STRAIGHT, GEAR_LEFT, GEAR_RIGHT) else GEAR_STRAIGHT
         # 手操档（2026-10-13 spec §2/§5，作者 B3/B4）：
         #   速度来自**人按住的那个键**，所以 `usable` 不参与锁零——把 AUTO 那套
         #   "瞎了就锁零"套到人手开车上，等于他一丢墙方向盘就被抽走，现场会读成板子抽风；
         #   刀与横移**绑死门 N**：不进档条件里不查刀，进来之后三路刀钉提位、横移恒 0，
         #   即使 permit 被配成门 F 也不放开（手操档不是落刀的入口）。
         # 钳位放在这里而不是调用方：线来的速度不能假定发送方自觉。
-        return [(P.TYPE_NAV, P.pack_nav(clamp_teleop(vl), clamp_teleop(vr))),
+        return [(P.TYPE_NAV, P.pack_nav(clamp_teleop(vl), clamp_teleop(vr), nav_gear)),
                 (P.TYPE_TOOL, P.pack_tool(0.0, 0x07))]
 
     if state not in HOLDING:
@@ -198,7 +232,7 @@ def tx_frames_text(ftypes):
 def run_log_row(t_rel, fid, state, res, lat_m, lat_comp_m, vl, vr, tool_mm,
                 latency_ms, st, feed_snapshot, permit,
                 rx_good='', rx_bad='', recv_timeouts='', link_drops='',
-                l1_events=0, tx_frames='-'):
+                l1_events=0, tx_frames='-', nav_flags=''):
     """按 RUN_LOG_COLUMNS 的顺序拼一行。st 可以是 None（无 STATUS）或 v1 字典。
 
     l1_events 是**累计的 L1 降级事件数**（spec §5.2，I-6），由调用方维护，
@@ -234,4 +268,5 @@ def run_log_row(t_rel, fid, state, res, lat_m, lat_comp_m, vl, vr, tool_mm,
         _e3('loop_alive'), _e3('build_id'), permit,
         '%d' % l1_events,
         tx_frames,
+        nav_flags,
     ]

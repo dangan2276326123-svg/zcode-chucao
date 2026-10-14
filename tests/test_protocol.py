@@ -131,10 +131,10 @@ def test_wire_len_helper():
 
 
 def test_reject_text_covers_every_code():
-    codes = [P.REJECT_NONE, P.REJECT_PROFILE, P.REJECT_RCS_STALE,
-             P.REJECT_FIELD_SWITCH, P.REJECT_ESTOP_LATCHED,
-             P.REJECT_LOOP_STALLED, P.REJECT_NOT_IMPL,
-             P.REJECT_FIELD_LATCHED, P.REJECT_PERMIT]
+    # 按常量表枚举，不手写名单：10-14 加 REJECT_GEAR=9 时这张手写表就是漏掉的形状，
+    # 而它漏的恰好是「现场最需要看懂的一条」。REJECT_NONE 也在表里（它的文案是空串）。
+    codes = sorted(v for k, v in vars(P).items()
+                 if k.startswith('REJECT_') and isinstance(v, int))
     assert set(P.REJECT_TEXT) == set(codes)
     assert all(isinstance(v, str) for v in P.REJECT_TEXT.values())
     # brief 原文这里写的是 `all(isinstance(v, str) and v for v in ...)`（所有值非空），

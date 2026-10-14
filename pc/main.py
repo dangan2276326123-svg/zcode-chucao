@@ -274,6 +274,9 @@ def main():
     # 会让车多走一段，而那一段在田间是压苗。
     tele_key = None
     tele_key_t = 0.0
+    # 手操转向档位（NAV 的 flags 字节）：`g` 循环 直行->左->右。默认直行 = 现状，
+    # 所以本批之后不按键的行为与之前逐字相同。
+    tele_gear = wire.GEAR_STRAIGHT
 
     with open(csv_path, 'w', newline='', encoding='utf-8') as fcsv:
         wr = csv.writer(fcsv)
@@ -387,7 +390,7 @@ def main():
                 pid.reset()
 
             for ftype, payload in wire.frames_for_state(
-                    sm.state, usable, vl, vr, tool_mm, permit):
+                    sm.state, usable, vl, vr, tool_mm, permit, gear=tele_gear):
                 send(ftype, payload)
 
             t_rel = t0 - t0_first
@@ -460,7 +463,8 @@ def main():
                 if sm.state == 'TELEOP':          # 字面量，与本文件其余判据同一写法；单测把 StateMachine 换成工厂函数，引类属性会撞
                     # 手操时人必须一眼看见两件事：现在是谁在说话、这一拍给出去多少。
                     # 松手归零要看得见——看不见就会有人以为「按了没反应」是坏了。
-                    alerts.append('TELEOP v=%.2f/%.2f (hold W/S/D)' % (vl, vr))
+                    alerts.append('TELEOP v=%.2f/%.2f gear:%s [g]=switch'
+                                % (vl, vr, wire.gear_text(tele_gear)))
                     hud_extra = [HUD_TELEOP]
                 if frame is None:
                     alerts.append('*** NO FRAME - vision lost ***')
@@ -525,6 +529,11 @@ def main():
                         auto_refusal = 'TELEOP REFUSED:ESTOP'
                         t_refuse = time.time()
                         print('TELEOP request refused: state=%s' % pre_state)
+                elif k == ord('g'):
+                    # 转向档位：直行 -> 左 -> 右 -> 直行。横移档不在循环里（几何常数未定，
+                    # 见 pc/wire.py 的 GEAR_LATERAL 注释与台账 Hw-23）。
+                    tele_gear = wire.cycle_gear(tele_gear)
+                    print('TELEOP gear -> %s (%d)' % (wire.gear_text(tele_gear), tele_gear))
                 elif k in (ord('w'), ord('s'), ord('d')):
                     # 方向键只在手操档里有意义。不在手操时也记时间戳，但发帧那条路不进
                     # TELEOP 分支，所以不会偷偷把速度塞给 AUTO。
@@ -587,7 +596,8 @@ def main():
                 recv_timeouts=_st.get('recv_timeouts', ''),
                 link_drops=_st.get('link_drops', ''),
                 l1_events=l1_events,           # I-6：降级事件落到时间轴上
-                tx_frames=wire.tx_frames_text(tx_this_beat)))   # T2：这一拍线上真有什么
+                tx_frames=wire.tx_frames_text(tx_this_beat),   # T2：这一拍线上真有什么
+                nav_flags=(str(tele_gear) if sm.state == 'TELEOP' else '')))
             n += 1
             if n % 20 == 0:
                 print('[%d] %s lat=%.3fm vL=%.2f vR=%.2f tool=%.1fmm %.0fms%s' % (

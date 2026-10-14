@@ -57,6 +57,7 @@ REJECT_LOOP_STALLED = 5
 REJECT_NOT_IMPL = 6
 REJECT_FIELD_LATCHED = 7
 REJECT_PERMIT = 8
+REJECT_GEAR = 9         # NAV.flags 里是不认识或未解锁的档位（2026-10-14 档位通道）
 
 REJECT_TEXT = {
     REJECT_NONE: '',
@@ -68,6 +69,7 @@ REJECT_TEXT = {
     REJECT_NOT_IMPL: '该模式本批未实现',
     REJECT_FIELD_LATCHED: '已被现场夺权，锁存中',
     REJECT_PERMIT: '许可位拒绝（门 N 下不许落刀/横移）',
+    REJECT_GEAR: 'NAV 档位不认识或未解锁（已按直行处理）',
 }
 
 STATUS_V1_LEN = 14
