@@ -151,3 +151,74 @@ def test_tallies_match_the_real_chapter_sources():
     assert c['eq'] == raw['eq']
     assert c['fig'] == raw['fig']
     assert c['sym_ok'] + c['sym_raw'] == raw['sym']
+
+
+# --------------------------------------------------------------------- cover
+# The cover is carried over as template XML rather than retyped, so these tests
+# exist to catch the failure modes that are invisible on screen: a field left
+# behind, the dead external picture link surviving, or a relationship id that no
+# longer resolves.
+needs_template = pytest.mark.skipif(
+    not os.path.exists(M.TEMPLATE), reason='school template not on this machine')
+
+
+def _blocks():
+    blocks, tally = M.extract_front_matter(M.TEMPLATE, keep_box='academic')
+    assert blocks, 'front matter must not come back empty'
+    from lxml import etree
+    return ''.join(etree.tostring(b).decode('utf-8') for b in blocks), tally
+
+
+@needs_template
+def test_carried_cover_has_no_field_machinery():
+    xml, tally = _blocks()
+    for tag in ('w:fldChar', 'w:instrText', 'MACROBUTTON', 'INCLUDEPICTURE',
+                'w:sdt', 'w:altChunk'):
+        assert tag not in xml, '%s survived the strip' % tag
+    assert tally['fields_stripped'] > 0, 'the template cover does contain fields'
+
+
+@needs_template
+def test_dead_external_picture_link_is_dropped():
+    """The template's cover INCLUDEPICTURE points at a 2005 news.cau.edu.cn jpg
+    that now redirects to the university homepage; leaving it means a red X."""
+    xml, tally = _blocks()
+    assert 'r:link=' not in xml
+    assert 'news.cau.edu.cn' not in xml
+    assert tally['external_links_dropped'] >= 1
+
+
+@needs_template
+def test_local_wordmark_survives_and_every_rid_resolves():
+    """Dropping the link must not drop the picture, and no carried block may
+    reference a relationship the output package does not have."""
+    import re
+    import zipfile
+    xml, _ = _blocks()
+    assert 'v:imagedata' in xml, 'the school wordmark must still be there'
+    rels = zipfile.ZipFile(M.TEMPLATE).read('word/_rels/document.xml.rels').decode('utf-8')
+    have = set(re.findall(r'Id="([^"]+)"', rels))
+    used = set(re.findall(r'r:(?:id|embed|href)="([^"]+)"', xml))
+    assert not (used - have), 'dangling relationship ids: %s' % sorted(used - have)
+
+
+@needs_template
+def test_academic_choice_keeps_box1_and_drops_box2():
+    """Text of the kept blocks: 附件1 stays (with the template's own
+    "delete this box" instruction), 附件2 goes."""
+    blocks, _ = M.extract_front_matter(M.TEMPLATE, keep_box='academic')
+    from lxml import etree
+    W = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
+    text = '\n'.join(''.join(t.text or '' for t in b.iter(W + 't'))
+                     for b in blocks)
+    assert '附件1' in text
+    assert '附件2' not in text
+    assert '独 创 性 声 明' in text or '独创性声明' in text.replace(' ', '')
+
+
+@needs_template
+def test_seam_between_cover_and_spine_is_page_broken():
+    """The template keeps its only explicit page break at the end of 附件2, so
+    dropping that box would pull the 书脊 page up onto the cover."""
+    xml, tally = _blocks()
+    assert 'w:type="page"' in xml or tally['page_breaks_added'] >= 1

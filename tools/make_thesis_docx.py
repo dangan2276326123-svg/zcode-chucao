@@ -73,6 +73,15 @@ OUT_DOCX = os.path.join(OUTDIR, 'thesis_draft_v15_clean.docx')
 
 SOURCES = ['abstract_draft.md'] + ['ch%02d_draft.md' % i for i in range(1, 7)]
 
+# relationship namespace, needed to drop the cover's dead INCLUDEPICTURE link
+_REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+_W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+
+# what the last build() carried over as front matter; printed by main() so the
+# cover never becomes an unreported side effect
+_fm_stats = {'blocks': 0, 'fields_stripped': 0, 'links_dropped': 0,
+            'breaks_added': 0}
+
 GREEK = {
     'alpha': 'α', 'beta': 'β', 'gamma': 'γ', 'delta': 'δ', 'epsilon': 'ε',
     'zeta': 'ζ', 'eta': 'η', 'theta': 'θ', 'iota': 'ι', 'kappa': 'κ',
@@ -370,6 +379,119 @@ def collect_symbols():
     return seen
 
 
+def _strip_field_machinery(el, tally):
+    """Remove Word field machinery from a copied block, keeping what it shows.
+
+    The template's cover is built out of text boxes, a VML shape holding the
+    school wordmark, and fields. Two of those are worth naming because they are
+    the reason this function exists:
+
+      * MACROBUTTON / other instrText -- the leftovers that made the old file
+        slow to open and easy to break;
+      * the cover's INCLUDEPICTURE, whose `r:link` points at
+        news.cau.edu.cn/upload/2005/...jpg. Checked 2026-10-15: that URL answers
+        307 and lands on https://www.cau.edu.cn/ -- it is no longer an image, so
+        leaving the link in place puts a red X on the cover. The local copy
+        (media/image1.jpeg, reached through rId47) is what actually renders, so
+        the link attribute is dropped and the picture is kept.
+
+    Field results are cached text between `separate` and `end`; dropping the
+    `fldChar`/`instrText` runs leaves that text behind, which is what we want
+    for a cover whose content is fixed wording.
+    """
+    for tag in ('w:instrText', 'w:fldChar'):
+        for node in list(el.iter(qn(tag))):
+            parent = node.getparent()
+            if parent is None:
+                continue
+            tally['fields_stripped'] += 1
+            if len(parent):
+                parent.remove(node)
+    # an empty run left behind by the above is noise in the package
+    for r in list(el.iter(qn('w:r'))):
+        parent = r.getparent()
+        if parent is not None and len(r) == 0:
+            parent.remove(r)
+    # INCLUDEPICTURE's external link: drop the attribute, keep the image
+    for attr in ('{%s}link' % _REL_NS, '{%s}href' % _REL_NS):
+        for node in list(el.iter()):
+            if node.get(attr):
+                del node.attrib[attr]
+                tally['external_links_dropped'] += 1
+    # w:fldSimple wraps content: unwrap it so no field remains
+    for simple in list(el.iter(qn('w:fldSimple'))):
+        parent = simple.getparent()
+        if parent is None:
+            continue
+        idx = list(parent).index(simple)
+        for child in list(simple):
+            parent.insert(idx, child)
+            idx += 1
+        parent.remove(simple)
+        tally['fields_stripped'] += 1
+    return el
+
+
+def extract_front_matter(path, keep_box='academic'):
+    """Return the template's cover / 书脊 / 声明 blocks, field-free.
+
+    These pages are layout machinery (text boxes, a VML wordmark, four section
+    breaks that give the cover its own page numbering). Re-typing them as plain
+    paragraphs produces something that only looks like a cover, so they are
+    carried over as XML instead -- with the fields stripped by
+    _strip_field_machinery() so the result stays as openable as the body.
+
+    keep_box='academic' drops the 专业学位 box (附件2) and keeps 附件1, per the
+    author's choice on 2026-10-15; the template's own "使用后删除本框" line is
+    left in place so it is visible what still has to go.
+    """
+    from lxml import etree
+    from copy import deepcopy
+    tally = {'fields_stripped': 0, 'external_links_dropped': 0,
+           'page_breaks_added': 0}
+    if not os.path.exists(path):
+        return [], tally
+    root = etree.fromstring(zipfile.ZipFile(path).read('word/document.xml'))
+    kids = list(root.find(qn('w:body')))
+
+    def text_of(el):
+        return ''.join(t.text or '' for t in el.iter(qn('w:t'))).strip()
+
+    def find(pattern, start=0):
+        for i in range(start, len(kids)):
+            if re.match(pattern, text_of(kids[i])):
+                return i
+        return None
+
+    i_box2 = find(r'^使用后删除本框-附件2')
+    i_spine = find(r'^论文成文后删除此页')
+    i_abstract = find(r'^摘\s*要')
+    if i_abstract is None:
+        return [], tally
+    blocks = [deepcopy(k) for k in kids[:i_box2 if (
+        keep_box == 'academic' and i_box2) else i_abstract]]
+    if keep_box == 'academic' and i_box2 is not None and i_spine is not None:
+        tail = [deepcopy(k) for k in kids[i_spine:i_abstract]]
+        # The template keeps its only explicit page break at the end of the
+        # 附件2 block (child 62 as measured 2026-10-15). Dropping that box takes
+        # the break with it and the 书脊 page slides up onto the cover, so the
+        # join is checked and re-broken rather than assumed.
+        joined = ''.join(etree.tostring(k).decode('utf-8') for k in blocks)
+        has_break = ('w:type="page"' in joined
+                     or 'pageBreakBefore' in joined)
+        if not has_break:
+            br = etree.SubElement(etree.SubElement(
+                etree.fromstring('<w:p xmlns:w="%s"/>' % _W_NS), qn('w:r')),
+                qn('w:br'))
+            br.set(qn('w:type'), 'page')
+            blocks.append(br.getparent().getparent())
+            tally['page_breaks_added'] += 1
+        blocks += tail
+    for el in blocks:
+        _strip_field_machinery(el, tally)
+    return blocks, tally
+
+
 def extract_references(path):
     """Carry the reference entries over verbatim from the previous docx."""
     if not os.path.exists(path):
@@ -396,7 +518,7 @@ def extract_references(path):
 
 
 # -------------------------------------------------------------------- build
-def build(check_only=False):
+def build(check_only=False, cover='academic'):
     doc = docx.Document(TEMPLATE)
     if not check_only:
         body = doc.element.body
@@ -405,6 +527,15 @@ def build(check_only=False):
             if child is not sect:
                 body.remove(child)
         doc.styles['Normal'].font.size = Pt(10.5)
+        if cover in ('academic', 'both'):
+            blocks, fm_tally = extract_front_matter(
+                TEMPLATE, keep_box=cover)
+            for el in blocks:
+                sect.addprevious(el)         # front matter goes first
+            _fm_stats['blocks'] = len(blocks)
+            _fm_stats['fields_stripped'] = fm_tally['fields_stripped']
+            _fm_stats['links_dropped'] = fm_tally['external_links_dropped']
+            _fm_stats['breaks_added'] = fm_tally['page_breaks_added']
 
     c = Counter()
     r = Renderer(doc, c, check_only=check_only)
@@ -509,6 +640,10 @@ def main():
     ap.add_argument('--check', action='store_true', help='parse only, write nothing')
     ap.add_argument('--verify', action='store_true',
                     help='re-open the output and count fields')
+    ap.add_argument('--cover', choices=('academic', 'both', 'none'),
+                    default='academic',
+                    help='which cover box to carry from the template '
+                         '(academic = 附件1 only, the author\'s choice 2026-10-15)')
     args = ap.parse_args()
 
     if args.verify:
@@ -522,9 +657,14 @@ def main():
               'STYLEREF, not body fields)' % (hf_parts, hf_fields))
         return
 
-    c, nrefs = build(check_only=args.check)
+    c, nrefs = build(check_only=args.check, cover=args.cover)
     print('mode        : %s' % ('check (nothing written)' if args.check
                                 else 'write -> ' + OUT_DOCX))
+    print('cover       : %s -> %d template blocks carried, %d field nodes '
+          'stripped, %d dead external picture link(s) dropped, '
+          '%d page break(s) re-added at the box seam'
+          % (args.cover, _fm_stats['blocks'], _fm_stats['fields_stripped'],
+             _fm_stats['links_dropped'], _fm_stats['breaks_added']))
     print('headings    : %d/%d/%d (h1/h2/h3)   paragraphs %d   tables %d'
           % (c['h1'], c['h2'], c['h3'], c['para'], c['table']))
     print('formulas    : %d kept raw (entered by hand in Word)' % c['eq'])
