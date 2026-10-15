@@ -85,6 +85,7 @@
 | `capture_field.py` | **秋采落盘入口**（10-14 加）：连 X5 的 TCP MJPEG，`空格` 按 `raw/{光照}_{视角}_{行况}/t{NN}_{MMDD}_{序号}.jpg` 落 JPG、`1/2/3`/`4/5/6`/`7/8/9` 切行况/光照/视角、`v` 录 30 秒验证视频、退出留 `capture_log_*.csv`。**在此之前采集清单要求的命名没有任何工具能产出**（`stream_view.py` 的 `s` 存的是 `results/stream_view_HHMMSS.png`，名字/格式/目录三样全不对）。配套：`vehicle/stream_pi.py` 加了 `--width/--height`（默认仍 720p，采集要 1080p） |
 | `pre_annotate.py` | **半自动预标注**（DeepLabV3+ → labelme JSON + 叠加目检图）：qoder 工作区版，缺依赖时打人话提示、输出默认锁在工作区内、打印权重 md5/mtime 与解释器路径。原脚本在只读仓 `chucao_prj/annotation_tools/`，不改它 |
 | `启动预标注.bat` | 预标注启动入口（写死可用解释器）。**故意只写 ASCII**：.bat 里的中文必须 GBK 编码，否则 cmd 显示乱码 |
+| `make_thesis_docx.py` | **论文 Word 生成器（P1）**：从只读仓的论文开发区 `chucao_prj/thesis_cau/03_chapters/*.md` 渲染出一份**正文零域**的 docx，产物写回 `thesis_cau/10_output/thesis_draft_v15_clean.docx`。存在理由是当场数到的症状：v14 是在校模板自己的 `document.xml` 上打补丁得到的，继承 `w:fldChar` 818／`w:instrText` 348／`MACROBUTTON` 47／`PAGEREF` 28／`SEQ` 7——那就是"打开慢、不好改"的来源。本工具反过来做：**取模板包（样式、字体、主题、页面设置留下）但把正文整块删掉重写**，标题走 Heading 样式、表格走三线表、目录走死文本（页码等版式定稿后由 Word 一次性生成，不留 PAGEREF）。三个模式：`--check` 只解析不写、默认写出、`--verify` 重新解开产物数域（判据是那一串计数全为 0）。⚠️ 三条不许糊过去的约定：**19 处公式按原样 LaTeX 落纸并标 〔公式待录〕**（公式由作者手录，工具不猜语义）；**行内符号只有在"没有残留反斜杠／花括号／脱字符"时才算转码成功**，否则灰底标出——错得看起来很干净比标出来更糟；`<待补充>`、`[[REF:]]`、`[[FIG:]]` 一律保留可见。源码哈希、字数与三条校验读数**只写在产物旁边那份 `10_output/word_版本清单.md` 一处**（AGENTS 审查清单第 8 条），本行不抄数。依赖 `python-docx`，输出目录由环境变量 `THESIS_DIR` 覆盖 |
 
 ### 运行环境 — 用哪个解释器（09-21 实测，别再猜）
 
