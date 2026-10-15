@@ -117,6 +117,10 @@ RUN_LOG_COLUMNS = [
     # ---- 2026-10-14 手操转向档位：这一拍发出去的 NAV.flags ----
     # 仍然追加在末尾。没有这一列，事后无法区分"按了 g 但车没转"与"g 根本没发出去"。
     'nav_flags',
+    # ---- 2026-10-14 台架停拍追查：这一拍距上一拍隔了多久（秒，未钳位） ----
+    # 停拍期间一行都不写，所以这一列是**停拍之后那一行**才变大；它把"靠 t 差分
+    # 反推"升成"表里的记录"。回放/第一拍留空，不写 0（0 会读成"节拍完美"）。
+    'beat_gap_s',
 ]
 
 # HUD 用的 ASCII 短码（fix round 1 I-4）。cv2.putText 画不出 CJK——
@@ -238,7 +242,7 @@ def tx_frames_text(ftypes):
 def run_log_row(t_rel, fid, state, res, lat_m, lat_comp_m, vl, vr, tool_mm,
                 latency_ms, st, feed_snapshot, permit,
                 rx_good='', rx_bad='', recv_timeouts='', link_drops='',
-                l1_events=0, tx_frames='-', nav_flags=''):
+                l1_events=0, tx_frames='-', nav_flags='', beat_gap_s=''):
     """按 RUN_LOG_COLUMNS 的顺序拼一行。st 可以是 None（无 STATUS）或 v1 字典。
 
     l1_events 是**累计的 L1 降级事件数**（spec §5.2，I-6），由调用方维护，
@@ -275,4 +279,5 @@ def run_log_row(t_rel, fid, state, res, lat_m, lat_comp_m, vl, vr, tool_mm,
         '%d' % l1_events,
         tx_frames,
         nav_flags,
+        beat_gap_s,
     ]

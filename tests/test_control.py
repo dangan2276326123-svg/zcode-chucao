@@ -1160,3 +1160,23 @@ def test_single_wall_runs_at_l1_speed_and_counts_the_event(tmp_path, monkeypatch
 
 
 
+
+
+def test_fresh_out_dir_refuses_to_overwrite_a_run_log(tmp_path):
+    """`run_log.csv` 是 `'w'` 打开的 —— 复用 `--out` 会整份冲掉上一轮证据。
+
+    10-14 台架实测一天内连续覆盖三次，其中一份是唯一记录 `mcu_mode` 3→1 的读数。
+    这道闸把"忘了换目录"从一次不可恢复的数据丢失，变成一句会告诉你该做什么的报错。
+    """
+    import pytest
+
+    from pc.main import fresh_out_dir
+
+    out = str(tmp_path / 'run1')
+    path = fresh_out_dir(out)                      # 新目录：放行并建好
+    assert os.path.isdir(out) and path.endswith('run_log.csv')
+    open(path, 'w').write('t\n')                  # 假装已经有上一轮
+    with pytest.raises(SystemExit) as got:
+        fresh_out_dir(out)
+    assert 'overwrite' in str(got.value).lower()   # 报错要说出补救办法
+    assert fresh_out_dir(out, allow_overwrite=True) == path   # 明知故犯仍要能走

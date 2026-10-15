@@ -178,6 +178,24 @@ def _hud_wrap(tokens, max_chars=HUD_MAX_CHARS):
     return lines
 
 
+def fresh_out_dir(out_dir, allow_overwrite=False):
+    """`run_log.csv` 是以 `'w'` 打开的 —— 复用 `--out` 目录会把上一轮证据整份冲掉。
+
+    10-14 台架实测：`results/tel_C23` 被同一个目录名连续覆盖三次，两份几百 KB 的读数
+    当场没了（其中一份是唯一记录 `mcu_mode` 3→1 跳变的证据）。所以默认**拒绝启动**，
+    要覆盖必须显式 `--overwrite`。返回 csv 路径，让调用处只有一个事实源。
+    """
+    path = os.path.join(out_dir, 'run_log.csv')
+    if os.path.exists(path) and not allow_overwrite:
+        raise SystemExit(
+            'refusing to overwrite %s -- run_log.csv is opened with mode "w", '
+            'so starting this run would destroy the previous evidence.\n'
+            'Use a fresh --out directory, or pass --overwrite if you really mean it.'
+            % path)
+    os.makedirs(out_dir, exist_ok=True)
+    return path
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--source', default=None, help='video/dir for replay mode')
@@ -188,9 +206,11 @@ def main():
     ap.add_argument('--stream-port', type=int, default=STREAM_PORT)
     ap.add_argument('--out', default='results/run')
     ap.add_argument('--no-gui', action='store_true')
+    ap.add_argument('--overwrite', action='store_true',
+                    help='明知故犯地复用 --out 目录（默认拒绝：CSV 是覆盖写的）')
     args = ap.parse_args()
 
-    os.makedirs(args.out, exist_ok=True)
+    csv_path = fresh_out_dir(args.out, args.overwrite)
 
     # ---- E3 spec §6：车辆档案必须在任何控制量之前读到 ----
     # 读不到 / 值非法就抛，**不许带错参数进无人**：档案里的 profile_id 决定
@@ -256,7 +276,6 @@ def main():
 
     from common import protocol as P
 
-    csv_path = os.path.join(args.out, 'run_log.csv')
     last_good = None
     last_vis = None   # last drawn overlay (E2-4)
     t_prev = time.time()
@@ -285,7 +304,10 @@ def main():
                           args.stream_host, args.stream_port)
         for fid, frame in enumerate(src.frames()):
             t0 = time.time()
-            dt = max(t0 - t_prev, 1e-3)
+            # beat_gap_s 用**未钳位**的原始间隔：`dt` 被 max(...,1e-3) 保护过，
+            # 是给 PID 用的；而我们要看的恰恰是「这一拍隔了多久没跑」，钳位会把它抹平。
+            beat_gap = t0 - t_prev
+            dt = max(beat_gap, 1e-3)
             t_prev = t0
             prev_state = sm.state   # captured BEFORE any state event (P0-4)
             del tx_this_beat[:]      # T2：这一列只描述这一拍；上一拍的帧型不许漂过来
@@ -597,7 +619,8 @@ def main():
                 link_drops=_st.get('link_drops', ''),
                 l1_events=l1_events,           # I-6：降级事件落到时间轴上
                 tx_frames=wire.tx_frames_text(tx_this_beat),   # T2：这一拍线上真有什么
-                nav_flags=(str(tele_gear) if sm.state == 'TELEOP' else '')))
+                nav_flags=(str(tele_gear) if sm.state == 'TELEOP' else ''),
+                beat_gap_s='%.3f' % beat_gap))
             n += 1
             if n % 20 == 0:
                 print('[%d] %s lat=%.3fm vL=%.2f vR=%.2f tool=%.1fmm %.0fms%s' % (

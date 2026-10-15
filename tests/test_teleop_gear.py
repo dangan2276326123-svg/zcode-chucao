@@ -72,6 +72,21 @@ def test_run_log_row_nav_flags_defaults_empty_not_zero():
     res = {'status': 'dual', 'confidence': 0.9, 'lateral_px': 3.0}
     args = (1.0, 7, 'AUTO', res, 0.01, 0.02, 0.07, 0.07, 0.0, 12.0, None,
             ({}, 0, None), wire.GATE_N)
+    i = wire.RUN_LOG_COLUMNS.index('nav_flags')   # 按列名取，不再按末位（10-14 之后末位是 beat_gap_s）
     row = wire.run_log_row(*args)
-    assert row[-1] == ''
-    assert wire.run_log_row(*args, nav_flags='2')[-1] == '2'
+    assert row[i] == ''
+    assert wire.run_log_row(*args, nav_flags='2')[i] == '2'
+
+
+def test_beat_gap_column_is_last_and_defaults_empty():
+    """`beat_gap_s` 缺省必须是空串，不是 `0.000`。
+
+    0 会被读成"这一拍节拍完美"，而空串才是"这一列没有可用记录"（回放模式、第一拍）。
+    这条与 `tx_frames` 的 `'-'`、`nav_flags` 的 `''` 是同一条纪律：不拿默认值冒充读数。
+    """
+    assert wire.RUN_LOG_COLUMNS[-1] == 'beat_gap_s'
+    res = {'status': 'dual', 'confidence': 0.9, 'lateral_px': 3.0}
+    args = (1.0, 7, 'AUTO', res, 0.01, 0.02, 0.07, 0.07, 0.0, 12.0, None,
+            ({}, 0, None), wire.GATE_N)
+    assert wire.run_log_row(*args)[-1] == ''
+    assert wire.run_log_row(*args, beat_gap_s='4.169')[-1] == '4.169'

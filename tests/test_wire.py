@@ -142,7 +142,7 @@ def test_run_log_row_carries_l1_events_and_reject_short_codes():
     目前没有生产调用点，只有 `tools/link_probe.py` 在 stdout 打整句。
     """
     assert 'l1_events' in wire.RUN_LOG_COLUMNS
-    assert wire.RUN_LOG_COLUMNS[-3] == 'l1_events'   # 两次追加（tx_frames、nav_flags）之后仍在倒数第三
+    assert wire.RUN_LOG_COLUMNS[-4] == 'l1_events'   # 三次追加（tx_frames、nav_flags、beat_gap_s）之后
     res = {'status': 'left_only', 'confidence': 0.9, 'lateral_px': 3.0}
     _args = (1.0, 7, 'AUTO', res, 0.01, 0.02, 0.07, 0.07, 0.0, 12.0, None,
              ({}, 0, None), wire.GATE_N)
@@ -193,9 +193,10 @@ def test_tx_frames_is_appended_without_moving_earlier_columns():
     """
     n = len(_PRE_TX_FRAMES_COLUMNS)
     assert wire.RUN_LOG_COLUMNS[:n] == _PRE_TX_FRAMES_COLUMNS
-    assert len(wire.RUN_LOG_COLUMNS) == n + 2
-    assert wire.RUN_LOG_COLUMNS[-2] == 'tx_frames'
-    assert wire.RUN_LOG_COLUMNS[-1] == 'nav_flags'
+    assert len(wire.RUN_LOG_COLUMNS) == n + 3
+    assert wire.RUN_LOG_COLUMNS[-3] == 'tx_frames'
+    assert wire.RUN_LOG_COLUMNS[-2] == 'nav_flags'
+    assert wire.RUN_LOG_COLUMNS[-1] == 'beat_gap_s'
 
 
 def test_run_log_row_puts_tx_frames_last_and_defaults_to_the_silent_marker():
@@ -209,10 +210,10 @@ def test_run_log_row_puts_tx_frames_last_and_defaults_to_the_silent_marker():
             ({}, 0, None), wire.GATE_N)
     row = wire.run_log_row(*args)
     assert len(row) == len(wire.RUN_LOG_COLUMNS)
-    i = len(wire.RUN_LOG_COLUMNS) - 2      # tx_frames：10-14 之后是倒数第二列
+    i = len(wire.RUN_LOG_COLUMNS) - 3      # tx_frames：又追加两列之后是倒数第三列
     assert row[i] == '-'
     assert wire.run_log_row(*args, tx_frames='NAV+TOOL')[i] == 'NAV+TOOL'
-    assert row[-1] == ''                   # nav_flags：非手操拍留空，不写 0
+    assert row[-2] == ''                   # nav_flags：非手操拍留空，不写 0
 
 
 def test_tx_frames_text_names_each_frame_type():
