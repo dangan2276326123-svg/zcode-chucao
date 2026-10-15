@@ -25,11 +25,16 @@
 #define TELEOP_GEAR_RIGHT    2
 #define TELEOP_GEAR_LATERAL  3   /* crab attempt: all four wheels same sign */
 #define TELEOP_GEAR_MAX      TELEOP_GEAR_LATERAL
-/* Steering magnitude for the manual gears.  20 deg is NOT derived here -- it is
-   the value the vendor's own steering patterns use (path_plan.c:97-110 sets the
-   pair to +/-20 deg).  Author ruling 2026-10-14: ship it for the previous
-   generation of the vehicle and fix it against what is actually observed;
-   the sample machine must be re-checked before inheriting any of it. */
+/* Steering magnitude for the manual gears.  20 deg is NOT derived here -- the
+   NUMBER is the one the vendor uses at path_plan.c:97-110, but that block is
+   stopped-vehicle residue (gated on sbus_channel[4]<1300, runs after
+   telecontrol()) and its +/- pair is NOT the shape of a turn: the live
+   path_plan.c:651-681 writes both front angles with the SAME sign for a left
+   turn.  See main.c's TELEOP block for the 2026-10-15 correction -- the
+   magnitude is still a placeholder, the shape is now the vendor's own.
+   Author ruling 2026-10-14: ship it for the previous generation of the
+   vehicle and fix it against what is actually observed; the sample machine
+   must be re-checked before inheriting any of it. */
 #define TELEOP_STEER_DEG     20.0
 /* STATUS has no spare byte, so the accepted gear is echoed through the
    current_a placeholder (adc_current_a() returns 0.0f; Fw-5 TODO).  THE A FIELD

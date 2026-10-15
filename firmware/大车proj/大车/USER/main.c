@@ -533,24 +533,32 @@ while(1)
 	  if (retrofit_mode() == MODE_AUTO) {
 	      angle[0] = angle[1] = angle[2] = angle[3] = 0.0;
 	  } else if (retrofit_mode() == MODE_TELEOP) {
-	      /* TELEOP steering gears (2026-10-14, author ruling: ship for the
-	         previous-generation vehicle and fix against what is observed).
-	         +/-20 deg is COPIED from the vendor's own pattern at
-	         path_plan.c:97-110; nothing here derives an angle.  Index-to-wheel
-	         mapping is the vendor's own comment above this block (4=LF 1=RF
-	         2=LR 3=RR).  WATCH ON THE FIRST LIFTED-WHEEL TEST: path_plan calls
-	         the pair it steers "front" while that comment puts those indices on
-	         the rear -- if LEFT points the wrong way, flip the two signs, do not
-	         re-derive anything.  LATERAL here is a 20 deg diagonal, NOT a true
-	         90 deg crab: the real crab angle needs the measured track/wheelbase
-	         (ledger Hw-23: firmware constants match nothing measured). */
+	      /* TELEOP steering gears (2026-10-14, source corrected 2026-10-15).
+	         The +/-20 pair shipped on 10-14 was copied from path_plan.c:97-110.
+	         That source is WRONG.  The block is gated on sbus_channel[4]<1300
+	         (throttle closed = vehicle stopped) and it runs AFTER
+	         telecontrol(); and its "front/rear steering" labels are stale --
+	         control_flag[1] is forward/reverse (path_plan.c:28,163,171), which
+	         the vendor uses to pick the LEADING axle, not to name one.  The
+	         live path is sbus_channel[5] -> control_flag[3] ("0 = straight
+	         ahead, left is positive", path_plan.c:243) -> telecontrol() ->
+	         ackman_steering_front() (path_plan.c:651-681), which for a left
+	         turn writes BOTH front angles POSITIVE (inner one larger: that is
+	         the Ackermann split).  So a gear is ONE sign for the pair, not one
+	         sign per wheel.  tg is held equal on both fronts here because
+	         firmware B and L match nothing measured (ledger Hw-23); the atan
+	         split comes with the measured track/wheelbase.  LATERAL is
+	         unchanged -- path_diagonal_front() (920-927) also holds one value
+	         on all four, and the vendor itself labels it "not the theoretical
+	         high-speed crab".  STILL TO OBSERVE on the first lifted-wheel run:
+	         that + really points left on this vehicle, and which axle moves. */
 	      double tg = TELEOP_STEER_DEG / 180.0 * 3.14159265358979;
 	      switch (retrofit_teleop_gear()) {
 	      case TELEOP_GEAR_LEFT:
-	          angle[0] = tg;  angle[1] = -tg; angle[2] = 0.0; angle[3] = 0.0;
+	          angle[0] = tg;  angle[1] = tg;  angle[2] = 0.0; angle[3] = 0.0;
 	          break;
 	      case TELEOP_GEAR_RIGHT:
-	          angle[0] = -tg; angle[1] = tg;  angle[2] = 0.0; angle[3] = 0.0;
+	          angle[0] = -tg; angle[1] = -tg; angle[2] = 0.0; angle[3] = 0.0;
 	          break;
 	      case TELEOP_GEAR_LATERAL:
 	          angle[0] = tg;  angle[1] = tg;  angle[2] = tg;  angle[3] = tg;
