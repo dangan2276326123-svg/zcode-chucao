@@ -570,8 +570,12 @@ class _RebootingStatusReceiver(StatusReceiver):
 
 def _drive_main(tmp_path, monkeypatch, results, states=None, keys=(), n_status=None,
                 permit=wire.GATE_N, profile_id=1, gui=False,
-                vision_loss_beat=None, status_factory=None):
-    """跑 n=len(results) 拍，返回 {'sent','header','rows','sm','hud','permits','holder'}。"""
+                vision_loss_beat=None, status_factory=None, log_tag='fake'):
+    """跑 n=len(results) 拍，返回 {'sent','header','rows','sm','hud','permits','holder'}。
+
+    `log_tag` 是给台账 Pc-10 那一列用的假档案值；传 `None` 造的是"档案里没有这一项"
+    那种状态，`pc/main.py` 应当当场把它停下来而不是猜一个车型。
+    """
     import numpy as np
     import pc.main as M
 
@@ -635,8 +639,11 @@ def _drive_main(tmp_path, monkeypatch, results, states=None, keys=(), n_status=N
 
     def _profile_loader(path=None):
         holder['loaded'] = True
-        return {'profile_id': profile_id, 'permit': permit,
-                'path': 'X:/fake/vehicle_profile.yaml'}
+        cfg = {'profile_id': profile_id, 'permit': permit,
+               'path': 'X:/fake/vehicle_profile.yaml'}
+        if log_tag is not None:
+            cfg['log_tag'] = log_tag
+        return cfg
 
     sent = []
     n_status = len(results) if n_status is None else n_status
@@ -808,6 +815,45 @@ def test_main_run_log_writes_the_full_header_and_the_e3_fields(tmp_path, monkeyp
     assert r['rows'][1][idx['lat_m']] == ''                 # 瞎了这拍不写测量值
     assert r['rows'][1][idx['lat_comp_m']] == ''
     assert r['rows'][1][idx['status']] == 'no_frame'
+
+
+def test_main_writes_the_vehicle_tag_into_every_row(tmp_path, monkeypatch):
+    """台账 Pc-10 的**接线**判据：`run_log.csv` 每一行都要带上这一趟属于哪台车。
+
+    这条不是为了测 `run_log_row()` 会拼字符串（那条在 `tests/test_wire.py`），
+    测的是 `pc/main.py` 有没有真的把档案里那个值传到每一拍。少传一个实参时
+    缺省是空串，行长仍与表头相等、既有断言一个字都不会红——表里那一列就会
+    静默变成空，而"取消档案握手之后这是唯一认得出车的字段"（v1.0 §4.1 规定
+    横向数据不得跨车引用，日志认不出车，那条规则就无法执行、论文也无法给
+    每个横向数据标注来源）。
+
+    第二条断言管的是反向：档案里**没有**这一项时，程序要停下来，
+    不能写一张"每行都有车型列、其实全是空的"表。
+    """
+    r = _drive_main(tmp_path, monkeypatch,
+                    results=[_USABLE, _USABLE, _USABLE],
+                    states=['AUTO', 'AUTO', 'AUTO'], permit=wire.GATE_N,
+                    profile_id=1, log_tag='prototype')
+    idx = {c: i for i, c in enumerate(r['header'])}
+    col = idx['vehicle_tag']
+    assert r['rows'], '这一条要有行可查，否则断言是空的'
+    assert all(row[col] == 'prototype' for row in r['rows']), \
+        [row[col] for row in r['rows']]
+
+    assert 'vehicle_tag' in r['header']
+
+
+def test_main_stops_when_the_profile_has_no_vehicle_tag(tmp_path, monkeypatch):
+    """档案里**没有** `log_tag` 时，程序要停下来，不能写一张车型列全空的表。
+
+    单独一条而不是塞在上面那条里，有两个原因：一是 `_drive_main` 两次用同一个
+    `tmp_path` 会先撞上 `--out` 的覆盖保护（ec4ef57 那道闸）并抛 `SystemExit`，
+    那样这条断言就会**为完全不相干的原因通过**；二是 `pytest.raises(Exception)`
+    太宽，接不住"抛错了东西"这种情况。所以这里收窄成 `KeyError`。
+    """
+    with pytest.raises(KeyError):
+        _drive_main(tmp_path, monkeypatch,
+                    results=[_USABLE], states=['AUTO'], log_tag=None)
 
 
 def test_main_run_log_tx_frames_equals_what_the_socket_actually_saw(tmp_path, monkeypatch):

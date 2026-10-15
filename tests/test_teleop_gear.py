@@ -84,9 +84,10 @@ def test_beat_gap_column_is_last_and_defaults_empty():
     0 会被读成"这一拍节拍完美"，而空串才是"这一列没有可用记录"（回放模式、第一拍）。
     这条与 `tx_frames` 的 `'-'`、`nav_flags` 的 `''` 是同一条纪律：不拿默认值冒充读数。
     """
-    assert wire.RUN_LOG_COLUMNS[-1] == 'beat_gap_s'
+    assert wire.RUN_LOG_COLUMNS[-2] == 'beat_gap_s'   # 10-15 Pc-10 之后末位是 vehicle_tag
     res = {'status': 'dual', 'confidence': 0.9, 'lateral_px': 3.0}
     args = (1.0, 7, 'AUTO', res, 0.01, 0.02, 0.07, 0.07, 0.0, 12.0, None,
             ({}, 0, None), wire.GATE_N)
-    assert wire.run_log_row(*args)[-1] == ''
-    assert wire.run_log_row(*args, beat_gap_s='4.169')[-1] == '4.169'
+    col = wire.RUN_LOG_COLUMNS.index('beat_gap_s')   # 按列名取，不靠末位（末位已让给 vehicle_tag）
+    assert wire.run_log_row(*args)[col] == ''
+    assert wire.run_log_row(*args, beat_gap_s='4.169')[col] == '4.169'

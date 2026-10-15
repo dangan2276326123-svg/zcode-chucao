@@ -142,7 +142,7 @@ def test_run_log_row_carries_l1_events_and_reject_short_codes():
     目前没有生产调用点，只有 `tools/link_probe.py` 在 stdout 打整句。
     """
     assert 'l1_events' in wire.RUN_LOG_COLUMNS
-    assert wire.RUN_LOG_COLUMNS[-4] == 'l1_events'   # 三次追加（tx_frames、nav_flags、beat_gap_s）之后
+    assert wire.RUN_LOG_COLUMNS[-5] == 'l1_events'   # 四次追加（tx_frames、nav_flags、beat_gap_s、vehicle_tag）之后
     res = {'status': 'left_only', 'confidence': 0.9, 'lateral_px': 3.0}
     _args = (1.0, 7, 'AUTO', res, 0.01, 0.02, 0.07, 0.07, 0.0, 12.0, None,
              ({}, 0, None), wire.GATE_N)
@@ -188,15 +188,17 @@ def test_tx_frames_is_appended_without_moving_earlier_columns():
     """位置锚：前 n 列一字不动，之后每追加一列只许往末尾挂。
 
     10-14 手操档位又追加了一列 `nav_flags` ⇒ 这里从 `n + 1` 改成 `n + 2`、
-    `tx_frames` 从末位让到倒数第二。**改的是锚，不是历史**：快照本身没动，
+    `tx_frames` 从末位让到倒数第二。10-15（台账 Pc-10）再加 `vehicle_tag` ⇒ `n + 4`。
+    **改的是锚，不是历史**：快照本身没动，
     所以"前面那些列的列位被动过"这种破坏照样会红。
     """
     n = len(_PRE_TX_FRAMES_COLUMNS)
     assert wire.RUN_LOG_COLUMNS[:n] == _PRE_TX_FRAMES_COLUMNS
-    assert len(wire.RUN_LOG_COLUMNS) == n + 3
-    assert wire.RUN_LOG_COLUMNS[-3] == 'tx_frames'
-    assert wire.RUN_LOG_COLUMNS[-2] == 'nav_flags'
-    assert wire.RUN_LOG_COLUMNS[-1] == 'beat_gap_s'
+    assert len(wire.RUN_LOG_COLUMNS) == n + 4
+    assert wire.RUN_LOG_COLUMNS[-4] == 'tx_frames'
+    assert wire.RUN_LOG_COLUMNS[-3] == 'nav_flags'
+    assert wire.RUN_LOG_COLUMNS[-2] == 'beat_gap_s'
+    assert wire.RUN_LOG_COLUMNS[-1] == 'vehicle_tag'
 
 
 def test_run_log_row_puts_tx_frames_last_and_defaults_to_the_silent_marker():
@@ -210,10 +212,13 @@ def test_run_log_row_puts_tx_frames_last_and_defaults_to_the_silent_marker():
             ({}, 0, None), wire.GATE_N)
     row = wire.run_log_row(*args)
     assert len(row) == len(wire.RUN_LOG_COLUMNS)
-    i = len(wire.RUN_LOG_COLUMNS) - 3      # tx_frames：又追加两列之后是倒数第三列
+    # 按列名取，不按末位算偏移：10-15 加 `vehicle_tag` 之后，这里原来写的
+    # `len(...) - 3` 会静默指到 `nav_flags` 上——偏移量是会被追加吃掉的，
+    # 而这条测试的本意是"tx_frames 的缺省值是 '-'（线上真的一个字节都没有）"。
+    i = wire.RUN_LOG_COLUMNS.index('tx_frames')
     assert row[i] == '-'
     assert wire.run_log_row(*args, tx_frames='NAV+TOOL')[i] == 'NAV+TOOL'
-    assert row[-2] == ''                   # nav_flags：非手操拍留空，不写 0
+    assert row[wire.RUN_LOG_COLUMNS.index('nav_flags')] == ''   # 非手操拍留空，不写 0
 
 
 def test_tx_frames_text_names_each_frame_type():
@@ -225,3 +230,29 @@ def test_tx_frames_text_names_each_frame_type():
     # 认不出的帧型原样给数字，不替它编名字（与 wire.REJECT_SHORT 同一口径）。
     assert wire.tx_frames_text([99]) == '99'
     assert wire.tx_frames_text([P.TYPE_TOOL, P.TYPE_NAV]) == 'TOOL+NAV'
+
+
+# ---------- 台账 Pc-10（2026-10-15）：run_log 的车型列 ----------
+
+def test_vehicle_tag_lands_in_its_own_column():
+    """传了就落在 `vehicle_tag` 那一列，且不影响任何前面的列位。"""
+    res = {'status': 'dual', 'confidence': 0.9, 'lateral_px': 3.0}
+    args = (1.0, 7, 'AUTO', res, 0.01, 0.02, 0.07, 0.07, 0.0, 12.0, None,
+            ({}, 0, None), wire.GATE_N)
+    row = wire.run_log_row(*args, vehicle_tag='prototype')
+    assert len(row) == len(wire.RUN_LOG_COLUMNS)
+    assert row[wire.RUN_LOG_COLUMNS.index('vehicle_tag')] == 'prototype'
+
+
+def test_vehicle_tag_defaults_to_empty_not_a_guess():
+    """没接线时留**空串**，不填 'unknown'、不填 'prev'。
+
+    空串一眼就是"这一版程序没把它接上"；而任何具体默认值都会伪装成"记过了"，
+    事后无法与真记了的区分——那正是取消档案握手后唯一不能发生的事
+    （v1.0 §4.1：认不出车，"横向数据不得跨车引用"这条规则就无法执行）。
+    """
+    res = {'status': 'dual', 'confidence': 0.9, 'lateral_px': 3.0}
+    args = (1.0, 7, 'AUTO', res, 0.01, 0.02, 0.07, 0.07, 0.0, 12.0, None,
+            ({}, 0, None), wire.GATE_N)
+    row = wire.run_log_row(*args)
+    assert row[wire.RUN_LOG_COLUMNS.index('vehicle_tag')] == ''

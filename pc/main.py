@@ -220,8 +220,9 @@ def main():
     cfg_profile = vehicle_profile.load()
     permit = cfg_profile['permit']
     profile_id = cfg_profile['profile_id']
-    print('vehicle profile: id=%d permit=%d file=%s' % (
-        profile_id, permit, os.path.basename(cfg_profile['path'])))
+    vehicle_tag = cfg_profile['log_tag']      # 台账 Pc-10：车型列，取消握手后的唯一凭据
+    print('vehicle profile: id=%d permit=%d tag=%s file=%s' % (
+        profile_id, permit, vehicle_tag, os.path.basename(cfg_profile['path'])))
 
     from pc.perception import Perception
     per = Perception()
@@ -620,7 +621,8 @@ def main():
                 l1_events=l1_events,           # I-6：降级事件落到时间轴上
                 tx_frames=wire.tx_frames_text(tx_this_beat),   # T2：这一拍线上真有什么
                 nav_flags=(str(tele_gear) if sm.state == 'TELEOP' else ''),
-                beat_gap_s='%.3f' % beat_gap))
+                beat_gap_s='%.3f' % beat_gap,
+                vehicle_tag=vehicle_tag))
             n += 1
             if n % 20 == 0:
                 print('[%d] %s lat=%.3fm vL=%.2f vR=%.2f tool=%.1fmm %.0fms%s' % (

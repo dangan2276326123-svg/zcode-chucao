@@ -124,6 +124,14 @@ RUN_LOG_COLUMNS = [
     # 停拍期间一行都不写，所以这一列是**停拍之后那一行**才变大；它把"靠 t 差分
     # 反推"升成"表里的记录"。回放/第一拍留空，不写 0（0 会读成"节拍完美"）。
     'beat_gap_s',
+    # ---- 台账 Pc-10（2026-10-15）：这一行的数据属于哪台车 ----
+    # 仍然追加在末尾，跟着上面那条位置规矩走。加它的理由不是补功能，是**补回一件
+    # 被取消的东西**：作者同日裁定取消 E3 的车辆档案握手（`MODE(0x20)`／`PROFILE_ID`／
+    # `REJ_PROFILE`），但 v1.0 §4.1 那条"凡横向指标不得跨车引用"仍然成立——上代车
+    # 轮距 301 cm、样机 191 cm，两批横向数据一旦混在同一张 CSV 里就再也分不开。
+    # 握手砍掉之后，这一列是唯一的凭据，所以它的值来自 config（PC 侧），
+    # 不依赖固件回传，也不参与任何准入判定。
+    'vehicle_tag',
 ]
 
 # HUD 用的 ASCII 短码（fix round 1 I-4）。cv2.putText 画不出 CJK——
@@ -245,7 +253,8 @@ def tx_frames_text(ftypes):
 def run_log_row(t_rel, fid, state, res, lat_m, lat_comp_m, vl, vr, tool_mm,
                 latency_ms, st, feed_snapshot, permit,
                 rx_good='', rx_bad='', recv_timeouts='', link_drops='',
-                l1_events=0, tx_frames='-', nav_flags='', beat_gap_s=''):
+                l1_events=0, tx_frames='-', nav_flags='', beat_gap_s='',
+                vehicle_tag=''):
     """按 RUN_LOG_COLUMNS 的顺序拼一行。st 可以是 None（无 STATUS）或 v1 字典。
 
     l1_events 是**累计的 L1 降级事件数**（spec §5.2，I-6），由调用方维护，
@@ -256,6 +265,13 @@ def run_log_row(t_rel, fid, state, res, lat_m, lat_comp_m, vl, vr, tool_mm,
     `tx_frames` 是这一拍**真的写进 socket** 的帧型串（T2），由调用方从 `send()`
     的出口收集；缺省 `'-'` = "这一拍线上一个字节都没有"，含义与上面 `l1_events`
     那句一样：不能拿空串当"没接线"，也不能拿它当"发过了"。
+
+    `vehicle_tag` 是台账 Pc-10 那一列：这一行的数据属于哪台车（`prev` = 上代调试
+    平台 3.25 m，`prototype` = 样机 2.15 m）。值来自 `config/vehicle_profile.yaml`
+    的 `log_tag`，由调用方读一次传进来，**每行都写同一个值**——它的用途是事后与
+    `run_log.csv` 一起归档时认车，不是运行时判定。这里的缺省 `''` 表示"这一版程序
+    没把它接上"，与"接上了但车没标"（那种情况 `load()` 会直接报错、走不到这里）
+    是两回事，所以留空串而不是留 `unknown`：空串一眼就是漏接线。
     """
     st = st or {}
     _feed, _seq, age = feed_snapshot if feed_snapshot else ({}, 0, None)
@@ -283,4 +299,5 @@ def run_log_row(t_rel, fid, state, res, lat_m, lat_comp_m, vl, vr, tool_mm,
         tx_frames,
         nav_flags,
         beat_gap_s,
+        vehicle_tag,
     ]

@@ -19,6 +19,19 @@ DEFAULT_FILE = os.path.join(REPO_ROOT, 'config', 'vehicle_profile.yaml')
 
 
 def _write(tmp_path, text):
+    """写一个临时档案。**注意它会补 `log_tag`**：台账 Pc-10（2026-10-15）之后
+    `log_tag` 是必填项，而这些夹具关心的是 profile_id／permit，不该被新字段挡住。
+    要测"log_tag 缺失/非法"就绕开这个助手、直接 `p.write_text(...)`，
+    否则"补上了默认标记"会被误读成"log_tag 可选"。"""
+    if 'log_tag' not in text:
+        text = text.rstrip('\n') + '\nlog_tag: test\n'
+    p = tmp_path / 'vehicle_profile.yaml'
+    p.write_text(text, encoding='utf-8')
+    return str(p)
+
+
+def _write_raw(tmp_path, text):
+    """原样写，不补任何东西——专供 log_tag 自己的用例。"""
     p = tmp_path / 'vehicle_profile.yaml'
     p.write_text(text, encoding='utf-8')
     return str(p)
@@ -121,11 +134,18 @@ def test_non_utf8_file_raises_value_error(tmp_path):
         VP.load(str(p))
 
 
-def test_returns_exactly_the_three_contract_keys(tmp_path):
+def test_returns_exactly_the_contract_keys(tmp_path):
+    """加载器往外给的键就这四个，一个不多一个不少。
+
+    2026-10-15 台账 Pc-10 把这一族从三个加到四个（`log_tag`）。这条断言的价值正在
+    于"恰好"：将来谁往档案里加第五个键而不改调用方，这里会红，而不是让某个调用方
+    静默拿到一个它没打算处理的字段。
+    """
     cfg = VP.load(_write(tmp_path, 'profile_id: 2\npermit: gate_f\n'))
-    assert sorted(cfg) == ['path', 'permit', 'profile_id']
+    assert sorted(cfg) == ['log_tag', 'path', 'permit', 'profile_id']
     assert isinstance(cfg['profile_id'], int)
     assert isinstance(cfg['permit'], int)
+    assert isinstance(cfg['log_tag'], str) and cfg['log_tag']
     assert isinstance(cfg['path'], str) and os.path.isabs(cfg['path'])
     # 相对路径进来也必须绝对出去（Task 6 要把这个路径写进日志取证）。
     assert os.path.isabs(VP.load(VP.DEFAULT_PATH)['path'])
@@ -166,3 +186,59 @@ def test_empty_path_does_not_fall_back_to_default(tmp_path):
         VP.load('')
     # 默认值仍然只在 None 时生效（别把修法做过头）
     assert VP.load(None)['profile_id'] in (P.PROFILE_PREV, P.PROFILE_REAL)
+
+
+# ---------- 台账 Pc-10：log_tag ----------
+# 作者 2026-10-15 裁定取消 E3 的车辆档案握手（`MODE(0x20)`／`PROFILE_ID`／`REJ_PROFILE`），
+# 但 v1.0 §4.1 那条"凡横向指标不得跨车引用"仍然成立——上代车 3.25 m／轮距 301，
+# 样机 2.15 m／轮距 191，两批横向数据混在同一张 CSV 里就再也分不开。
+# 握手没了之后 `run_log.csv` 的车型列是唯一凭据，所以它跟 permit 一样 fail-closed：
+# 读不到就停，**不回默认车型**。一个静默的默认标记会造出"每行都有车型、其实全是猜的"
+# 的表——比缺这一列更糟，因为事后没人能把"猜的"和"记了的"分开。
+#
+# 这里的 yaml 一律用 chr(10) 拼：本文件故意不写反斜杠转义，
+# 免得读的人以为换行是内容的一部分（而被测的字符集规则恰恰禁掉空格与逗号）。
+
+def _yaml(*lines):
+    return chr(10).join(lines) + chr(10)
+
+
+def test_log_tag_is_required(tmp_path):
+    with pytest.raises(ValueError):
+        VP.load(_write_raw(tmp_path, _yaml('profile_id: 1', 'permit: gate_n')))
+
+
+def test_log_tag_empty_raises(tmp_path):
+    with pytest.raises(ValueError):
+        VP.load(_write_raw(tmp_path,
+                           _yaml('profile_id: 1', 'permit: gate_n', 'log_tag:')))
+
+
+@pytest.mark.parametrize('bad', [
+    'prev,prototype',      # 逗号会写坏 CSV：一行变两列
+    'a b',                 # 空格同上，读日志的人还会把它切成两段
+    'proto"1"',            # 引号在 CSV 里是转义字符
+    '-prev',               # 首字符非字母数字，容易被下游当参数解析
+    'x' * 30,              # 过长：这一列每行都写，表会被它撑爆
+])
+def test_log_tag_charset_is_enforced(bad, tmp_path):
+    with pytest.raises(ValueError):
+        VP.load(_write_raw(tmp_path,
+                           _yaml('profile_id: 1', 'permit: gate_n',
+                                 'log_tag: ' + bad)))
+
+
+def test_log_tag_survives_comments_and_padding(tmp_path):
+    """注释与空格是 yaml 手写的常态，不能因为它们就把合法标记判成非法。"""
+    p = _write_raw(tmp_path, _yaml('# 上一代车调的',
+                                   'profile_id: 1',
+                                   'permit: gate_n',
+                                   '  log_tag:   prev   # 车型标记'))
+    assert VP.load(p)['log_tag'] == 'prev'
+
+
+def test_repo_default_file_carries_a_log_tag():
+    """仓里那份默认档案必须自带标记。它一缺，`pc/main.py` 直接开不起来——
+    这条比"报错文案写得好"更早把问题挡在启动阶段。"""
+    cfg = VP.load(DEFAULT_FILE)
+    assert cfg['log_tag'], 'config/vehicle_profile.yaml 的 log_tag 不能为空'
