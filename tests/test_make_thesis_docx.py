@@ -222,3 +222,50 @@ def test_seam_between_cover_and_spine_is_page_broken():
     dropping that box would pull the 书脊 page up onto the cover."""
     xml, tally = _blocks()
     assert 'w:type="page"' in xml or tally['page_breaks_added'] >= 1
+
+
+# ------------------------------------------------------------------ figures
+def test_figure_map_splits_assets_from_placeholders(tmp_path):
+    """清单里 File 有值 -> 嵌图；写 em-dash -> 留占位。
+
+    这张表是论文插图的唯一事实源，所以两种状态必须分得开：
+    「登记了但文件不在」是清单在说谎，不能和「还没做」混成同一个计数。
+    """
+    man = tmp_path / 'figures_manifest.md'
+    bt = chr(96)                     # 反引号，清单里用它包文件名与标记
+    rows = [
+        (u'图3-2', bt + 'a.png' + bt, u'训练指标三段走势'),
+        (u'图2-1', u'—', u'系统总体架构图'),
+    ]
+    man.write_text(
+        u'# m' + chr(10) + chr(10)
+        + u'| ID | File | 正文里的占位标记 | Related Chapter | Source | Status | Notes |'
+        + chr(10)
+        + u'| --- | --- | --- | --- | --- | --- | --- |' + chr(10)
+        + chr(10).join(u'| %s | %s | %s[[FIG:%s]]%s | ch3 | x | ok | y |'
+                       % (r[0], r[1], bt, r[2], bt) for r in rows) + chr(10),
+        encoding='utf-8')
+    m = M.load_figure_map(str(man))
+    assert m[u'训练指标三段走势'] == 'a.png'
+    assert m[u'系统总体架构图'] is None
+
+
+def test_placeholder_is_kept_when_no_asset(monkeypatch):
+    """没有资产时标记必须留在正文里，不能静默消失——标记一丢，
+    「这张图还没做」这件事就从正文和清单两边同时蒸发了。"""
+    monkeypatch.setattr(M, 'FIGURE_MAP', {u'某图': None})
+    c = M.Counter()
+    p = FakePara()
+    M.emit(u'见图[[FIG:某图]]。', p, c)
+    assert c['fig_placeholder'] == 1
+    assert u'待补图' in p.plain()
+
+
+def test_registered_but_missing_file_is_counted_separately(monkeypatch, tmp_path):
+    """清单登记了文件名、盘上却没有 -> 单独计数，不与「还没做」合并。"""
+    monkeypatch.setattr(M, 'FIGURE_MAP', {u'某图': 'no_such_file_anywhere.png'})
+    monkeypatch.setattr(M, 'FIGDIR', str(tmp_path))   # 空目录：登记了但没有文件
+    c = M.Counter()
+    M.emit(u'[[FIG:某图]]', FakePara(), c)
+    assert c['fig_missing_file'] == 1
+    assert c['fig_placeholder'] == 0

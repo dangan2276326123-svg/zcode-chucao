@@ -60,6 +60,7 @@ import zipfile
 
 import docx
 from docx.enum.table import WD_TABLE_ALIGNMENT
+from docx.shared import Cm            # 插图宽度
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX
 from docx.oxml.ns import qn
 from docx.shared import Pt
@@ -70,6 +71,11 @@ CHAPTERS = os.path.join(THESIS, '03_chapters')
 OUTDIR = os.path.join(THESIS, '10_output')
 PREV_DOCX = os.path.join(OUTDIR, 'thesis_draft_v14.docx')
 OUT_DOCX = os.path.join(OUTDIR, 'thesis_draft_v15_clean.docx')
+FIGDIR = os.path.join(THESIS, '04_figures')
+FIGMAN = os.path.join(FIGDIR, 'figures_manifest.md')
+# 占位标记 -> 图片文件名。由 load_figure_map() 从清单读入；
+# 清单是论文插图的唯一事实源，代码里不再第二处记文件名。
+FIGURE_MAP = {}
 
 SOURCES = ['abstract_draft.md'] + ['ch%02d_draft.md' % i for i in range(1, 7)]
 
@@ -149,7 +155,8 @@ MARKS = [
 ]
 
 TALLY_KEYS = ('para', 'h1', 'h2', 'h3', 'h4', 'table', 'eq', 'sym_ok',
-              'sym_raw', 'fig', 'ref_marker', 'todo', 'ref_entry')
+              'sym_raw', 'fig', 'fig_embedded', 'fig_placeholder',
+              'fig_missing_file', 'ref_marker', 'todo', 'ref_entry')
 
 
 class Counter(dict):
@@ -208,9 +215,24 @@ def emit(text, p, c):
                 _flag(p, '【待补引文：%s】' % re.sub(r'\s+', ' ', inner).strip(),
                       WD_COLOR_INDEX.GRAY_25)
         elif kind == 'fig':
+            key = inner.strip()
             c['fig'] += 1
-            if p is not None:
-                _flag(p, '〔待补图：%s〕' % inner.strip(), WD_COLOR_INDEX.YELLOW)
+            fname = FIGURE_MAP.get(key, 'MISSING')
+            path = os.path.join(FIGDIR, fname) if fname else None
+            if fname and os.path.exists(path):
+                c['fig_embedded'] += 1
+                if p is not None:
+                    run = p.add_run()
+                    run.add_picture(path, width=Cm(figure_size_cm(fname)))
+                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            else:
+                # 没有资产就留可见占位，绝不静默丢掉标记：标记丢了，"这张图还没做"
+                # 这件事就从正文和清单两边同时消失了。清单里登记了却没找到文件，
+                # 是一种比"没登记"更糟的状态（说明清单在说谎），所以单独计数。
+                c['fig_missing_file' if fname not in (None, 'MISSING')
+                  else 'fig_placeholder'] += 1
+                if p is not None:
+                    _flag(p, u'〔待补图：%s〕' % key, WD_COLOR_INDEX.YELLOW)
         elif kind == 'todo':
             c['todo'] += 1
             if p is not None:
@@ -379,6 +401,45 @@ def collect_symbols():
     return seen
 
 
+def load_figure_map(path=FIGMAN):
+    """Read `04_figures/figures_manifest.md` into {占位标记: 图片文件名}.
+
+    The manifest is the single source for "which figures exist and which are still
+    placeholders", so the answer to 'how many figures are missing' is read from one
+    table rather than counted out of the Word file. Rows whose File cell is an
+    em-dash (no asset yet) are kept in the map with a None value: the generator then
+    writes the visible 〔待补图〕 slot instead of silently dropping the marker.
+    """
+    mapping = {}
+    if not os.path.exists(path):
+        return mapping
+    with io.open(path, encoding='utf-8') as fh:
+        for line in fh:
+            if not line.strip().startswith('|'):
+                continue
+            cells = [c.strip() for c in line.strip().strip('|').split('|')]
+            if len(cells) < 3 or cells[0] in ('ID', '---') or set(cells[0]) <= set('-: '):
+                continue
+            m = re.search(r'\[\[FIG:([^\]]*)\]\]', cells[2])
+            if not m:
+                continue
+            fname = cells[1].strip('`')
+            mapping[m.group(1)] = fname if fname and fname != u'\u2014' else None
+    return mapping
+
+
+def figure_size_cm(name, width_cm=14.0, tall_cm=9.0):
+    """Portrait shots (the board photos) get a narrow column so they do not eat
+    a whole page; everything else goes full text width."""
+    try:
+        from PIL import Image
+        with Image.open(os.path.join(FIGDIR, name)) as im:
+            w, h = im.size
+        return tall_cm if h > w * 1.3 else width_cm
+    except Exception:
+        return width_cm
+
+
 def _strip_field_machinery(el, tally):
     """Remove Word field machinery from a copied block, keeping what it shows.
 
@@ -537,6 +598,9 @@ def build(check_only=False, cover='academic'):
             _fm_stats['links_dropped'] = fm_tally['external_links_dropped']
             _fm_stats['breaks_added'] = fm_tally['page_breaks_added']
 
+    global FIGURE_MAP
+    FIGURE_MAP = load_figure_map()
+
     c = Counter()
     r = Renderer(doc, c, check_only=check_only)
 
@@ -612,6 +676,7 @@ def build(check_only=False, cover='academic'):
 
 
 # ------------------------------------------------------------------- verify
+# a:blip 与 w:pict 是图片/图形，不是域；分开列才不会被读成「还有域没清」。
 FIELD_TAGS = ('w:fldChar', 'w:instrText', 'w:pict', 'w:object', 'a:blip',
               'w:hyperlink', 'w:altChunk', 'w:sdt')
 FIELD_KINDS = ('MACROBUTTON', 'INCLUDEPICTURE', 'PAGEREF', 'SEQ', 'TOC', 'REF')
@@ -652,7 +717,10 @@ def main():
         print('  body: paragraphs %d, tables %d, package parts %d'
               % (paras, tables, parts))
         for key in sorted(counts):
-            print('  %-18s %d' % (key, counts[key]))
+            note = ''
+            if key in ('a:blip', 'w:pict'):
+                note = '   <- 图片/图形，不是域'
+            print('  %-18s %d%s' % (key, counts[key], note))
         print('  header/footer parts %d, their fldChar %d (template PAGE / '
               'STYLEREF, not body fields)' % (hf_parts, hf_fields))
         return
@@ -670,7 +738,10 @@ def main():
     print('formulas    : %d kept raw (entered by hand in Word)' % c['eq'])
     print('symbols     : %d converted, %d flagged as not safely convertible'
           % (c['sym_ok'], c['sym_raw']))
-    print('placeholders: fig %d, ref %d, 待补充 %d'
+    print('figures     : %d embedded, %d placeholder (no asset yet), '
+          '%d registered but file missing'
+          % (c['fig_embedded'], c['fig_placeholder'], c['fig_missing_file']))
+    print('placeholders: fig markers %d, ref %d, 待补充 %d'
           % (c['fig'], c['ref_marker'], c['todo']))
     print('references  : %d entries carried over' % nrefs)
 
