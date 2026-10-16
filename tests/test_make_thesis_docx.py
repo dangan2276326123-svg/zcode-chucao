@@ -269,3 +269,104 @@ def test_registered_but_missing_file_is_counted_separately(monkeypatch, tmp_path
     M.emit(u'[[FIG:某图]]', FakePara(), c)
     assert c['fig_missing_file'] == 1
     assert c['fig_placeholder'] == 0
+
+
+def test_embedded_figure_paragraph_drops_exact_line_spacing(tmp_path, monkeypatch):
+    """嵌图那一段必须离开"固定值"行距。
+
+    这是 v15 导出 PDF 才看见的缺陷：正文样式是固定值行距，Word 会把嵌入图片裁到
+    一行高——两张 9×16 cm 的板卡照片在页面上各只推进 36 pt，图块还互相重叠。
+    计数、`--verify` 的域读数、`Fields.Count` 全都看不出这件事，
+    所以这条测试按 XML 判：段间距的 lineRule 不许还是 exact。
+    """
+    from docx import Document
+    from docx.enum.text import WD_LINE_SPACING
+    from docx.oxml.ns import qn
+    from docx.shared import Pt
+    from PIL import Image
+
+    png = tmp_path / 'f.png'
+    Image.new('RGB', (600, 200), 'white').save(str(png))
+    monkeypatch.setattr(M, 'FIGURE_MAP', {u'某图': 'f.png'})
+    monkeypatch.setattr(M, 'FIGDIR', str(tmp_path))
+
+    doc = Document()
+    p = doc.add_paragraph()
+    p.paragraph_format.line_spacing = Pt(12)          # 模板正文样式就是这样
+    assert p.paragraph_format.line_spacing_rule == WD_LINE_SPACING.EXACTLY, \
+        '这条测试的前提要先成立：先做出固定值行距，才谈得上被改掉'
+    # 校模板的缩进是**按字符**给的（样式里 w:firstLineChars="200" 有 4 处），
+    # 只清 w:firstLine 顶不掉它——第一版就是这么漏的，图仍被推右半个字。
+    p._p.get_or_add_pPr().get_or_add_ind().set(qn('w:firstLineChars'), '200')
+
+    c = M.Counter()
+    M.emit(u'[[FIG:某图]]', p, c)
+    assert c['fig_embedded'] == 1
+
+    spacing = p._p.get_or_add_pPr().find(qn('w:spacing'))
+    assert spacing is not None and spacing.get(qn('w:lineRule')) == 'auto', \
+        '图段仍是固定值行距，Word 会把图片压成一行高'
+    assert p.paragraph_format.line_spacing == 1
+    ind = p._p.get_or_add_pPr().find(qn('w:ind'))
+    assert p.paragraph_format.first_line_indent.cm == 0, \
+        '图段带首行缩进会把居中的图推偏半个字'
+    assert ind.get(qn('w:firstLineChars')) == '0', \
+        '字符单位的缩进没清：w:firstLine="0" 顶不过 w:firstLineChars'
+
+
+# ---------------------------------------------------------------- page layout
+def test_level_one_heading_starts_a_new_page():
+    """校模板的"标题 1"没有段前分页（styles.xml 里 pageBreakBefore 出现 0 次），
+    所以章标题会接在上一章末尾——学校格式要求每章另起一页。"""
+    from docx import Document
+    doc = Document()
+    r = M.Renderer(doc, M.Counter())
+    r.heading(1, u'第 1 章 绪论')
+    r.heading(2, u'1.1 研究背景')
+    assert doc.paragraphs[-2].paragraph_format.page_break_before is True
+    assert not doc.paragraphs[-1].paragraph_format.page_break_before, \
+        '二级标题不该另起一页'
+
+
+needs_prev = pytest.mark.skipif(
+    not os.path.exists(M.PREV_DOCX), reason='previous docx not on this machine')
+
+
+@needs_template
+@needs_prev
+def test_body_section_carries_the_running_header_not_the_author_bio_one(tmp_path,
+                                                                       monkeypatch):
+    """整份生成一次，验正文那一节的 default 页眉指向"跑动标题"部件。
+
+    这条只能整份建：症状来自"沿用模板最后一节的页面设置"，而模板最后一节是作者简介
+    ——它的 default 页眉写死"作者简介"和"博/硕士"待选文本，真正的正文页眉
+    （右格 STYLEREF 标题 1）挂在 even 上，而本包没开奇偶页，于是每一页右上角都是
+    "作者简介"。域计数、Fields.Count、嵌图计数全都看不出这件事。
+    """
+    import re
+
+    from docx import Document
+    from docx.oxml.ns import qn
+
+    monkeypatch.setattr(M, 'OUTDIR', str(tmp_path))     # 绝不往 thesis_cau 里写
+    monkeypatch.setattr(M, 'OUT_DOCX', str(tmp_path / 'built.docx'))
+    c, _ = M.build(check_only=False)
+    assert c['hdr_repointed'] == 1, '没找到可改向的跑动页眉，改动就没生效'
+
+    d = Document(str(tmp_path / 'built.docx'))
+    sect = d.sections[-1]
+    rids = [r.get(qn('r:id')) for r in sect._sectPr.findall(qn('w:headerReference'))
+            if (r.get(qn('w:type')) or 'default') == 'default']
+    assert len(rids) == 1, 'default 页眉引用应当只剩一条：%s' % rids
+    blob = d.part.related_parts[rids[0]].blob
+    assert b'STYLEREF' in blob, '正文页眉没指向跑动标题部件'
+    assert u'作者简介'.encode('utf-8') not in blob, '页眉仍是作者简介那一份'
+
+    # 页脚这一路故意**不**接进 build()：正文与前置部分同属一节，直接挂 PAGE 会让
+    # 摘要页沿用模板的 upperRoman 继续排。这里只验工具函数本身能处理
+    # "本节没有 default 页脚引用"那种形状（补一条并指向 PAGE 部件）。
+    assert M.repoint_running_header(d, 'w:footerReference',
+                                    re.compile(rb'\bPAGE\b')) == 1
+    rids = [r.get(qn('r:id')) for r in sect._sectPr.findall(qn('w:footerReference'))
+            if (r.get(qn('w:type')) or 'default') == 'default']
+    assert len(rids) == 1 and b'PAGE' in d.part.related_parts[rids[0]].blob

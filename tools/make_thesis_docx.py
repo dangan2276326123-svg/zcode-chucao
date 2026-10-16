@@ -63,6 +63,7 @@ from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.shared import Cm            # 插图宽度
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX
 from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
 from docx.shared import Pt
 
 THESIS = os.environ.get('THESIS_DIR') or r'D:\JetBrains\chucao_prj\thesis_cau'
@@ -225,6 +226,21 @@ def emit(text, p, c):
                     run = p.add_run()
                     run.add_picture(path, width=Cm(figure_size_cm(fname)))
                     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    # 正文样式用的是"固定值"行距，嵌入图片会被裁成一行高——v15 第一次
+                    # 导出 PDF 实测：两张 9×16 cm 的板卡照片在页面上各只推进 36 pt
+                    # （图块起点 33.48 与 69.48 pt），而且互相重叠。图所在这一段必须
+                    # 改回单倍行距，段前段后各留 6 pt 让图不贴着正文。
+                    p.paragraph_format.line_spacing = 1
+                    p.paragraph_format.space_before = Pt(6)
+                    p.paragraph_format.space_after = Pt(6)
+                    # 正文样式还带首行缩进，居中的图会被它推右半个字（PDF 实测图块
+                    # 中心 315.0 pt，版心中心 304.7 pt）。而且缩进是**按字符**给的
+                    # （校模板样式里 `w:firstLineChars="200"` 有 4 处），只写
+                    # `w:firstLine="0"` 顶不掉它——模板自己的"无缩进"样式都是两个属性
+                    # 一起写 0，这里照它做。
+                    p.paragraph_format.first_line_indent = Cm(0)
+                    p._p.get_or_add_pPr().get_or_add_ind().set(
+                        qn('w:firstLineChars'), '0')
             else:
                 # 没有资产就留可见占位，绝不静默丢掉标记：标记丢了，"这张图还没做"
                 # 这件事就从正文和清单两边同时消失了。清单里登记了却没找到文件，
@@ -265,7 +281,12 @@ class Renderer(object):
     def heading(self, level, text):
         self.c['h%d' % min(level, 4)] += 1
         if not self.check:
-            self.doc.add_heading(strip_marks(text), level=min(level, 4))
+            p = self.doc.add_heading(strip_marks(text), level=min(level, 4))
+            if level == 1:
+                # 校模板的"标题 1"里没有段前分页（当场查 styles.xml：
+                # pageBreakBefore 出现 0 次），章标题会接在上一章末尾。学校格式
+                # 要求每章另起一页，所以这里逐段加。
+                p.paragraph_format.page_break_before = True
 
     def caption(self, text):
         p = self.para(align=WD_ALIGN_PARAGRAPH.CENTER, tight=True)
@@ -579,6 +600,40 @@ def extract_references(path):
 
 
 # -------------------------------------------------------------------- build
+def repoint_running_header(doc, tag, needle):
+    """把正文那一节的 default 页眉/页脚改指向模板里"跑动标题"那一份部件。
+
+    为什么需要：产物沿用的是校模板**最后一节**的页面设置，而模板最后一节是"作者简介"
+    ——它的 default 页眉里写死了"作者简介"四个字和"博/硕士"那个待选文本，真正的正文
+    页眉（左"中国农业大学硕士学位论文"、右 STYLEREF 标题 1）挂在 **even** 上。
+    本包没开奇偶页（settings.xml 里没有 evenAndOddHeaders），所以 Word 永远只用
+    default，每一页就打上了"作者简介"。这里按部件内容找，不按 rId 找——rId 每次生成都会变。
+
+    返回 1 表示改向成功，0 表示没找到可改向的部件（保持原样，不静默假装修好）。
+    """
+    sectPr = doc.sections[-1]._sectPr
+    parts = doc.part.related_parts
+    default = donor = None
+    for ref in sectPr.findall(qn(tag)):
+        rid = ref.get(qn('r:id'))
+        blob = getattr(parts.get(rid), 'blob', b'') or b''
+        if (ref.get(qn('w:type')) or 'default') == 'default':
+            default = ref
+        elif needle.search(blob):
+            donor = ref
+    if donor is None:
+        return 0
+    if default is None:
+        # 本节根本没有 default 引用（页脚就是这种）：补一个，指向 donor。
+        # headerReference/footerReference 在 sectPr 里排在最前，所以插到 0 位。
+        default = OxmlElement(tag)
+        default.set(qn('w:type'), 'default')
+        sectPr.insert(0, default)
+    default.set(qn('r:id'), donor.get(qn('r:id')))
+    sectPr.remove(donor)                    # 同一份部件挂两次没有意义
+    return 1
+
+
 def build(check_only=False, cover='academic'):
     doc = docx.Document(TEMPLATE)
     if not check_only:
@@ -669,6 +724,11 @@ def build(check_only=False, cover='academic'):
             run.font.size = Pt(9)
 
     if not check_only:
+        # 页眉改向：不修的话每一页右上角都是"作者简介"（理由见函数 docstring）。
+        # 页脚不一起改：正文与前置部分现在同属一节，直接挂 PAGE 会让摘要页从
+        # 模板继承的 upperRoman 继续排，页码格式反而更错；等分节定稿一并处理。
+        n = repoint_running_header(doc, 'w:headerReference', re.compile(rb'STYLEREF'))
+        c['hdr_repointed'] = n
         if not os.path.isdir(OUTDIR):
             os.makedirs(OUTDIR)
         doc.save(OUT_DOCX)
@@ -741,9 +801,16 @@ def main():
     print('figures     : %d embedded, %d placeholder (no asset yet), '
           '%d registered but file missing'
           % (c['fig_embedded'], c['fig_placeholder'], c['fig_missing_file']))
-    print('placeholders: fig markers %d, ref %d, 待补充 %d'
+    # 标签用 ASCII：这一行要被人复制进版本清单，而控制台编码（本机 cp936）会把
+    # 中文标签打成问号——读数是对的，标签却不可读。
+    print('placeholders: fig markers %d, ref %d, todo %d'
           % (c['fig'], c['ref_marker'], c['todo']))
     print('references  : %d entries carried over' % nrefs)
+    # 页眉改向是"写了才算做了"的那类事，所以把当场结果打出来，不让人靠读代码推断。
+    # check 模式不写文件也不改页眉，这里如实报 0。
+    print('running hdr : %d body-section header reference(s) repointed'
+          ' (0 in --check: nothing is written)'
+          % c.get('hdr_repointed', 0))
 
 
 if __name__ == '__main__':
