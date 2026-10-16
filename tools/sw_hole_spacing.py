@@ -45,7 +45,7 @@ def features(path):
         if etype != "CYLINDRICAL_SURFACE":
             continue
         r = last_number(args)
-        if r is None or not (0.4 < r < 200):
+        if r is None or not (0.4 < r < 400):
             continue
         loc = None
         for ref in AXIS_REF.findall(args):
