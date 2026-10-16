@@ -13,15 +13,24 @@ import os
 import re
 import sys
 
-RECORD = re.compile(r"^\s*#(\d+)\s*=\s*([A-Z0-9_]+)\s*\((.*)\)\s*;\s*$")
+RECORD = re.compile(r"^\s*#(\d+)\s*=\s*([A-Z0-9_]+)\s*\((.*)\)\s*$")
 TRIPLE = re.compile(r"\(\s*([-\d.eE+]+)\s*,\s*([-\d.eE+]+)\s*,\s*([-\d.eE+]+)\s*\)")
 REF = re.compile(r"#(\d+)")
 
 
 def load(path):
+    """Split the DATA section on ';' instead of by line.
+
+    SolidWorks wraps long records across lines, so a line-based reader silently drops
+    entities - it is what made a real 250x50x12 clamp read back as "0 points".
+    """
+    text = io.open(path, "r", encoding="utf-8", errors="replace").read()
+    if "DATA;" in text:
+        text = text.split("DATA;", 1)[1].split("ENDSEC;", 1)[0]
     entities = {}
-    for line in io.open(path, "r", encoding="utf-8", errors="replace"):
-        m = RECORD.match(line)
+    for chunk in text.split(";"):
+        c = " ".join(chunk.split())
+        m = RECORD.match("#" + c) if not c.startswith("#") else RECORD.match(c)
         if m:
             entities[int(m.group(1))] = (m.group(2), m.group(3))
     return entities
