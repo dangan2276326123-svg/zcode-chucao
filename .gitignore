@@ -14,3 +14,6 @@ firmware/大车proj/大车/OBJ/
 *.uvguix.*
 # 组会 deck 的逐页渲染 QA 中间产物（export_png.ps1 可再生，2026-10-12 定）
 docs/组会汇报_*/render_qa/
+
+# SolidWorks COM 导出的 STEP 副本与几何日志（tools/sw_export_step.py 可再生，2026-10-16 定）
+cad_work/
