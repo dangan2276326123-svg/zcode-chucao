@@ -152,13 +152,17 @@ MARKS = [
     (re.compile(r'\[\[SYM:(.*?)\]\]', re.S), 'sym'),
     (re.compile(r'\[\[REF:(.*?)\]\]', re.S), 'ref'),
     (re.compile(r'\[\[FIG:(.*?)\]\]', re.S), 'fig'),
-    (re.compile(r'<待补充[^\n]*?>', re.S), 'todo'),
+    # 清零清单不只一种关键词：正文里除 `<待补充：…>` 外还有 `<待核实：…>`、
+    # `<待登记：…>`、`<待实测：…>`。原先只认"待补充"，那几处就以普通文字落纸、
+    # 既不高亮也不计数——清单少报，比格式不好看更糟。
+    (re.compile(r'<待[^\n<>]{0,200}>', re.S), 'todo'),
     (re.compile(r'\*\*(.+?)\*\*', re.S), 'bold'),
 ]
 
 TALLY_KEYS = ('para', 'h1', 'h2', 'h3', 'h4', 'table', 'eq', 'sym_ok',
               'sym_raw', 'fig', 'fig_embedded', 'fig_placeholder',
-              'fig_missing_file', 'ref_marker', 'todo', 'ref_entry')
+              'fig_missing_file', 'ref_marker', 'ref_num', 'ref_pending',
+              'todo', 'ref_entry')
 
 
 class Counter(dict):
@@ -213,9 +217,19 @@ def emit(text, p, c):
                     run.font.highlight_color = WD_COLOR_INDEX.GRAY_25
         elif kind == 'ref':
             c['ref_marker'] += 1
-            if p is not None:
-                _flag(p, '【待补引文：%s】' % re.sub(r'\s+', ' ', inner).strip(),
-                      WD_COLOR_INDEX.GRAY_25)
+            num = inner.strip()
+            if num.isdigit():
+                # 已定号的引文：GB/T 7714 顺序编码制在正文里是**上标 [n]**，
+                # 不是灰底占位。这一支是 2026-10-17 那次机械替换之后才会走到的。
+                c['ref_num'] += 1
+                if p is not None:
+                    run = p.add_run('[%s]' % num)
+                    run.font.superscript = True
+            else:
+                c['ref_pending'] += 1
+                if p is not None:
+                    _flag(p, '【待补引文：%s】' % re.sub(r'\s+', ' ', inner).strip(),
+                          WD_COLOR_INDEX.GRAY_25)
         elif kind == 'fig':
             key = inner.strip()
             c['fig'] += 1
@@ -903,6 +917,9 @@ def main():
     # 中文标签打成问号——读数是对的，标签却不可读。
     print('placeholders: fig markers %d, ref %d, todo %d'
           % (c['fig'], c['ref_marker'], c['todo']))
+    # 引文分两栏报，是因为"还剩几处没定号"这件事不能藏在"41 处标记"这种混合计数里。
+    print('citations   : %d resolved [n] (superscript), %d still placeholder'
+          % (c['ref_num'], c['ref_pending']))
     print('references  : %d entries carried over' % nrefs)
     # 页眉改向是"写了才算做了"的那类事，所以把当场结果打出来，不让人靠读代码推断。
     # check 模式不写文件也不改页眉，这里如实报 0。

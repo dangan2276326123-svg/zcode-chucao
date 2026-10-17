@@ -52,6 +52,7 @@ class _Font(object):
         self.highlight_color = None
         self.size = None
         self.name = None
+        self.superscript = False
 
 
 class _Run(object):
@@ -94,6 +95,42 @@ def test_emit_keeps_every_payload_visible():
     assert r'\frac{a}{b}' in body
     assert '台架实测' in body and 'Zhang 2000' in body
     assert '见' in body and '。' in body
+
+
+def test_resolved_citation_becomes_a_superscript_number():
+    """[[REF:12]] 是**已定号**的引文：排成上标 [12]，不再进灰底占位那一桶。
+
+    两栏计数必须分开——"还剩几处没定号"不能藏在"41 处标记"这种混合读数里。
+    """
+    c = M.Counter()
+    p = FakePara()
+    M.emit('如文献[[REF:12]]所示。', p, c)
+    assert c['ref_marker'] == 1 and c['ref_num'] == 1 and c['ref_pending'] == 0
+    assert '[12]' in p.plain() and '待补引文' not in p.plain()
+    run = [r for r in p.runs if r.text == '[12]'][0]
+    assert run.font.superscript is True, '顺序编码制的引用标记是上标'
+    # 没定号的仍然走灰底占位，一条不许静默消失
+    c2 = M.Counter()
+    p2 = FakePara()
+    M.emit('如[[REF:KEYWORD_PLACEHOLDER: Someone 2020.]]所示。', p2, c2)
+    assert c2['ref_pending'] == 1 and c2['ref_num'] == 0
+    assert '待补引文' in p2.plain()
+
+
+def test_other_pending_markers_are_highlighted_too():
+    """清零清单不只 `<待补充>`：正文里还有 `<待核实>`、`<待登记>`、`<待实测>`。
+
+    原先只认"待补充"，那几处就以普通文字落纸——不高亮、也不进计数。
+    清单少报比格式不好看更糟，因为这份文档里的 `<待…>` 计数就是送审前的清零对象。
+    """
+    c = M.Counter()
+    p = FakePara()
+    M.emit(u'见<待核实：HRNet 文献>与<待登记：轮盘外径>与<待实测：X>。', p, c)
+    assert c['todo'] == 3, c['todo']
+    marked = [r for r in p.runs if r.text.startswith(u'<待')]
+    assert len(marked) == 3
+    assert all(r.font.highlight_color is not None for r in marked), \
+        '一处待办标记都不许以普通文字混过版面'
 
 
 def test_bold_mark_produces_a_bold_run_and_no_asterisks():
@@ -140,7 +177,7 @@ def test_tallies_match_the_real_chapter_sources():
     raw = {'todo': 0, 'ref': 0, 'eq': 0, 'fig': 0, 'sym': 0}
     for name in M.SOURCES:
         text = '\n'.join(M.read_source(name))
-        raw['todo'] += len(re.findall(r'<待补充', text))
+        raw['todo'] += len(re.findall(r'<待[^\n<>]{0,200}>', text, re.S))
         raw['ref'] += len(re.findall(r'\[\[REF:', text))
         raw['eq'] += len(re.findall(r'\[\[EQ:', text))
         raw['fig'] += len(re.findall(r'\[\[FIG:', text))
