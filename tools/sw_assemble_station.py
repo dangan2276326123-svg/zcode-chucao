@@ -71,8 +71,8 @@ def axis_at(fname, pt):
 # rocker would swing 98.7 deg with a reversed, near-dead-centre start. Both point at the
 # AC=140 assumption, which is the one number awaiting the author.
 A = (0.0, 0.0, 0.0)
-C = (140.0, 0.0, 0.0)
-D = (197.9, 0.0, -380.6)
+C = (285.0, 0.0, 0.0)          # photo-derived; admissible band is [244, 614]
+D = (205.3, 0.0, -376.7)
 E = D
 F = (D[0], 0.0, D[2] - 120.0)     # 铲刃 hangs below the tool post; 120 not yet measured
 G = (D[0] - 60.0, 0.0, F[2] - 40.0)
