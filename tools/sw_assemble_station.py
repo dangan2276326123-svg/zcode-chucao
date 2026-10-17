@@ -46,6 +46,21 @@ OUT = os.path.join("D:", os.sep + "ai work", "qoder", "cad_work", "cad_out")
 LOG = os.path.join(OUT, "assembly_log.json")
 M = 0.001
 
+HOLEMAP = json.load(io.open(os.path.join("D:", os.sep + "ai work", "qoder", "cad_work",
+                                         "hole_maps", "index.json"), encoding="utf-8"))
+AXES = {}
+for _rec in HOLEMAP:
+    for _h in _rec["holes"]:
+        if _h.get("axis"):
+            AXES[(_rec["part"].replace(".SLDPRT", ""), tuple(round(v, 1) for v in _h["c"]))] = _h["axis"]
+
+
+def axis_at(fname, pt):
+    """Pin-axis direction of a hole, as modelled in that part's own frame."""
+    key = (os.path.splitext(fname)[0], tuple(round(v, 1) for v in pt))
+    return AXES.get(key)
+
+
 # global pivots, mm (photo-derived; see §2G)
 A = (0.0, 0.0, 0.0)
 C = (107.0, 0.0, -264.0)
@@ -56,8 +71,11 @@ G = (0.0, 0.0, -560.0)
 
 # (file, base dir, local pivot pair in mm, global pair, tag)
 PLAN = [
-    ("电推杆.SLDPRT", SRC, ((-112.0, 0.0, -21.0), (25.0, 0.0, 408.0)), (A, D),
-     "local pivots read from its STEP phi10 holes"),
+    # ⑫(25,0,-21) and ⑬(25,0,408) share x=25, i.e. they are the coaxial working pair;
+    # ①(-112,0,-21) is the motor-side bracket hole. Using ①/⑬ before was a wrong-hole
+    # pick, not a measurement error - the span is 429 exactly as the part says.
+    ("电推杆.SLDPRT", SRC, ((25.0, 0.0, -21.0), (25.0, 0.0, 408.0)), (A, D),
+     "⑫⑬ = 429 (same x=25, coaxial pair); ① is a bracket hole, not a pivot"),
     ("连杆1.SLDPRT", SRC, ((-108.0, 0.0, 405.0), (-108.0, 0.0, 20.0)), (C, E),
      "D25<->D10 span 385; CE used 241 from the photo = LOWER BOUND, so this part is placed short"),
     ("吊耳_连杆2至刀柄1.SLDPRT", MISSING, ((0.0, 0.0, -18.0), (0.0, 0.0, 18.0)), (E, F),
@@ -85,10 +103,47 @@ PLAN = [
     ("吊耳1.SLDPRT", SRC, None, A, "位置未定（与电推杆上端 A 处共 φ24/φ10 孔型，待指认）"),
     ("中间杆.SLDPRT", SRC, None, (0.0, 0.0, -1070.0), "位置未定；与 中间杆吊耳1 孔型逐字相同，故成对"),
     ("中间杆吊耳1.SLDPRT", SRC, None, (0.0, 0.0, 0.0), "位置未定"),
-    ("连杆2.SLDPRT", SRC, None, (60.0, 40.0, -300.0), "位置未定：摆杆候选之一（铰距 352），与 连杆1 二选一"),
-    ("连杆3.SLDPRT", SRC, None, (0.0, 255.0, -350.0), "位置未定：判为横跨左右的横拉杆，Y 向 ±255 是占位"),
+    # 连杆2 ② is a phi10 (matches the phi10 pin family) and ① a phi20; 吊耳1 carries a
+    # phi10 with a phi24 counterbore, so 连杆2 ② -> 吊耳1 pin is the plausible传力 link
+    ("连杆2.SLDPRT", SRC, ((0.0, -30.0, 360.0), (0.0, 110.0, 20.0)), (D, F),
+     "推测: ②(phi10) 接 D 处销, ①(phi20) 向下接到刀柄1 的 F 区 - 待作者确认"),
+    # ② and ⑤ are both phi20 and 510.5 apart - the only same-diameter far pair in the set,
+    # which is what a cross-machine tie rod looks like; placed spanning Y about the centre
+    ("连杆3.SLDPRT", SRC, ((200.0, -60.0, 0.0), (705.0, 15.0, 0.0)), (E, E),
+     "推测: ②↔⑤ (φ20, 510) 为横跨左右的横拉杆；轴向按 Y 放置，具体两端接哪个孔待指认"),
     ("圆柱.SLDPRT", SRC, None, (0.0, 0.0, -721.0), "φ50×1442 轴料，归属未定（横梁/摆轴），此处按竖直放置占位"),
 ]
+
+
+def _norm(a):
+    n = math.sqrt(sum(x * x for x in a)) or 1.0
+    return [x / n for x in a]
+
+
+def _cross(a, b):
+    return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+
+
+def _dot(a, b):
+    return sum(x * y for x, y in zip(a, b))
+
+
+def frame_rotation(ax_l, ax_g, u_l, u_g):
+    """Full orientation: map the part's pin axis onto the global pin axis AND its
+    pivot-line onto the global pivot-line. Aligning only the pivot line is what left the
+    plates lying in inconsistent planes in the first render."""
+    e3l, e3g = _norm(ax_l), _norm(ax_g)
+    ul = [u_l[i] - e3l[i] * _dot(u_l, e3l) for i in range(3)]
+    ug = [u_g[i] - e3g[i] * _dot(u_g, e3g) for i in range(3)]
+    if max(abs(x) for x in ul) < 1e-6 or max(abs(x) for x in ug) < 1e-6:
+        return None
+    e1l, e1g = _norm(ul), _norm(ug)
+    e2l, e2g = _cross(e3l, e1l), _cross(e3g, e1g)
+    L = [e1l, e2l, e3l]           # rows: local basis
+    Gm = [e1g, e2g, e3g]          # rows: global basis
+    # R maps local coords to global: R = Gm^T * L  (both orthonormal, rows are basis vectors)
+    R = [[sum(Gm[k][i] * L[k][j] for k in range(3)) for j in range(3)] for i in range(3)]
+    return [R[0][0], R[0][1], R[0][2], R[1][0], R[1][1], R[1][2], R[2][0], R[2][1], R[2][2]]
 
 
 def y_rotation(u, v):
@@ -104,22 +159,37 @@ def y_rotation(u, v):
             0, 0, 0, 1]
 
 
-def transform_for(local_pair, global_pair, scale=1.0):
+rec_out = []
+
+
+def transform_for(local_pair, global_pair, scale=1.0, fname=""):
     """local_pair None => drop the part at global_pair[0] with no rotation. The log tags
     those as 位置未定, so a placeholder never reads as a measured placement."""
     """Array layout taken from the author's recorded macro, not guessed:
     nine rotation doubles (row-major 3x3), then tx ty tz, then scale, then three zeros.
     An identity drop reads back as indices 0,4,8 = 1 and 12 = 1, which matches."""
     if local_pair is None:
-        # global_pair is a single point here, not a pair - that was the 'float not
-        # subscriptable' crash on the 20 identity-placed parts
+        # placeholder placement: stand the plate up so its pin axis points along global Y
+        # and its local X runs along global X. Position is still a guess; orientation is not.
         pt = global_pair if isinstance(global_pair[0], (int, float)) else global_pair[0]
         g0 = [pt[0] * M, pt[1] * M, pt[2] * M]
-        return [1, 0, 0, 0, 1, 0, 0, 0, 1] + g0 + [scale, 0.0, 0.0, 0.0]
+        ax = axis_at(fname, pt)
+        r = frame_rotation(ax, [0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0]) if ax else             [1, 0, 0, 0, 1, 0, 0, 0, 1]
+        return r + g0 + [scale, 0.0, 0.0, 0.0]
+
     u = tuple(local_pair[1][i] - local_pair[0][i] for i in range(3))
     v = tuple(global_pair[1][i] - global_pair[0][i] for i in range(3))
-    full = y_rotation(u, v)
-    r = [full[0], full[1], full[2], full[4], full[5], full[6], full[8], full[9], full[10]]
+    r = None
+    al, ag = axis_at(fname, local_pair[0]), axis_at(fname, local_pair[1])
+    if al and ag:
+        r = frame_rotation(al, [0.0, 1.0, 0.0], u, v)
+        if r is not None:
+            rec_note = "frame: pin axis + pivot line"
+    if r is None:
+        full = y_rotation(u, v)
+        r = [full[0], full[1], full[2], full[4], full[5], full[6], full[8], full[9], full[10]]
+        rec_note = "pivot line only (hole axis unknown)"
+    rec_out.append(rec_note)
     p0 = [local_pair[0][0] * M, local_pair[0][1] * M, local_pair[0][2] * M]
     rotated = [r[i * 3] * p0[0] + r[i * 3 + 1] * p0[1] + r[i * 3 + 2] * p0[2] for i in range(3)]
     g0 = [global_pair[0][0] * M, global_pair[0][1] * M, global_pair[0][2] * M]
@@ -165,7 +235,7 @@ def main():
             # session, and the assembly must be re-activated before AddComponent5
             sw.OpenDoc6(path, 1, 32, "", 0, 0)
             sw.ActivateDoc3(asm_title, True, 0, 0)
-            arr = transform_for(local_pair, global_pair)
+            arr = transform_for(local_pair, global_pair, fname=os.path.basename(path))
             xf = mathutil.CreateTransform(win32com.client.VARIANT(
                 pythoncom.VT_ARRAY | pythoncom.VT_R8, arr))
             comp = asm.AddComponent5(path, 0, "", False, "", 0.0, 0.0, 0.0)
