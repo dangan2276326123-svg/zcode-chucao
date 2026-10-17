@@ -109,6 +109,10 @@ def features(path):
             out.append({"d": dia, "kind": kind, "c": fam["c"], "a": tuple(round(v, 2) for v in fam["a"]),
                         "stations": stations, "n_edge": len(fam["feats"]), "faces": len(on_axis)})
     out.sort(key=lambda h: (h["kind"] != u"孔", -h["d"], h["c"][2], h["c"][0], h["c"][1]))
+    # the tag is written INTO the record: a consumer that re-derives it from its own copy of
+    # the circled-digit string gets a different number the moment that copy is one glyph short
+    for i, h in enumerate(out):
+        h["tag"] = CIRCLED[i] if i < len(CIRCLED) else str(i + 1)
     return out
 
 
