@@ -615,6 +615,42 @@ def extract_references(path):
 
 
 # -------------------------------------------------------------------- build
+# 2026-10-17 逐条核过的两处页码订正。表只记"改了什么、凭什么"，判据在下面。
+# 为什么只这两处：26 条逐条核到外部记录，20 条一致、2 条核不到权威记录（[12] ICLR、
+# [26] CMU 技术报告，没核到就不动）、2 条中文要 CNKI 与国知局（[1]、[8]，留给作者）。
+# ⚠️ 反面教训一并留下：[13] PSPNet、[19] Xception、[22] McKyes 这三条，第一轮抓到的
+# 读数与正文**不一致**，而复核下来是**注册表那边错、正文对**（CVF 官方页 Xception =
+# 1251-1258；多篇独立引用 PSPNet = 2881-2890；[22] 抓到的是两条**书评**记录而不是专著本体）。
+# 所以"API 说有差异"不等于"论文写错了"，必须有第二个独立来源才动手——照单全改会一次改坏三条。
+REFERENCE_FIXES = (
+    (4, '2009: 741-747', '2009: 841-847',
+     'Crossref 该章 DOI 10.3920/9789086866649_101 记录 841-847，另有独立引用同读数'),
+    (16, '2018: 801-818', '2018: 833-851',
+     'Springer 该章 DOI 10.1007/978-3-030-01234-2_49（ECCV 2018 PT VII）= 833-851，'
+     '维普与兰州理工检索页同读数'),
+)
+
+
+def apply_reference_fixes(refs):
+    """按 REFERENCE_FIXES 改条目文本；找不到原串就抛，不静默跳过。
+
+    "找不到原串"意味着参考文献表已经变了（换版、有人手改过），这时**必须**让人知道，
+    否则订正会悄悄失效、错页码又回到正文里。
+    """
+    n = 0
+    for num, old, new, _why in REFERENCE_FIXES:
+        idx = num - 1
+        if idx >= len(refs):
+            raise ValueError('reference [%d] does not exist (%d entries)'
+                             % (num, len(refs)))
+        if old not in refs[idx]:
+            raise ValueError('reference [%d] no longer contains %r; the list '
+                             'changed, re-verify before fixing' % (num, old))
+        refs[idx] = refs[idx].replace(old, new)
+        n += 1
+    return refs, n
+
+
 def repoint_running_header(doc, tag, pred):
     """把**最后一节（正文）**的 default 页眉/页脚指向包里第一份满足 pred 的部件。
 
@@ -824,6 +860,8 @@ def build(check_only=False, cover='academic'):
         render_source(name)
 
     refs = extract_references(PREV_DOCX)
+    refs, n_fixed = apply_reference_fixes(refs)
+    c['ref_fixed'] = n_fixed
     r.heading(1, '参考文献')
     for entry in refs:
         c['ref_entry'] += 1
@@ -920,7 +958,8 @@ def main():
     # 引文分两栏报，是因为"还剩几处没定号"这件事不能藏在"41 处标记"这种混合计数里。
     print('citations   : %d resolved [n] (superscript), %d still placeholder'
           % (c['ref_num'], c['ref_pending']))
-    print('references  : %d entries carried over' % nrefs)
+    print('references  : %d entries carried over, %d corrected against registry'
+          % (nrefs, c.get('ref_fixed', 0)))
     # 页眉改向是"写了才算做了"的那类事，所以把当场结果打出来，不让人靠读代码推断。
     # check 模式不写文件也不改页眉，这里如实报 0。
     print('running hdr : %d body-section header reference(s) repointed'

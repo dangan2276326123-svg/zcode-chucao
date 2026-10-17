@@ -417,3 +417,36 @@ def test_body_section_carries_running_header_and_page_numbers(tmp_path, monkeypa
         '前置页眉应沿用封面那份空的，否则摘要头上会顶着跑动章名'
     # 正文那一节是 add_section 造出来的空节：页眉页脚都得显式挂上，缺一即回归。
     assert default_rid(body, 'w:footerReference') != default_rid(body, 'w:headerReference')
+
+
+# ------------------------------------------------------------------ 参考文献订正
+def _fake_refs():
+    out = ['[%d] filler entry %d.' % (i, i) for i in range(1, 30)]
+    out[3] = ("[4] Ruckelshausen A, et al. BoniRob—an autonomous field robot "
+              "platform[C]//Precision Agriculture '09. Wageningen, 2009: 741-747.")
+    out[15] = ("[16] Chen L C, et al. Encoder-decoder with atrous separable "
+               "convolution[C]//ECCV. Munich: Springer, 2018: 801-818.")
+    return out
+
+
+def test_reference_fixes_apply_and_are_counted():
+    refs, n = M.apply_reference_fixes(_fake_refs())
+    assert n == len(M.REFERENCE_FIXES) == 2
+    assert '841-847' in refs[3] and '741-747' not in refs[3]
+    assert '833-851' in refs[15] and '801-818' not in refs[15]
+
+
+def test_reference_fix_bites_when_the_list_changes():
+    """订正**不许静默失效**：表换版或有人手改过，原串找不到就必须抛。
+
+    否则错页码会悄悄回到正文里，而输出照旧打印"26 条搬运完成"。
+    """
+    refs = _fake_refs()
+    refs[3] = refs[3].replace('741-747', '999-999')
+    with pytest.raises(ValueError) as e:
+        M.apply_reference_fixes(refs)
+    assert '[4]' in str(e.value)
+
+    short = ['[1] only one entry.']
+    with pytest.raises(ValueError):
+        M.apply_reference_fixes(short)
