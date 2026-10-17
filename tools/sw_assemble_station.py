@@ -46,13 +46,23 @@ OUT = os.path.join("D:", os.sep + "ai work", "qoder", "cad_work", "cad_out")
 LOG = os.path.join(OUT, "assembly_log.json")
 M = 0.001
 
-HOLEMAP = json.load(io.open(os.path.join("D:", os.sep + "ai work", "qoder", "cad_work",
-                                         "hole_maps", "index.json"), encoding="utf-8"))
+# v2 maps (cad_work/hole_maps2) replace v2's predecessor: features come from circular EDGES
+# at exact centres and each carries 孔/凸台, instead of one entry per cylindrical surface
+# positioned by a placement point that can sit anywhere along the axis.
+HOLEMAP_DIR = os.path.join("D:", os.sep + "ai work", "qoder", "cad_work", "hole_maps2")
+HOLEMAP = json.load(io.open(os.path.join(HOLEMAP_DIR, "index.json"), encoding="utf-8"))
 AXES = {}
+KIND = {}
 for _rec in HOLEMAP:
-    for _h in _rec["holes"]:
-        if _h.get("axis"):
-            AXES[(_rec["part"].replace(".SLDPRT", ""), tuple(round(v, 1) for v in _h["c"]))] = _h["axis"]
+    for _h in _rec.get("features") or _rec.get("holes") or []:
+        if _h.get("a"):
+            _k = (_rec["part"].replace(".SLDPRT", ""), tuple(round(v, 1) for v in _h["c"]))
+            AXES[_k] = _h["a"]
+            KIND[_k] = _h.get("kind")
+        elif _h.get("axis"):
+            _k = (_rec["part"].replace(".SLDPRT", ""), tuple(round(v, 1) for v in _h["c"]))
+            AXES[_k] = _h["axis"]
+            KIND[_k] = None
 
 
 def axis_at(fname, pt):
@@ -79,18 +89,21 @@ G = (D[0] - 60.0, 0.0, F[2] - 40.0)
 
 # (file, base dir, local pivot pair in mm, global pair, tag)
 PLAN = [
-    # ⑫(25,0,-21) and ⑬(25,0,408) share x=25, i.e. they are the coaxial working pair;
-    # ①(-112,0,-21) is the motor-side bracket hole. Using ①/⑬ before was a wrong-hole
-    # pick, not a measurement error - the span is 429 exactly as the part says.
-    ("电推杆.SLDPRT", SRC, ((25.0, 0.0, -21.0), (25.0, 0.0, 408.0)), (A, D),
-     "⑫⑬ = 429 (same x=25, coaxial pair); ① is a bracket hole, not a pivot"),
-    # author's correction: 连杆1 IS the inclined rocker sharing one pin with the actuator
-    ("连杆1.SLDPRT", SRC, ((-108.0, 0.0, 405.0), (-108.0, 0.0, 20.0)), (C, D),
-     "②(D25,385 above ①) on the 吊耳 axle at C; ①(D10) shares the pin with 电推杆 ⑬ at D"),
+    # v2 correction: 电推杆 has exactly TWO phi10 bores (axes along X through (0,0,-21) and
+    # (0,0,408), 429 apart). The old triple (-112,0,-21)/(25,0,-21)/(25,0,408) was one bore
+    # counted twice because each cylindrical face's placement point sits elsewhere on the axis.
+    ("电推杆.SLDPRT", SRC, ((0.0, 0.0, -21.0), (0.0, 0.0, 408.0)), (A, D),
+     "v2: 2x phi10 孔, 轴线垂距 429.0; A=缩回端, D=杆端"),
+    # author's correction: 连杆1 IS the inclined rocker sharing one pin with the actuator.
+    # v2: the shared-pin feature is a phi10 BORE at axis (15,0,20); 385 up is a phi25 BOSS
+    # (axis (-12.5,0,405)), not a bore - so this end spigots into the unmodelled 吊耳, whose
+    # hole must therefore be phi25.
+    ("连杆1.SLDPRT", SRC, ((-12.5, 0.0, 405.0), (15.0, 0.0, 20.0)), (C, D),
+     "v2: ④(D25 凸台, 轴线垂距 385 于 ②) 插在 C 处吊耳轴上; ②(D10 孔) 与 电推杆 杆端共销于 D"),
     # author's 2nd correction: the actuator is fixed to the lug, and lug + spring are held
     # by one pin through 连杆1's end hole - so all three live at node D, not at C
-    ("吊耳_连杆2至刀柄1.SLDPRT", MISSING, ((0.0, 0.0, -18.0), (0.0, 0.0, 18.0)), (D, F),
-     "吊耳与弹簧同穿 连杆1 端孔(节点 D)，电推杆固定在其上；孔距 60 仍是占位"),
+    ("吊耳_连杆2至刀柄1.SLDPRT", MISSING, ((0.0, -18.0, 4.0), (0.0, 18.0, 4.0)), (D, F),
+     "吊耳与弹簧同穿 连杆1 端孔(节点 D)，电推杆固定在其上；孔距 60 仍是占位（v2 提示：若它要接 刀柄3 那两个相距 140 的 φ10 凸台，此件应重开孔）"),
     ("铰接销_M10x60.SLDPRT", MISSING, ((0.0, 0.0, 0.0), (0.0, 0.0, 60.0)), (D, D),
      "pin at the shared actuator/rocker pin"),
     ("仿形轮轴_D14x120.SLDPRT", MISSING, ((0.0, 0.0, 0.0), (0.0, 0.0, 120.0)), (G, G),
