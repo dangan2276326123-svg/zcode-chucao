@@ -87,8 +87,10 @@ PLAN = [
     # author's correction: 连杆1 IS the inclined rocker sharing one pin with the actuator
     ("连杆1.SLDPRT", SRC, ((-108.0, 0.0, 405.0), (-108.0, 0.0, 20.0)), (C, D),
      "②(D25,385 above ①) on the 吊耳 axle at C; ①(D10) shares the pin with 电推杆 ⑬ at D"),
-    ("吊耳_连杆2至刀柄1.SLDPRT", MISSING, ((0.0, 0.0, -18.0), (0.0, 0.0, 18.0)), (C, F),
-     "作者更正：吊耳在 连杆1 与 刀柄3/刀柄1 之间，故一端在 C、一端向下传力；孔距 60 仍是占位"),
+    # author's 2nd correction: the actuator is fixed to the lug, and lug + spring are held
+    # by one pin through 连杆1's end hole - so all three live at node D, not at C
+    ("吊耳_连杆2至刀柄1.SLDPRT", MISSING, ((0.0, 0.0, -18.0), (0.0, 0.0, 18.0)), (D, F),
+     "吊耳与弹簧同穿 连杆1 端孔(节点 D)，电推杆固定在其上；孔距 60 仍是占位"),
     ("铰接销_M10x60.SLDPRT", MISSING, ((0.0, 0.0, 0.0), (0.0, 0.0, 60.0)), (D, D),
      "pin at the shared actuator/rocker pin"),
     ("仿形轮轴_D14x120.SLDPRT", MISSING, ((0.0, 0.0, 0.0), (0.0, 0.0, 120.0)), (G, G),
@@ -100,7 +102,8 @@ PLAN = [
     ("刀柄2.SLDPRT", SRC, None, G, "位置按弹簧/仿形轮端点 G 对齐；与刀柄1 的连接孔未指认"),
     ("碎土轮片.SLDPRT", SRC, None, (G[0], -20.0, G[2]), "轮盘 1/2，轮面宽度未实测，Y 向 ±20 是占位"),
     ("碎土轮片.SLDPRT", SRC, None, (G[0], 20.0, G[2]), "轮盘 2/2，同上"),
-    ("刀腿弹簧_包络代表.SLDPRT", MISSING, None, (G[0], 0.0, G[2] + 60.0), "包络代表，位置按弹簧在刀腿末端"),
+    ("刀腿弹簧_包络代表.SLDPRT", MISSING, None, (D[0], 30.0, D[2] - 40.0),
+     "作者更正：弹簧与吊耳同穿 连杆1 端孔，故挂在节点 D 下方；包络代表，参数待实测"),
     ("铰轴弹性衬垫_25x20x8.SLDPRT", MISSING, None, C, "衬垫 1/2，按机架铰轴 C 处"),
     ("铰轴弹性衬垫_25x20x8.SLDPRT", MISSING, None, (C[0], 25.0, C[2]), "衬垫 2/2，夹板另一侧"),
     # ---- frame-side parts: present but placement not yet measured ----
