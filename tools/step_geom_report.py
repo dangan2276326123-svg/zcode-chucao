@@ -33,6 +33,9 @@ def load(path):
         m = RECORD.match("#" + c) if not c.startswith("#") else RECORD.match(c)
         if m:
             entities[int(m.group(1))] = (m.group(2), m.group(3))
+    if not entities:  # SW writes several records per line; fall back to a per-token scan
+        for m in re.finditer(r"#(\d+)\s*=\s*([A-Z0-9_]+)\s*\(", text):
+            entities.setdefault(int(m.group(1)), (m.group(2), text[m.end():]))
     return entities
 
 
