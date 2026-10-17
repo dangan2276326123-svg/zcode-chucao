@@ -64,6 +64,7 @@ from docx.shared import Cm            # 插图宽度
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
+from docx.enum.section import WD_SECTION
 from docx.shared import Pt
 
 THESIS = os.environ.get('THESIS_DIR') or r'D:\JetBrains\chucao_prj\thesis_cau'
@@ -600,38 +601,127 @@ def extract_references(path):
 
 
 # -------------------------------------------------------------------- build
-def repoint_running_header(doc, tag, needle):
-    """把正文那一节的 default 页眉/页脚改指向模板里"跑动标题"那一份部件。
+def repoint_running_header(doc, tag, pred):
+    """把**最后一节（正文）**的 default 页眉/页脚指向包里第一份满足 pred 的部件。
 
     为什么需要：产物沿用的是校模板**最后一节**的页面设置，而模板最后一节是"作者简介"
     ——它的 default 页眉里写死了"作者简介"四个字和"博/硕士"那个待选文本，真正的正文
     页眉（左"中国农业大学硕士学位论文"、右 STYLEREF 标题 1）挂在 **even** 上。
     本包没开奇偶页（settings.xml 里没有 evenAndOddHeaders），所以 Word 永远只用
-    default，每一页就打上了"作者简介"。这里按部件内容找，不按 rId 找——rId 每次生成都会变。
+    default，每一页就打上了"作者简介"。
 
-    返回 1 表示改向成功，0 表示没找到可改向的部件（保持原样，不静默假装修好）。
+    另一处坑：`Document.add_section()` 造出来的**新末节是空的**（当场实测：模板 17 节
+    加一节变 18 节，第 18 节一条 headerReference 都没有），所以这里不能"在本节里找供体"，
+    必须跨全篇按部件内容找，再往末节挂——找不到就返回 0，不静默假装修好。
     """
-    sectPr = doc.sections[-1]._sectPr
-    parts = doc.part.related_parts
-    default = donor = None
-    for ref in sectPr.findall(qn(tag)):
-        rid = ref.get(qn('r:id'))
-        blob = getattr(parts.get(rid), 'blob', b'') or b''
-        if (ref.get(qn('w:type')) or 'default') == 'default':
-            default = ref
-        elif needle.search(blob):
-            donor = ref
-    if donor is None:
+    rid = _find_rid_with(doc, tag, pred)
+    if rid is None:
         return 0
-    if default is None:
-        # 本节根本没有 default 引用（页脚就是这种）：补一个，指向 donor。
-        # headerReference/footerReference 在 sectPr 里排在最前，所以插到 0 位。
-        default = OxmlElement(tag)
-        default.set(qn('w:type'), 'default')
-        sectPr.insert(0, default)
-    default.set(qn('r:id'), donor.get(qn('r:id')))
-    sectPr.remove(donor)                    # 同一份部件挂两次没有意义
+    _default_ref(doc.sections[-1], tag).set(qn('r:id'), rid)
     return 1
+
+
+def _find_rid_with(doc, tag, pred):
+    """在全文档已有的页眉/页脚引用里，找第一份"部件内容满足 pred(blob)"的 rId。
+
+    一律按部件内容找、不按 rId 找：rId 每次生成都会变（包内其它部件一挪就重排）。
+    """
+    parts = doc.part.related_parts
+    for sect in doc.sections:
+        for ref in sect._sectPr.findall(qn(tag)):
+            rid = ref.get(qn('r:id'))
+            blob = getattr(parts.get(rid), 'blob', b'') or b''
+            if pred(blob):
+                return rid
+    return None
+
+
+def _is_running_header(blob):
+    """正文跑动页眉 = 含 STYLEREF，且**不含模板那句占位提示**。
+
+    后半个条件不是洁癖：模板里带 STYLEREF 的页眉部件有七份，其中三份的正文是
+    "第二章 双击页眉修改此处章节名称"这类占位文本（当场逐份读 `<w:t>` 得到）。
+    只按 STYLEREF 挑就可能挑中那三份之一，于是每一页右上角都印着"双击页眉修改此处"。
+    """
+    return b'STYLEREF' in blob and u'双击页眉'.encode('utf-8') not in blob
+
+
+def _is_page_field(blob):
+    """带 PAGE 域的页脚（页码的来源）。\\b 是必要的：PAGEREF 里也含 PAGE 子串。"""
+    return re.search(rb'\bPAGE\b', blob) is not None
+
+
+def _default_ref(section, tag, create=True):
+    """取（必要时补）某一节的 default 页眉/页脚引用元素。"""
+    sectPr = section._sectPr
+    for ref in sectPr.findall(qn(tag)):
+        if (ref.get(qn('w:type')) or 'default') == 'default':
+            return ref
+    if not create:
+        return None
+    el = OxmlElement(tag)
+    el.set(qn('w:type'), 'default')
+    sectPr.insert(0, el)          # headerReference/footerReference 排在 sectPr 最前
+    return el
+
+
+def _set_pg_num_type(section, fmt, start):
+    """写 w:pgNumType。它在 sectPr 里排在 pgMar 之后、cols 之前，所以按后继元素插入。"""
+    sectPr = section._sectPr
+    el = sectPr.find(qn('w:pgNumType'))
+    if el is None:
+        el = OxmlElement('w:pgNumType')
+        sectPr.insert_element_before(
+            el, 'w:cols', 'w:formProt', 'w:vAlign', 'w:noEndnote', 'w:titlePg',
+            'w:textDirection', 'w:bidi', 'w:rtlGutter', 'w:docGrid', 'w:docVars',
+            'w:sectPrChange')
+    el.set(qn('w:fmt'), fmt)
+    el.set(qn('w:start'), str(start))
+    return el
+
+
+def apply_pagination(doc):
+    """按校模板**自己**的分页方案给产物编页码。
+
+    模板的做法是当场读它 17 个 sectPr 得到的，不是我们发明的：封面那一节
+    `upperRoman start=2` 且页眉页脚为空；从摘要起 `upperRoman start=1`、页脚挂 PAGE
+    （所以前置页码是 I、II…）；从第 1 章起 **`start=1` 且不带 fmt（即阿拉伯数字）**、
+    页脚挂 PAGE、页眉是"校名 + STYLEREF 标题 1"。
+
+    本产物此前只沿用模板最后一节，等于把"作者简介"那一节的设置用到了整篇——
+    既没有页码，页眉也错。这里假定调用方已经在"前置／正文"交界处插了一个分节符，
+    于是倒数第二节是前置、最后一节是正文，各自设 pgNumType 与页脚。
+
+    返回一份读数供当场打印：挂上了什么、没挂上什么，不返回一个布尔把失败吞掉。
+    """
+    out = {'front_fmt': '', 'body_fmt': '', 'footer': '', 'front_header': ''}
+    if len(doc.sections) < 2:
+        return out                          # 没分节，什么都不做（也不假装成功）
+    front, body = doc.sections[-2], doc.sections[-1]
+
+    # 正文页眉：先交给 repoint_running_header（它只动最后一节），这里只管页码与页脚。
+    page_rid = _find_rid_with(doc, 'w:footerReference', _is_page_field)
+    if page_rid:
+        _default_ref(front, 'w:footerReference').set(qn('r:id'), page_rid)
+        _default_ref(body, 'w:footerReference').set(qn('r:id'), page_rid)
+        out['footer'] = page_rid
+
+    # 前置页眉：沿用封面那一节的空页眉（模板的前置节页眉也是空的），
+    # 否则摘要与目录头上会顶着正文的跑动章名。
+    cover_rid = None
+    for ref in doc.sections[0]._sectPr.findall(qn('w:headerReference')):
+        if (ref.get(qn('w:type')) or 'default') == 'default':
+            cover_rid = ref.get(qn('r:id'))
+            break
+    if cover_rid:
+        _default_ref(front, 'w:headerReference').set(qn('r:id'), cover_rid)
+        out['front_header'] = cover_rid
+
+    _set_pg_num_type(front, 'upperRoman', 1)
+    _set_pg_num_type(body, 'decimal', 1)
+    out['front_fmt'] = 'upperRoman@1'
+    out['body_fmt'] = 'decimal@1'
+    return out
 
 
 def build(check_only=False, cover='academic'):
@@ -711,6 +801,11 @@ def build(check_only=False, cover='academic'):
                 run.italic = (j == 0)
         three_line(t)
 
+    if not check_only:
+        # 前置（摘要/Abstract/目录/符号表）与正文分节：模板自己就是这么分的
+        # （摘要起 upperRoman、第 1 章起 decimal 且 start=1），不分节就没法给两套页码。
+        doc.add_section(WD_SECTION.NEW_PAGE)
+
     for name in SOURCES[1:]:
         render_source(name)
 
@@ -725,10 +820,13 @@ def build(check_only=False, cover='academic'):
 
     if not check_only:
         # 页眉改向：不修的话每一页右上角都是"作者简介"（理由见函数 docstring）。
-        # 页脚不一起改：正文与前置部分现在同属一节，直接挂 PAGE 会让摘要页从
-        # 模板继承的 upperRoman 继续排，页码格式反而更错；等分节定稿一并处理。
-        n = repoint_running_header(doc, 'w:headerReference', re.compile(rb'STYLEREF'))
+        n = repoint_running_header(doc, 'w:headerReference', _is_running_header)
         c['hdr_repointed'] = n
+        # 页码：分节之后才能挂（上面已经 add_section 了），方案照模板自己那套。
+        pg = apply_pagination(doc)
+        c['page_front'] = pg['front_fmt']
+        c['page_body'] = pg['body_fmt']
+        c['page_footer'] = pg['footer']
         if not os.path.isdir(OUTDIR):
             os.makedirs(OUTDIR)
         doc.save(OUT_DOCX)
@@ -811,6 +909,11 @@ def main():
     print('running hdr : %d body-section header reference(s) repointed'
           ' (0 in --check: nothing is written)'
           % c.get('hdr_repointed', 0))
+    # 页码是"挂上没挂上"必须能被读出来的那一类，所以把方案与页脚部件一起打出来。
+    print('pagination  : front %s  body %s  footer part %s'
+          ' (--check writes nothing, so all three read "-")'
+          % (c.get('page_front') or '-', c.get('page_body') or '-',
+             c.get('page_footer') or '-'))
 
 
 if __name__ == '__main__':

@@ -334,9 +334,8 @@ needs_prev = pytest.mark.skipif(
 
 @needs_template
 @needs_prev
-def test_body_section_carries_the_running_header_not_the_author_bio_one(tmp_path,
-                                                                       monkeypatch):
-    """整份生成一次，验正文那一节的 default 页眉指向"跑动标题"部件。
+def test_body_section_carries_running_header_and_page_numbers(tmp_path, monkeypatch):
+    """整份生成一次，验正文那一节的页眉与两节的页码。
 
     这条只能整份建：症状来自"沿用模板最后一节的页面设置"，而模板最后一节是作者简介
     ——它的 default 页眉写死"作者简介"和"博/硕士"待选文本，真正的正文页眉
@@ -354,19 +353,30 @@ def test_body_section_carries_the_running_header_not_the_author_bio_one(tmp_path
     assert c['hdr_repointed'] == 1, '没找到可改向的跑动页眉，改动就没生效'
 
     d = Document(str(tmp_path / 'built.docx'))
-    sect = d.sections[-1]
-    rids = [r.get(qn('r:id')) for r in sect._sectPr.findall(qn('w:headerReference'))
-            if (r.get(qn('w:type')) or 'default') == 'default']
-    assert len(rids) == 1, 'default 页眉引用应当只剩一条：%s' % rids
-    blob = d.part.related_parts[rids[0]].blob
+    front, body = d.sections[-2], d.sections[-1]
+
+    def default_rid(section, tag):
+        rids = [r.get(qn('r:id')) for r in section._sectPr.findall(qn(tag))
+                if (r.get(qn('w:type')) or 'default') == 'default']
+        assert len(rids) == 1, '%s 的 default %s 应有且只有一条：%s' % (
+            'front' if section is front else 'body', tag, rids)
+        return rids[0]
+
+    blob = d.part.related_parts[default_rid(body, 'w:headerReference')].blob
     assert b'STYLEREF' in blob, '正文页眉没指向跑动标题部件'
     assert u'作者简介'.encode('utf-8') not in blob, '页眉仍是作者简介那一份'
+    assert u'双击页眉'.encode('utf-8') not in blob, \
+        '挑中了模板的占位页眉——那会把"双击页眉修改此处章节名称"印在每一页上'
 
-    # 页脚这一路故意**不**接进 build()：正文与前置部分同属一节，直接挂 PAGE 会让
-    # 摘要页沿用模板的 upperRoman 继续排。这里只验工具函数本身能处理
-    # "本节没有 default 页脚引用"那种形状（补一条并指向 PAGE 部件）。
-    assert M.repoint_running_header(d, 'w:footerReference',
-                                    re.compile(rb'\bPAGE\b')) == 1
-    rids = [r.get(qn('r:id')) for r in sect._sectPr.findall(qn('w:footerReference'))
-            if (r.get(qn('w:type')) or 'default') == 'default']
-    assert len(rids) == 1 and b'PAGE' in d.part.related_parts[rids[0]].blob
+    # 页码：分节之后前置走罗马数字、正文从 1 起阿拉伯数字，两节都挂带 PAGE 域的页脚。
+    assert c['page_front'] == 'upperRoman@1' and c['page_body'] == 'decimal@1'
+    for name, section in (('front', front), ('body', body)):
+        pg = section._sectPr.find(qn('w:pgNumType'))
+        assert pg is not None and pg.get(qn('w:start')) == '1', name
+        foot = d.part.related_parts[default_rid(section, 'w:footerReference')].blob
+        assert re.search(rb'\bPAGE\b', foot), '%s 页脚没挂 PAGE' % name
+    assert d.part.related_parts[default_rid(front, 'w:headerReference')].blob \
+        == d.part.related_parts[default_rid(d.sections[0], 'w:headerReference')].blob, \
+        '前置页眉应沿用封面那份空的，否则摘要头上会顶着跑动章名'
+    # 正文那一节是 add_section 造出来的空节：页眉页脚都得显式挂上，缺一即回归。
+    assert default_rid(body, 'w:footerReference') != default_rid(body, 'w:headerReference')
