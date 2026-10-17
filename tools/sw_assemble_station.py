@@ -62,12 +62,20 @@ def axis_at(fname, pt):
 
 
 # global pivots, mm (photo-derived; see §2G)
+# Anchors now come from matched holes, not from reading pivots off the photo:
+#   电推杆 ⑫↔⑬ = 429 (coaxial D10 pair)  |  连杆1 ①↔② = 385 (D10 at the shared pin,
+#   D25 up on the unmodelled 吊耳 axle)  |  刀柄3 ②↔ = 140 (two D10, assumed to be the
+#   two ground pivots). Solving that triangle puts the shared pin at (197.9, -380.6).
+# Two red flags are recorded in docs/执行机构装配拓扑_20261016.md §2I: the rated 200 mm
+# stroke does not fit (only 184 mm of the 245..525 range is reachable from 429), and the
+# rocker would swing 98.7 deg with a reversed, near-dead-centre start. Both point at the
+# AC=140 assumption, which is the one number awaiting the author.
 A = (0.0, 0.0, 0.0)
-C = (107.0, 0.0, -264.0)
-D = (-50.0, 0.0, -446.0)
-E = (-25.0, 0.0, -465.0)
-F = (69.0, 0.0, -530.0)
-G = (0.0, 0.0, -560.0)
+C = (140.0, 0.0, 0.0)
+D = (197.9, 0.0, -380.6)
+E = D
+F = (D[0], 0.0, D[2] - 120.0)     # 铲刃 hangs below the tool post; 120 not yet measured
+G = (D[0] - 60.0, 0.0, F[2] - 40.0)
 
 # (file, base dir, local pivot pair in mm, global pair, tag)
 PLAN = [
@@ -76,10 +84,11 @@ PLAN = [
     # pick, not a measurement error - the span is 429 exactly as the part says.
     ("电推杆.SLDPRT", SRC, ((25.0, 0.0, -21.0), (25.0, 0.0, 408.0)), (A, D),
      "⑫⑬ = 429 (same x=25, coaxial pair); ① is a bracket hole, not a pivot"),
-    ("连杆1.SLDPRT", SRC, ((-108.0, 0.0, 405.0), (-108.0, 0.0, 20.0)), (C, E),
-     "D25<->D10 span 385; CE used 241 from the photo = LOWER BOUND, so this part is placed short"),
-    ("吊耳_连杆2至刀柄1.SLDPRT", MISSING, ((0.0, 0.0, -18.0), (0.0, 0.0, 18.0)), (E, F),
-     "PLACEHOLDER geometry: hole spacing 60 not measured"),
+    # author's correction: 连杆1 IS the inclined rocker sharing one pin with the actuator
+    ("连杆1.SLDPRT", SRC, ((-108.0, 0.0, 405.0), (-108.0, 0.0, 20.0)), (C, D),
+     "②(D25,385 above ①) on the 吊耳 axle at C; ①(D10) shares the pin with 电推杆 ⑬ at D"),
+    ("吊耳_连杆2至刀柄1.SLDPRT", MISSING, ((0.0, 0.0, -18.0), (0.0, 0.0, 18.0)), (C, F),
+     "作者更正：吊耳在 连杆1 与 刀柄3/刀柄1 之间，故一端在 C、一端向下传力；孔距 60 仍是占位"),
     ("铰接销_M10x60.SLDPRT", MISSING, ((0.0, 0.0, 0.0), (0.0, 0.0, 60.0)), (D, D),
      "pin at the shared actuator/rocker pin"),
     ("仿形轮轴_D14x120.SLDPRT", MISSING, ((0.0, 0.0, 0.0), (0.0, 0.0, 120.0)), (G, G),
