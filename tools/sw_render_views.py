@@ -16,7 +16,9 @@ import win32com.client
 from win32com.client.gencache import EnsureModule
 
 SW_CLSID = "{83A33D31-27C5-11CE-BFD4-00400513BB57}"
-VIEWS = [("iso", "*Isometric"), ("front", "*Front"), ("top", "*Top"), ("right", "*Right")]
+# explicit view constants: passing -1 with the name left all four exports byte-identical,
+# i.e. the view never actually changed (swViewFront=1, Right=4, Top=5, Isometric=7)
+VIEWS = [("iso", "*Isometric", 7), ("front", "*Front", 1), ("top", "*Top", 5), ("right", "*Right", 4)]
 
 
 def main():
@@ -27,23 +29,31 @@ def main():
     mod = EnsureModule(SW_CLSID, 0, 32, 0)
     sw = mod.SldWorks(win32com.client.Dispatch("SldWorks.Application")._oleobj_)
     sw.Visible = False
-    res = sw.OpenDoc6(src, 1, 1 | 2, "", 0, 0)
+    doc_type = 2 if src.upper().endswith(".SLDASM") else 1  # assembly vs part
+    res = sw.OpenDoc6(src, doc_type, 1 | 2, "", 0, 0)
     doc = res[0] if isinstance(res, tuple) else res
     if doc is None:
         print(json.dumps({"error": "open failed", "src": src}, ensure_ascii=True))
         return 1
     title = str(doc.GetTitle())
     made = {}
-    for key, view in VIEWS:
+    for key, view, code in VIEWS:
         try:
-            doc.ShowNamedView2(view, -1)
+            doc.ShowNamedView2(view, code)
             doc.ViewZoomtofit2()
+            doc.GraphicsRedraw2()
             target = os.path.join(outdir, "%s_%s.png" % (os.path.splitext(os.path.basename(src))[0], key))
             r = doc.Extension.SaveAs(target, 0, 1, None, 0, 0)
             made[key] = {"ok": bool(r[0]) if isinstance(r, tuple) else bool(r),
                          "bytes": os.path.getsize(target) if os.path.exists(target) else 0}
         except Exception as exc:
             made[key] = {"error": repr(exc)[:120]}
+    try:
+        step = os.path.join(outdir, os.path.splitext(os.path.basename(src))[0] + ".step")
+        r = doc.Extension.SaveAs(step, 0, 1, None, 0, 0)
+        made["step"] = os.path.getsize(step) if os.path.exists(step) else 0
+    except Exception as exc:
+        made["step"] = {"error": repr(exc)[:120]}
     try:
         doc.ViewZoomtofit2()
         pdf = os.path.join(outdir, os.path.splitext(os.path.basename(src))[0] + ".pdf")

@@ -66,6 +66,28 @@ PLAN = [
      "pin at the shared actuator/rocker pin"),
     ("仿形轮轴_D14x120.SLDPRT", MISSING, ((0.0, 0.0, 0.0), (0.0, 0.0, 120.0)), (G, G),
      "PLACEHOLDER length 120: real width = 2 discs + spacer stack, uncounted"),
+    # ---- tool body, anchored on the photo's own measured points ----
+    ("刀柄1.SLDPRT", SRC, None, E, "位置按刀脚铰点 E 对齐；其内部哪个孔接吊耳未指认"),
+    ("刀具.SLDPRT", SRC, None, F, "焊接件，按铲刃点 F 定位（作者：刀柄1 下面焊刀具与刀头）"),
+    ("刀头.SLDPRT", SRC, None, F, "焊接件，按铲刃点 F 定位"),
+    ("刀柄2.SLDPRT", SRC, None, G, "位置按弹簧/仿形轮端点 G 对齐；与刀柄1 的连接孔未指认"),
+    ("碎土轮片.SLDPRT", SRC, None, (G[0], -20.0, G[2]), "轮盘 1/2，轮面宽度未实测，Y 向 ±20 是占位"),
+    ("碎土轮片.SLDPRT", SRC, None, (G[0], 20.0, G[2]), "轮盘 2/2，同上"),
+    ("刀腿弹簧_包络代表.SLDPRT", MISSING, None, (G[0], 0.0, G[2] + 60.0), "包络代表，位置按弹簧在刀腿末端"),
+    ("铰轴弹性衬垫_25x20x8.SLDPRT", MISSING, None, C, "衬垫 1/2，按机架铰轴 C 处"),
+    ("铰轴弹性衬垫_25x20x8.SLDPRT", MISSING, None, (C[0], 25.0, C[2]), "衬垫 2/2，夹板另一侧"),
+    # ---- frame-side parts: present but placement not yet measured ----
+    ("刀柄3.SLDPRT", SRC, None, A, "机架座成员，位置未定（作者：基片与刀柄3 组装在一起）"),
+    ("基片1.SLDPRT", SRC, None, A, "位置未定"),
+    ("基片2.SLDPRT", SRC, None, A, "位置未定"),
+    ("基片3.SLDPRT", SRC, None, A, "位置未定"),
+    ("基片4.SLDPRT", SRC, None, A, "位置未定"),
+    ("吊耳1.SLDPRT", SRC, None, A, "位置未定（与电推杆上端 A 处共 φ24/φ10 孔型，待指认）"),
+    ("中间杆.SLDPRT", SRC, None, (0.0, 0.0, -1070.0), "位置未定；与 中间杆吊耳1 孔型逐字相同，故成对"),
+    ("中间杆吊耳1.SLDPRT", SRC, None, (0.0, 0.0, 0.0), "位置未定"),
+    ("连杆2.SLDPRT", SRC, None, (60.0, 40.0, -300.0), "位置未定：摆杆候选之一（铰距 352），与 连杆1 二选一"),
+    ("连杆3.SLDPRT", SRC, None, (0.0, 255.0, -350.0), "位置未定：判为横跨左右的横拉杆，Y 向 ±255 是占位"),
+    ("圆柱.SLDPRT", SRC, None, (0.0, 0.0, -721.0), "φ50×1442 轴料，归属未定（横梁/摆轴），此处按竖直放置占位"),
 ]
 
 
@@ -83,18 +105,26 @@ def y_rotation(u, v):
 
 
 def transform_for(local_pair, global_pair, scale=1.0):
+    """local_pair None => drop the part at global_pair[0] with no rotation. The log tags
+    those as 位置未定, so a placeholder never reads as a measured placement."""
+    """Array layout taken from the author's recorded macro, not guessed:
+    nine rotation doubles (row-major 3x3), then tx ty tz, then scale, then three zeros.
+    An identity drop reads back as indices 0,4,8 = 1 and 12 = 1, which matches."""
+    if local_pair is None:
+        # global_pair is a single point here, not a pair - that was the 'float not
+        # subscriptable' crash on the 20 identity-placed parts
+        pt = global_pair if isinstance(global_pair[0], (int, float)) else global_pair[0]
+        g0 = [pt[0] * M, pt[1] * M, pt[2] * M]
+        return [1, 0, 0, 0, 1, 0, 0, 0, 1] + g0 + [scale, 0.0, 0.0, 0.0]
     u = tuple(local_pair[1][i] - local_pair[0][i] for i in range(3))
     v = tuple(global_pair[1][i] - global_pair[0][i] for i in range(3))
-    arr = y_rotation(u, v)
-    r = [arr[0:4], arr[4:8], arr[8:12]]
+    full = y_rotation(u, v)
+    r = [full[0], full[1], full[2], full[4], full[5], full[6], full[8], full[9], full[10]]
     p0 = [local_pair[0][0] * M, local_pair[0][1] * M, local_pair[0][2] * M]
-    rotated = [sum(r[i][j] * p0[j] for j in range(3)) for i in range(3)]
+    rotated = [r[i * 3] * p0[0] + r[i * 3 + 1] * p0[1] + r[i * 3 + 2] * p0[2] for i in range(3)]
     g0 = [global_pair[0][0] * M, global_pair[0][1] * M, global_pair[0][2] * M]
     tx = [g0[i] - rotated[i] for i in range(3)]
-    return [arr[0], arr[1], arr[2], 0.0,
-            arr[4], arr[5], arr[6], 0.0,
-            arr[8], arr[9], arr[10], 0.0,
-            tx[0], tx[1], tx[2], scale]
+    return r + tx + [scale, 0.0, 0.0, 0.0]
 
 
 def main():
@@ -111,7 +141,9 @@ def main():
         io.open(LOG, "w", encoding="utf-8").write(json.dumps(log, ensure_ascii=False, indent=2))
         print(json.dumps(log, ensure_ascii=True))
         return 1
-    mathutil = sw.GetMathUtility()
+    mathutil = mod.IMathUtility(sw.GetMathUtility()._oleobj_)
+    asm_title = str(doc.GetTitle())
+    log["asm_title"] = asm_title
     # IAssemblyDoc is a separate interface on the same object: IModelDoc2 does not expose
     # AddComponent5, which is why a direct call fails with "member not found".
     try:
@@ -129,6 +161,10 @@ def main():
             log["placed"].append(rec)
             continue
         try:
+            # the two prerequisites the recorder revealed: the part must be open in this
+            # session, and the assembly must be re-activated before AddComponent5
+            sw.OpenDoc6(path, 1, 32, "", 0, 0)
+            sw.ActivateDoc3(asm_title, True, 0, 0)
             arr = transform_for(local_pair, global_pair)
             xf = mathutil.CreateTransform(win32com.client.VARIANT(
                 pythoncom.VT_ARRAY | pythoncom.VT_R8, arr))
@@ -137,13 +173,18 @@ def main():
                 rec["result"] = "AddComponent5 returned None"
             else:
                 try:
-                    comp.XForm = xf
-                    rec["result"] = "placed with rotation"
+                    comp.SetTransformAndSolve2(xf)
+                    rec["result"] = "placed via SetTransformAndSolve2"
                 except Exception as exc:
-                    rec["result"] = "placed, XForm refused: %s" % (repr(exc)[:90],)
-                rec["name"] = str(comp.Name2) if hasattr(comp, "Name2") else "?"
+                    rec["result"] = "inserted, transform refused: %s" % (repr(exc)[:90],)
+                rec["name"] = str(comp.Name2)
         except Exception as exc:
             rec["result"] = "FAILED %r" % (exc,)
+        finally:
+            try:
+                sw.CloseDoc(path)
+            except Exception:
+                pass
         log["placed"].append(rec)
 
     try:
