@@ -63,6 +63,7 @@
 | 文件 | 说明 |
 |---|---|
 | `start_bridge.sh` | **X5 侧一条命令起桥**（09-28 加）：先 `pkill -f "cat /dev/ttyS"` 把抢串口的人清掉，再 `sudo python3 bridge.py`。用法 `sh ~/qoder/vehicle/start_bridge.sh`。**必须 LF 换行**——`.gitattributes` 里钉了 `*.sh text eol=lf`，因为本机 `core.autocrlf=true`，带 CRLF 的 shebang 到了 X5 会以 `bad interpreter: /bin/sh^M` 失败，那种在车边上会被误读成串口有问题 |
+| `start_bench.sh` | **X5 侧一条命令起两件**（10-21 加，是 `start_bridge.sh` 的超集，原那条照旧能用）：后台 `sudo python3 bridge.py`（日志 `/tmp/bridge.log`）+ 前台 `python3 stream_pi.py --width 1920 --height 1080`，Ctrl-C 经 trap 一起收、不留孤儿；加参数 `nostream` 只起串口。用法 `ssh -t sunrise@192.168.127.10 "sh ~/qoder/vehicle/start_bench.sh [nostream]"`——**`-t` 是必须的**（脚本先 `sudo -v` 要密码；后台进程自己读 tty 会被 SIGTTIN 挂住）。⚠️ **本仓写好、X5 上还没实跑过**，当场只过了 `sh -n` 语法检查；同样**必须 LF**（`.gitattributes` 里 `*.sh text eol=lf` 已钉，带 CRLF 到 X5 会以 `bad interpreter: /bin/sh^M` 失败） |
 | `bridge.py` | PC ↔ 下位机桥接：把上位机控制量经串口转给 STM32，回传状态 |
 | `stream_pi.py` | 树莓派上抓取相机图像并回传给上位机 |
 | `config.yaml` | 车端配置，字段是 `serial_dev` / `baud` / `udp_port` / `pc_ip` / `pc_port` / `stream.{port,width,height,fps}` / `watchdog_ms`（可选 `allowed_sources`）。**没有 `PI_IP` 这个字段**，旧说法作废 |
