@@ -68,6 +68,19 @@ def next_index(folder):
     return top + 1
 
 
+def log_row(hhmmss, path, shape, age):
+    """`capture_log` 的一行。path 一律写成**正斜杠**，跨平台只有一种形状。
+
+    10-21 第一次真跑（合成流，12 张）在 Windows 上落出来的这一列是混的：`--out`
+    给的是 `/`，`os.path.join` 又拼进 `\`。人读无所谓，但事后按前缀过滤或跨机比对
+    路径的脚本会静默漏匹配——而这份日志是秋采唯一能对数的东西。
+    帧龄没有时留空串：`0.00` 会被读成"帧是全新的"，而当时可能是没接 STATUS。
+    """
+    return [hhmmss, path.replace("\\", "/"),
+            "%dx%d" % (shape[1], shape[0]),
+            "" if age is None else "%.2f" % age]
+
+
 def shot_path(folder, batch, day, index):
     """<out>/<类别>/<批次>_<MMDD>_<序号>.jpg"""
     return os.path.join(folder, '%s_%s_%04d.jpg' % (batch, day, index))
@@ -166,9 +179,7 @@ def main():
                 cv2.imwrite(path, frame, [cv2.IMWRITE_JPEG_QUALITY, JPG_QUALITY])
                 saved += 1
                 last_shot = time.time()
-                log.append([time.strftime('%H:%M:%S'), path, '%dx%d' % (frame.shape[1],
-                                                                         frame.shape[0]),
-                            '' if age is None else '%.2f' % age])
+                log.append(log_row(time.strftime('%H:%M:%S'), path, frame.shape, age))
                 print('saved %s' % path)
             elif k == ord('v'):
                 saved_v = record_video(a, feed, day)

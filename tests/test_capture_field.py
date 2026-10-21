@@ -90,3 +90,21 @@ def test_stream_pi_rejects_an_ip_where_the_port_belongs():
     照抄会 ValueError 崩。argparse 至少给一句干净的用法错误。"""
     with pytest.raises(SystemExit):
         stream_pi.parse_args(['192.168.127.100'])
+
+def test_capture_log_path_column_never_mixes_separators():
+    """`capture_log` 的 path 列在 Windows 上也要用正斜杠（10-21 第一次真跑落出来的）。
+
+    那天在笔记本上跑通 12 张，回头读日志发现这一列是混的：
+    `data/autumn_data/_smoke_1021\\sun_front_front_mid\\t01_1021_0001.jpg`——前半是
+    `/`（`--out` 传进来的写法）、后半是 `\`（`os.path.join` 在 Windows 上给的）。
+    人眼看无所谓，但事后拿前缀过滤、跨机比对路径的脚本会**静默漏匹配**：
+    秋采日志是唯一能对数的东西，它不该有一种写法只对一半。
+    """
+    win = os.path.join("data", "raw", "sun_front_front_mid", "t01_1021_0001.jpg")
+    row = cf.log_row("17:03:36", win, (720, 960, 3), 0.023)
+    assert chr(92) not in row[1], row[1]
+    assert row[1].endswith("sun_front_front_mid/t01_1021_0001.jpg")
+    assert row[2] == "960x720"          # 分辨率列 = 宽x高，别写反
+    assert row[3] == "0.02"
+    assert cf.log_row("17:03:36", "a/b/c.jpg", (720, 960, 3), None)[3] == ""   # 无帧龄留空不写 0
+
