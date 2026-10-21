@@ -553,6 +553,7 @@ while(1)
 	         high-speed crab".  STILL TO OBSERVE on the first lifted-wheel run:
 	         that + really points left on this vehicle, and which axle moves. */
 	      double tg = TELEOP_STEER_DEG / 180.0 * 3.14159265358979;
+	      double tl = TELEOP_LATERAL_DEG / 180.0 * 3.14159265358979;  /* 90 deg = travel toward "1" */
 	      switch (retrofit_teleop_gear()) {
 	      case TELEOP_GEAR_LEFT:
 	          angle[0] = tg;  angle[1] = tg;  angle[2] = 0.0; angle[3] = 0.0;
@@ -561,7 +562,7 @@ while(1)
 	          angle[0] = -tg; angle[1] = -tg; angle[2] = 0.0; angle[3] = 0.0;
 	          break;
 	      case TELEOP_GEAR_LATERAL:
-	          angle[0] = tg;  angle[1] = tg;  angle[2] = tg;  angle[3] = tg;
+	          angle[0] = tl;  angle[1] = tl;  angle[2] = tl;  angle[3] = tl;
 	          break;
 	      default:                    /* 0 = straight, and the safe fallback */
 	          angle[0] = angle[1] = angle[2] = angle[3] = 0.0;

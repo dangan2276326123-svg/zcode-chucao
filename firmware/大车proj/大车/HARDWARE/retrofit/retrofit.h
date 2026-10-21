@@ -36,6 +36,14 @@
    vehicle and fix it against what is actually observed; the sample machine
    must be re-checked before inheriting any of it. */
 #define TELEOP_STEER_DEG     20.0
+/* LATERAL is not a bigger LEFT: it is the vendor's own Switch_direction =
+   1.570796 (path_plan.c:212-218), i.e. all four wheels at 90 deg to the
+   chassis.  That is the only shape that makes this vehicle travel toward
+   the tool side -- the author's "1", which is the weeding direction
+   (ledger Hw-30, 2026-10-21).  LEFT/RIGHT keep TELEOP_STEER_DEG.  Author
+   ruling the same day: prove it in TELEOP first, AUTO gets the offset next.
+   Sign (+90 or -90) is to be settled by eye on the bench. */
+#define TELEOP_LATERAL_DEG   90.0
 /* STATUS has no spare byte, so the accepted gear is echoed through the
    current_a placeholder (adc_current_a() returns 0.0f; Fw-5 TODO).  THE A FIELD
    IS NOT AMPS WHILE THIS IS 1.  Same borrowed-slot trick as the Hw-17 battery_v

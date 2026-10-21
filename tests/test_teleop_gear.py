@@ -91,3 +91,46 @@ def test_beat_gap_column_is_last_and_defaults_empty():
     col = wire.RUN_LOG_COLUMNS.index('beat_gap_s')   # 按列名取，不靠末位（末位已两度让位）
     assert wire.run_log_row(*args)[col] == ''
     assert wire.run_log_row(*args, beat_gap_s='4.169')[col] == '4.169'
+
+
+# ---- 固件侧：LATERAL 档的角度（2026-10-21 从 20° 斜行改成 90° 平移） ----
+
+_FW_H = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                     'firmware', '大车proj', '大车', 'HARDWARE', 'retrofit', 'retrofit.h')
+_FW_MAIN = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        'firmware', '大车proj', '大车', 'USER', 'main.c')
+
+
+def _fw_bytes(path):
+    """字节级读 + latin-1 解：`firmware/` 下的文件是 GBK（AGENTS 审查清单第 4 条），
+    按文本编码读会抛或静默换字；这里只找 ASCII 的 `#define` 与赋值，中文注释不参与。"""
+    with open(path, 'rb') as f:
+        return f.read().decode('latin-1')
+
+
+def test_lateral_gear_uses_its_own_90_degree_constant():
+    """LATERAL 必须是 90°，而且**不能顺手把 LEFT/RIGHT 也带到 90°**。
+
+    钉的是两件事：① 常数存在且是 90.0（作者 10-21 口径：无人作业方向 = 刀那一面 = "1"，
+    而正常档零位是"2"，差的就是厂商 `path_plan.c:218` 那个 `Switch_direction=1.570796`）；
+    ② `main.c` 的 `TELEOP_GEAR_LATERAL` 分支用的是 `tl`，LEFT/RIGHT 仍用 `tg`。
+    把三档共用一个常数是这个改动最容易顺手做成的形状——那会让 LEFT/RIGHT 也变成 90°，
+    而"左/右"在 20° 下是斜行、在 90° 下就成了平移，C27 那三条目视判据当场全部失真。
+    """
+    import re
+    hdr = _fw_bytes(_FW_H)
+    hits = re.findall(r'#\s*define\s+TELEOP_LATERAL_DEG\s+([0-9]*\.?[0-9]+)', hdr)
+    assert len(hits) == 1, 'TELEOP_LATERAL_DEG 应当只有一份定义，实测 %r' % (hits,)
+    assert abs(float(hits[0]) - 90.0) < 1e-9, hits[0]
+    assert 'TELEOP_STEER_DEG' in hdr, 'LEFT/RIGHT 那份 20° 常数不许消失'
+
+    main = _fw_bytes(_FW_MAIN)
+    i = main.find('case TELEOP_GEAR_LATERAL:')
+    assert i > 0, 'LATERAL 分支不见了'
+    block = main[i:i + 200]
+    assert 'angle[0] = tl;' in block and 'angle[3] = tl;' in block, block
+    assert 'tg;' not in block, 'LATERAL 不许再用 tg（那是 20° 斜行的量）'
+    assert 'tl = TELEOP_LATERAL_DEG' in main, 'tl 必须由 LATERAL 自己的常数算出来'
+    # LEFT / RIGHT 两档仍走 tg：数一下整份文件里 tg 的赋值处
+    assert main.count('angle[0] = tg;') == 1, 'LEFT 档应当还在用 tg，且只有一处'
+    assert main.count('angle[0] = -tg;') == 1, 'RIGHT 档应当还在用 -tg，且只有一处'
