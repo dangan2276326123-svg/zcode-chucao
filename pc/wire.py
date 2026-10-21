@@ -132,6 +132,14 @@ RUN_LOG_COLUMNS = [
     # 握手砍掉之后，这一列是唯一的凭据，所以它的值来自 config（PC 侧），
     # 不依赖固件回传，也不参与任何准入判定。
     'vehicle_tag',
+    # ---- 2026-10-21 C25/C26 的测量手段：STATUS 回读的车载轮速（m/s） ----
+    # 仍然追加在末尾。加它的理由很具体：作者当天报“`[E]` 停距小于 500 ms，和拔网线一样，测不出来”——
+    # 那一格的判据要的是“按下到真停住”的时间和滑行距离，而表里此前只有 PC **给定**的 vL/vR，
+    # 没有车**测到**的轮速（`retrofit.c` 的 TIM3 四轮均值，`STATUS` 载荷第 0-3 字节，v1/v2 都带）。
+    # ⚠️ 两个边界写在列名旁边，别把它读成万能：① TIM3 在约 0.05 m/s 以下进混叠区，最后那一段滑行
+    #    仍要配录像（执行清单 C25 的“不算过”栏早就写了这条）；② 没有 STATUS 时留空串而不是 0
+    #    ——0 会被读成“车停着”，而当时可能只是没接线。
+    'veh_speed_mps',
 ]
 
 # HUD 用的 ASCII 短码（fix round 1 I-4）。cv2.putText 画不出 CJK——
@@ -300,4 +308,5 @@ def run_log_row(t_rel, fid, state, res, lat_m, lat_comp_m, vl, vr, tool_mm,
         nav_flags,
         beat_gap_s,
         vehicle_tag,
+        '' if st.get('speed_mps') is None else '%.3f' % st['speed_mps'],
     ]

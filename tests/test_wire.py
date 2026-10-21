@@ -142,7 +142,7 @@ def test_run_log_row_carries_l1_events_and_reject_short_codes():
     目前没有生产调用点，只有 `tools/link_probe.py` 在 stdout 打整句。
     """
     assert 'l1_events' in wire.RUN_LOG_COLUMNS
-    assert wire.RUN_LOG_COLUMNS[-5] == 'l1_events'   # 四次追加（tx_frames、nav_flags、beat_gap_s、vehicle_tag）之后
+    assert wire.RUN_LOG_COLUMNS[-6] == 'l1_events'   # 五次追加（tx_frames、nav_flags、beat_gap_s、vehicle_tag、veh_speed_mps）之后
     res = {'status': 'left_only', 'confidence': 0.9, 'lateral_px': 3.0}
     _args = (1.0, 7, 'AUTO', res, 0.01, 0.02, 0.07, 0.07, 0.0, 12.0, None,
              ({}, 0, None), wire.GATE_N)
@@ -194,11 +194,12 @@ def test_tx_frames_is_appended_without_moving_earlier_columns():
     """
     n = len(_PRE_TX_FRAMES_COLUMNS)
     assert wire.RUN_LOG_COLUMNS[:n] == _PRE_TX_FRAMES_COLUMNS
-    assert len(wire.RUN_LOG_COLUMNS) == n + 4
-    assert wire.RUN_LOG_COLUMNS[-4] == 'tx_frames'
-    assert wire.RUN_LOG_COLUMNS[-3] == 'nav_flags'
-    assert wire.RUN_LOG_COLUMNS[-2] == 'beat_gap_s'
-    assert wire.RUN_LOG_COLUMNS[-1] == 'vehicle_tag'
+    assert len(wire.RUN_LOG_COLUMNS) == n + 5
+    assert wire.RUN_LOG_COLUMNS[-5] == 'tx_frames'
+    assert wire.RUN_LOG_COLUMNS[-4] == 'nav_flags'
+    assert wire.RUN_LOG_COLUMNS[-3] == 'beat_gap_s'
+    assert wire.RUN_LOG_COLUMNS[-2] == 'vehicle_tag'
+    assert wire.RUN_LOG_COLUMNS[-1] == 'veh_speed_mps'
 
 
 def test_run_log_row_puts_tx_frames_last_and_defaults_to_the_silent_marker():
@@ -256,3 +257,29 @@ def test_vehicle_tag_defaults_to_empty_not_a_guess():
             ({}, 0, None), wire.GATE_N)
     row = wire.run_log_row(*args)
     assert row[wire.RUN_LOG_COLUMNS.index('vehicle_tag')] == ''
+
+
+def test_veh_speed_column_is_last_and_reads_status_wheel_speed():
+    """末列 `veh_speed_mps` = STATUS 回读的车载轮速；**没 STATUS 时留空，不写 0**。
+
+    这一列是 C25/C26 的测量手段（10-21）：表里原来只有 PC **给定**的 vL/vR，
+    车**测到**的速度（TIM3 四轮均值，`STATUS` 载荷第 0-3 字节）没有落表，
+    所以"按下 `[E]` 到真停住"这段时间只能靠肉眼，作者当场报"测不出来"。
+    派生写在 `run_log_row` 里而不是调用处，跟 `batt_v`/`mcu_mode` 同一套路——
+    数据源只有一个（`st`），不许两处各读一遍。
+    """
+    assert wire.RUN_LOG_COLUMNS[-1] == 'veh_speed_mps'
+    base = (1.0, 7, 'TELEOP', {'status': 'dual', 'confidence': 0.9, 'lateral_px': 3.0},
+            0.01, 0.02, 0.2, 0.2, 0.0, 12.0, None, ({}, 0, None), wire.GATE_N)
+    row = wire.run_log_row(*base)
+    assert row[-1] == '', "没 STATUS 的一拍要留空——0 会被读成'车停着'，而当时可能只是没接线"
+    v1 = {'speed_mps': 0.152, 'current_a': 1.0, 'battery_v': 12.0, 'limits': 0,
+          'mode': 3, 'v': 1}
+    with_v1 = wire.run_log_row(*(base[:10] + (v1,) + base[11:]))
+    assert with_v1[-1] == '0.152'
+    v2 = dict(v1, profile=1, authority=1, loop_alive=42, build_id=100, reject=0)
+    assert wire.run_log_row(*(base[:10] + (v2,) + base[11:]))[-1] == '0.152'
+    # v1 那台旧固件也带 speed：不许因为它没有 E3 那五个键就把这一格留空。
+    # （顺带记一口真实形状：`mcu_mode` 那一列存的是**原始 int**，由 csv writer 转字符串，
+    #  与新加的 `veh_speed_mps`（在 wire 里就格式化成串）不同——这是既有行为，本批不统一。）
+    assert with_v1[wire.RUN_LOG_COLUMNS.index('mcu_mode')] == 3
