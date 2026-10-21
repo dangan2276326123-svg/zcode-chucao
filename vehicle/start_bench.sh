@@ -26,7 +26,13 @@ sleep 1
 if grep -q "bridge up" /tmp/bridge.log; then
     echo "== bridge up: udp:9000 -> /dev/ttyS1 (pid $BR, log /tmp/bridge.log)"
 else
-    echo "!! bridge 没报 up，另开一个终端看 /tmp/bridge.log；没看见那行就是没起来"
+    if kill -0 $BR 2>/dev/null; then
+        echo "?? 日志里还没有那行，但进程还在：python3 的 stdout 被重定向到文件时是**块缓冲**，"
+        echo "   bridge up 那行可能几十秒才落进 /tmp/bridge.log。所以这句不等于没起来——"
+        echo "   判它起没起看笔记本那侧：HUD 收到 STATUS、或 bench_status 出帧即为起。"
+    else
+        echo "!! bridge 进程已经不在了，那才是真没起来：看 /tmp/bridge.log（多半是 /dev/ttyS1 权限或串口被占）"
+    fi
 fi
 
 if [ "$1" = "nostream" ]; then
