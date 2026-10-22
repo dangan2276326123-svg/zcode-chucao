@@ -297,6 +297,8 @@ def main():
     # 手操转向档位（NAV 的 flags 字节）：`g` 循环 直行->左->右。默认直行 = 现状，
     # 所以本批之后不按键的行为与之前逐字相同。
     tele_gear = wire.GEAR_STRAIGHT
+    # Pc-13：上一拍的不一致短码，只用来把 stdout 打印压成"边沿一次"。
+    mism_prev = None
 
     with open(csv_path, 'w', newline='', encoding='utf-8') as fcsv:
         wr = csv.writer(fcsv)
@@ -416,6 +418,18 @@ def main():
                     sm.state, usable, vl, vr, tool_mm, permit, gear=tele_gear):
                 send(ftype, payload)
 
+            # ---- Pc-13：拿板子回上来的 mode 对一眼 PC 自己记的状态 ----
+            # 只做"让人看见"这一件事：**不自动抢权、也不自动交权**（判错的自动改权限
+            # 比看不见更糟）。不一致的短码同时进 HUD、stdout（边沿打一次，不刷屏）
+            # 和 `run_log.csv` 的 `auth_mismatch` 列（那一列在 wire.run_log_row 里就地算）。
+            _mcu_mode = rx.last.get('mode') if (rx is not None and rx.last) else None
+            mism = wire.authority_mismatch(sm.state, _mcu_mode)
+            if mism and not mism_prev:
+                print('WARNING Pc-13: PC thinks state=%s but MCU reports mode=%s (%s)'
+                      ' -- the vehicle is NOT doing what this screen says'
+                      % (sm.state, _mcu_mode, mism))
+            mism_prev = mism
+
             t_rel = t0 - t0_first
             if not args.no_gui:
                 import cv2
@@ -474,6 +488,9 @@ def main():
                         alerts.append('bad:%d' % rx.bad)
                     if rx.stale(t0):
                         alerts.append('MCU:STALE')
+                if mism:
+                    # 画在告警那一组（红色）：这一条的意思是"屏幕上这个状态不是车现在的状态"
+                    alerts.append('!!MCU m%s %s!!' % (_mcu_mode, mism))
                 if sm.needs_confirm:
                     # E3 §5.2 L2.5：闸门是一次性的，必须让操作者看得见"现在按 [C]
                     # 才算数"。文案跟着 I-1 的两个分支走（视觉仍坏着 / 已交回人工）。

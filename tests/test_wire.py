@@ -142,7 +142,7 @@ def test_run_log_row_carries_l1_events_and_reject_short_codes():
     目前没有生产调用点，只有 `tools/link_probe.py` 在 stdout 打整句。
     """
     assert 'l1_events' in wire.RUN_LOG_COLUMNS
-    assert wire.RUN_LOG_COLUMNS[-6] == 'l1_events'   # 五次追加（tx_frames、nav_flags、beat_gap_s、vehicle_tag、veh_speed_mps）之后
+    assert wire.RUN_LOG_COLUMNS[-7] == 'l1_events'   # 六次追加（tx_frames、nav_flags、beat_gap_s、vehicle_tag、veh_speed_mps、auth_mismatch）之后
     res = {'status': 'left_only', 'confidence': 0.9, 'lateral_px': 3.0}
     _args = (1.0, 7, 'AUTO', res, 0.01, 0.02, 0.07, 0.07, 0.0, 12.0, None,
              ({}, 0, None), wire.GATE_N)
@@ -188,18 +188,20 @@ def test_tx_frames_is_appended_without_moving_earlier_columns():
     """位置锚：前 n 列一字不动，之后每追加一列只许往末尾挂。
 
     10-14 手操档位又追加了一列 `nav_flags` ⇒ 这里从 `n + 1` 改成 `n + 2`、
-    `tx_frames` 从末位让到倒数第二。10-15（台账 Pc-10）再加 `vehicle_tag` ⇒ `n + 4`。
+    `tx_frames` 从末位让到倒数第二。10-15（台账 Pc-10）再加 `vehicle_tag` ⇒ `n + 4`；
+    10-21 两次：`veh_speed_mps` ⇒ `n + 5`、Pc-13 的 `auth_mismatch` ⇒ `n + 6`。
     **改的是锚，不是历史**：快照本身没动，
     所以"前面那些列的列位被动过"这种破坏照样会红。
     """
     n = len(_PRE_TX_FRAMES_COLUMNS)
     assert wire.RUN_LOG_COLUMNS[:n] == _PRE_TX_FRAMES_COLUMNS
-    assert len(wire.RUN_LOG_COLUMNS) == n + 5
-    assert wire.RUN_LOG_COLUMNS[-5] == 'tx_frames'
-    assert wire.RUN_LOG_COLUMNS[-4] == 'nav_flags'
-    assert wire.RUN_LOG_COLUMNS[-3] == 'beat_gap_s'
-    assert wire.RUN_LOG_COLUMNS[-2] == 'vehicle_tag'
-    assert wire.RUN_LOG_COLUMNS[-1] == 'veh_speed_mps'
+    assert len(wire.RUN_LOG_COLUMNS) == n + 6
+    assert wire.RUN_LOG_COLUMNS[-6] == 'tx_frames'
+    assert wire.RUN_LOG_COLUMNS[-5] == 'nav_flags'
+    assert wire.RUN_LOG_COLUMNS[-4] == 'beat_gap_s'
+    assert wire.RUN_LOG_COLUMNS[-3] == 'vehicle_tag'
+    assert wire.RUN_LOG_COLUMNS[-2] == 'veh_speed_mps'
+    assert wire.RUN_LOG_COLUMNS[-1] == 'auth_mismatch'
 
 
 def test_run_log_row_puts_tx_frames_last_and_defaults_to_the_silent_marker():
@@ -259,8 +261,12 @@ def test_vehicle_tag_defaults_to_empty_not_a_guess():
     assert row[wire.RUN_LOG_COLUMNS.index('vehicle_tag')] == ''
 
 
-def test_veh_speed_column_is_last_and_reads_status_wheel_speed():
-    """末列 `veh_speed_mps` = STATUS 回读的车载轮速；**没 STATUS 时留空，不写 0**。
+def test_veh_speed_column_keeps_its_slot_and_reads_status_wheel_speed():
+    """`veh_speed_mps` = STATUS 回读的车载轮速；**没 STATUS 时留空，不写 0**。
+
+    列位：10-21 加它时它是末列，同日 Pc-13 又往后挂了一列 ⇒ 现在它是**倒数第二**。
+    这里改成按列名取下标而不是 `[-1]`——按 `[-1]` 写的断言每追加一列就要改一次，
+    而"这一列读的是 STATUS 那个字段"这件事与它排第几无关。
 
     这一列是 C25/C26 的测量手段（10-21）：表里原来只有 PC **给定**的 vL/vR，
     车**测到**的速度（TIM3 四轮均值，`STATUS` 载荷第 0-3 字节）没有落表，
@@ -268,18 +274,80 @@ def test_veh_speed_column_is_last_and_reads_status_wheel_speed():
     派生写在 `run_log_row` 里而不是调用处，跟 `batt_v`/`mcu_mode` 同一套路——
     数据源只有一个（`st`），不许两处各读一遍。
     """
-    assert wire.RUN_LOG_COLUMNS[-1] == 'veh_speed_mps'
+    assert wire.RUN_LOG_COLUMNS[-2] == 'veh_speed_mps'
+    i = wire.RUN_LOG_COLUMNS.index('veh_speed_mps')
     base = (1.0, 7, 'TELEOP', {'status': 'dual', 'confidence': 0.9, 'lateral_px': 3.0},
             0.01, 0.02, 0.2, 0.2, 0.0, 12.0, None, ({}, 0, None), wire.GATE_N)
     row = wire.run_log_row(*base)
-    assert row[-1] == '', "没 STATUS 的一拍要留空——0 会被读成'车停着'，而当时可能只是没接线"
+    assert row[i] == '', "没 STATUS 的一拍要留空——0 会被读成'车停着'，而当时可能只是没接线"
     v1 = {'speed_mps': 0.152, 'current_a': 1.0, 'battery_v': 12.0, 'limits': 0,
           'mode': 3, 'v': 1}
     with_v1 = wire.run_log_row(*(base[:10] + (v1,) + base[11:]))
-    assert with_v1[-1] == '0.152'
+    assert with_v1[i] == '0.152'
     v2 = dict(v1, profile=1, authority=1, loop_alive=42, build_id=100, reject=0)
-    assert wire.run_log_row(*(base[:10] + (v2,) + base[11:]))[-1] == '0.152'
+    assert wire.run_log_row(*(base[:10] + (v2,) + base[11:]))[i] == '0.152'
     # v1 那台旧固件也带 speed：不许因为它没有 E3 那五个键就把这一格留空。
     # （顺带记一口真实形状：`mcu_mode` 那一列存的是**原始 int**，由 csv writer 转字符串，
     #  与新加的 `veh_speed_mps`（在 wire 里就格式化成串）不同——这是既有行为，本批不统一。）
     assert with_v1[wire.RUN_LOG_COLUMNS.index('mcu_mode')] == 3
+
+
+# ---- Pc-13（2026-10-21）：PC 记的状态 vs 板子回报的 mode ----
+
+def test_authority_mismatch_table():
+    """一张表钉住"什么时候算不一致"。
+
+    现场证据是 `results/tel_C27/run_log.csv` 那 1154 拍 `state=TELEOP` 而 `mcu_mode`=2。
+    三条"不算不一致"各有理由，写在这里防止将来被当成漏报：
+      · `mcu_mode is None` —— 一帧 STATUS 都没收到，**没有证据**说它一致，也不许说它不一致；
+      · `state == 'ESTOP'` 而板子还没进 2 —— 拍了急停、板子下一拍才到，报出来就是每次按
+        `[E]` 都闪一条假告警；
+      · `state == 'LIFT'` 而板子报 1 —— LIFT 是 PC 侧的恢复态、仍持权，板子那边就是 AUTO。
+    """
+    cases = [
+        ('TELEOP', 2, wire.MISMATCH_NOT_IN_HAND),   # 今天那 1154 拍
+        ('TELEOP', 0, wire.MISMATCH_NOT_IN_HAND),   # 板子已交回遥控
+        ('AUTO', 2, wire.MISMATCH_NOT_IN_HAND),
+        ('LIFT', 0, wire.MISMATCH_NOT_IN_HAND),
+        ('AUTO', 1, None),
+        ('LIFT', 1, None),
+        ('TELEOP', 3, None),
+        ('MANUAL', 0, None),
+        ('MANUAL', 1, wire.MISMATCH_MCU_HOLDS),     # 硬币另一面：PC 以为交回了
+        ('MANUAL', 3, wire.MISMATCH_MCU_HOLDS),
+        ('ESTOP', 2, None),
+        ('ESTOP', 0, None),
+        ('TELEOP', None, None),
+    ]
+    for state, mode, want in cases:
+        got = wire.authority_mismatch(state, mode)
+        assert got == want, (state, mode, got, want)
+
+
+def test_auth_mismatch_column_keeps_three_states_apart():
+    """`-` / `ok` / 短码 三态不许混。
+
+    写成空串就会被读成"这一版程序没接线"（与 `tx_frames` 那一列同一套规矩）；
+    把"没有 STATUS"写成 `ok` 更糟——那是把没测到当成测到了。
+    """
+    assert wire.auth_mismatch_text('TELEOP', None) == '-'
+    assert wire.auth_mismatch_text('TELEOP', 3) == 'ok'
+    assert wire.auth_mismatch_text('TELEOP', 2) == wire.MISMATCH_NOT_IN_HAND
+
+
+def test_auth_mismatch_is_appended_last_and_filled_from_the_row_itself():
+    """列在末位（不动前面的位置契约），值由 `run_log_row` 自己算——
+    让调用方传就等于给它一个忘传的机会。"""
+    assert wire.RUN_LOG_COLUMNS[-1] == 'auth_mismatch'
+    res = {'status': 'dual', 'confidence': 0.9, 'lateral_px': 3.0}
+    st2 = {'seq': 1, 'mode': 2, 'v': 2, 'speed_mps': 0.0}
+    st3 = dict(st2, mode=3)
+    args = (1.0, 7, 'TELEOP', res, 0.0, 0.0, 0.0, 0.0, 0.0, 12.0)
+    row_bad = wire.run_log_row(*args, st2, ({}, 0, None), wire.GATE_N)
+    row_ok = wire.run_log_row(*args, st3, ({}, 0, None), wire.GATE_N)
+    row_none = wire.run_log_row(*args, None, ({}, 0, None), wire.GATE_N)
+    for row in (row_bad, row_ok, row_none):
+        assert len(row) == len(wire.RUN_LOG_COLUMNS)
+    assert row_bad[-1] == wire.MISMATCH_NOT_IN_HAND
+    assert row_ok[-1] == 'ok'
+    assert row_none[-1] == '-'

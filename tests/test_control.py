@@ -1226,3 +1226,35 @@ def test_fresh_out_dir_refuses_to_overwrite_a_run_log(tmp_path):
         fresh_out_dir(out)
     assert 'overwrite' in str(got.value).lower()   # 报错要说出补救办法
     assert fresh_out_dir(out, allow_overwrite=True) == path   # 明知故犯仍要能走
+
+
+def test_pc13_flag_is_visible_in_both_the_csv_and_the_hud(tmp_path, monkeypatch):
+    """台账 Pc-13 的原始症状要在**主循环**里同时可见，不是只在 wire 层成立。
+
+    现场形状：`results/tel_C27/run_log.csv` 有 1154 拍 `state=TELEOP` 而 `mcu_mode`=2，
+    表里两列各说各话、屏幕上只有一个 `STATE:TELEOP`，所以那一次被读成"轮子不动"。
+    这一条钉三件事：① 不一致时 `auth_mismatch` 列每拍都落短码；② HUD 那一行出现
+    `NOT-IN-HAND`（红色告警组）；③ 一致时（板子真在 mode=3）列写 `ok` 且**不许**出现告警——
+    少了这半边，"永远报警"的实现也能把前两条测绿。
+    """
+    col = wire.RUN_LOG_COLUMNS.index('auth_mismatch')
+    old = _MCU_STATUS['mode']
+    try:
+        _MCU_STATUS['mode'] = 2                     # 板子在急停锁存里
+        bad = _drive_main(tmp_path, monkeypatch,
+                          results=[_USABLE, _USABLE],
+                          states=['TELEOP', 'TELEOP'],
+                          permit=wire.GATE_N, gui=True)
+        assert [row[col] for row in bad['rows']] == [wire.MISMATCH_NOT_IN_HAND] * 2
+        assert 'NOT-IN-HAND' in _hud_text(bad, 0)
+        assert 'NOT-IN-HAND' in _hud_text(bad, 1)
+
+        _MCU_STATUS['mode'] = 3                     # 板子确实在手操
+        good = _drive_main(tmp_path / 'ok', monkeypatch,
+                           results=[_USABLE, _USABLE],
+                           states=['TELEOP', 'TELEOP'],
+                           permit=wire.GATE_N, gui=True)
+        assert [row[col] for row in good['rows']] == ['ok'] * 2
+        assert 'NOT-IN-HAND' not in _hud_text(good, 0)
+    finally:
+        _MCU_STATUS['mode'] = old

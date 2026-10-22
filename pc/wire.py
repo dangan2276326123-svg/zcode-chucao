@@ -140,6 +140,12 @@ RUN_LOG_COLUMNS = [
     #    仍要配录像（执行清单 C25 的“不算过”栏早就写了这条）；② 没有 STATUS 时留空串而不是 0
     #    ——0 会被读成“车停着”，而当时可能只是没接线。
     'veh_speed_mps',
+    # ---- 2026-10-21 Pc-13：PC 记的状态与板子回报的 mode 对不对得上（末位追加） ----
+    # 取值 `'-'`（没有 STATUS 可判）/ `'ok'` / 不一致短码。加它的理由很具体：今天那
+    # 1154 拍"屏幕写 TELEOP、板子在 ESTOP"**在表里本来看不出来**——`state` 与 `mcu_mode`
+    # 两列各说各话，要人自己去对。这一列把"对一眼"变成表里的记录。
+    # 值在 `run_log_row()` 里就地算（不接新形参）：让调用方传就等于给它一个忘传的机会。
+    'auth_mismatch',
 ]
 
 # HUD 用的 ASCII 短码（fix round 1 I-4）。cv2.putText 画不出 CJK——
@@ -171,6 +177,56 @@ def reject_short(code):
     if code is None:
         return ''
     return REJECT_SHORT.get(code, 'UNKNOWN-%d' % code)
+
+
+# ---- Pc-13（2026-10-21）：PC 自己记的状态 vs 板子回报的 mode ----
+# 现场证据是 `results/tel_C27/run_log.csv`：**1154 拍 `state=TELEOP` 而 `mcu_mode`=2**，
+# `authority` 全程 0、`reject` 出现过 4（ESTOP-LATCH）。那一跑被读成"按了 `g` 轮子不动
+# ⇒ 转向形状可疑"，白怀疑了固件一次；真实原因是根本没进手操——板子在急停锁存里，
+# 把 NAV 整条丢掉（那是对的），而 PC 的状态机是它自己的一本账：`pc/main.py` 里能改
+# `sm.state` 的八处调用没有一处来自 STATUS 回读（`rx.last` 只被读两次：画 HUD、写 CSV）。
+# 安全上不亏（不持权就不执行），**操作上亏**：屏幕说"我在开车"，车上不是。
+# 本函数只做"看见"这一件事——**不自动抢权、也不自动交权**：那种自动改权限的东西
+# 一旦判错，比看不见更糟（AGENTS 的 fail-closed 规矩）。
+MCU_MODE_MANUAL = 0
+MCU_MODE_AUTO = 1
+MCU_MODE_ESTOP = 2
+MCU_MODE_TELEOP = 3
+
+MISMATCH_NOT_IN_HAND = 'NOT-IN-HAND'   # PC 以为自己在开车，板子说它没在
+MISMATCH_MCU_HOLDS = 'MCU-HOLDS'       # PC 以为已交回人工，板子还在持权
+
+
+def authority_mismatch(state, mcu_mode):
+    """返回不一致的短码，一致或**无从判断**时返回 None。
+
+    三种"无从判断"要分开，它们都不是缺陷：
+      · `mcu_mode is None` —— 一帧 STATUS 都没收到（链路断、刚开机）。没有证据说它不一致，
+        也**不许**写成一致；调用方落 `'-'`。
+      · 板子回的是 v1 的 14 字节帧（没有 `mode` 之外的新字段，但 `mode` 一直是有的）——
+        这一条不适用，v1 也有 mode，所以照判。
+      · `state == 'ESTOP'` —— PC 已经拍了急停，板子在不在 ESTOP 都可能是**下一拍**才到；
+        这一格故意不报，否则每次按 `[E]` 都会闪一条假告警。
+    反过来 `state == 'MANUAL'` 而板子报 1/3 是**要报**的：那意味着 PC 以为交回了、
+    车上其实还在听 PC 之前那条持权状态，是同一枚硬币的另一面。
+    """
+    if mcu_mode is None:
+        return None
+    if state in HOLDING and mcu_mode in (MCU_MODE_MANUAL, MCU_MODE_ESTOP):
+        return MISMATCH_NOT_IN_HAND
+    if state == 'MANUAL' and mcu_mode in (MCU_MODE_AUTO, MCU_MODE_TELEOP):
+        return MISMATCH_MCU_HOLDS
+    return None
+
+
+def auth_mismatch_text(state, mcu_mode):
+    """`run_log.csv` 的 `auth_mismatch` 列：`'-'`=没有 STATUS 可判，`'ok'`=一致，
+    其余是不一致的短码。**不写空串**——空串会被读成"这一版程序没接线"（与 `tx_frames`
+    那列同一套规矩）。"""
+    if mcu_mode is None:
+        return '-'
+    return authority_mismatch(state, mcu_mode) or 'ok'
+
 
 
 def frames_for_state(state, usable, vl, vr, tool_mm, permit=GATE_N, gear=GEAR_STRAIGHT):
@@ -309,4 +365,7 @@ def run_log_row(t_rel, fid, state, res, lat_m, lat_comp_m, vl, vr, tool_mm,
         beat_gap_s,
         vehicle_tag,
         '' if st.get('speed_mps') is None else '%.3f' % st['speed_mps'],
+        # Pc-13：拿本行的 `state` 与 STATUS 回读的 `mode` 对一眼。值在这里算而不是
+        # 由调用方传——见 `RUN_LOG_COLUMNS` 末位那条注释里写的理由。
+        auth_mismatch_text(state, st.get('mode')),
     ]

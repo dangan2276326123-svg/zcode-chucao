@@ -78,13 +78,16 @@ def test_run_log_row_nav_flags_defaults_empty_not_zero():
     assert wire.run_log_row(*args, nav_flags='2')[i] == '2'
 
 
-def test_beat_gap_column_is_last_and_defaults_empty():
+def test_beat_gap_column_keeps_its_slot_and_defaults_empty():
     """`beat_gap_s` 缺省必须是空串，不是 `0.000`。
 
     0 会被读成"这一拍节拍完美"，而空串才是"这一列没有可用记录"（回放模式、第一拍）。
     这条与 `tx_frames` 的 `'-'`、`nav_flags` 的 `''` 是同一条纪律：不拿默认值冒充读数。
+
+    函数名里的 `is_last` 今天去掉了——它从写下那天起就没真当过末位（先后让位给
+    `vehicle_tag`、`veh_speed_mps`、`auth_mismatch` 三列），一个说谎的名字比没名字更糟。
     """
-    assert wire.RUN_LOG_COLUMNS[-3] == 'beat_gap_s'   # 追加链：10-15 Pc-10 让位给 vehicle_tag，10-21 轮速列又让它退到 [-1]
+    assert wire.RUN_LOG_COLUMNS[-4] == 'beat_gap_s'   # 追加链：vehicle_tag → veh_speed_mps → auth_mismatch
     res = {'status': 'dual', 'confidence': 0.9, 'lateral_px': 3.0}
     args = (1.0, 7, 'AUTO', res, 0.01, 0.02, 0.07, 0.07, 0.0, 12.0, None,
             ({}, 0, None), wire.GATE_N)
