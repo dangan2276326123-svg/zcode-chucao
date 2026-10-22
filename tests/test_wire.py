@@ -292,7 +292,7 @@ def test_veh_speed_column_keeps_its_slot_and_reads_status_wheel_speed():
     assert with_v1[wire.RUN_LOG_COLUMNS.index('mcu_mode')] == 3
 
 
-# ---- Pc-13（2026-10-21）：PC 记的状态 vs 板子回报的 mode ----
+# ---- Pc-13（2026-10-22）：PC 记的状态 vs 板子回报的 mode ----
 
 def test_authority_mismatch_table():
     """一张表钉住"什么时候算不一致"。
@@ -351,3 +351,39 @@ def test_auth_mismatch_is_appended_last_and_filled_from_the_row_itself():
     assert row_bad[-1] == wire.MISMATCH_NOT_IN_HAND
     assert row_ok[-1] == 'ok'
     assert row_none[-1] == '-'
+
+
+# ---- AUTO 共角通道（2026-10-22，台账 Hw-30）----
+
+def test_crab_deg_only_rides_on_a_live_auto_frame():
+    """共角只在"AUTO 且这一拍可用"那一支上线，其余一律 9 字节。
+
+    锁零那一类（LIFT、AUTO 但瞎了）不许带微调：那等于"车停着但角度听 PC 的"，
+    恢复的那一拍会带着一个没人复核过的角度起步。回到 9 字节 = 让固件用它自己的
+    默认 0，而不是靠 PC 自觉传 0.0。
+    """
+    def crab_of(state, usable, **kw):
+        for t, payload in wire.frames_for_state(state, usable, 0.1, 0.1, 0.0,
+                                                wire.GATE_N, **kw):
+            if t == P.TYPE_NAV:
+                return len(payload), P.nav_crab_deg(payload)
+        raise AssertionError('no NAV for %s' % state)
+
+    assert crab_of('AUTO', True, crab_deg=-4.5) == (13, -4.5)
+    assert crab_of('AUTO', False, crab_deg=-4.5) == (9, None)     # 瞎了：微调不上线
+    assert crab_of('LIFT', True, crab_deg=-4.5) == (9, None)
+    assert crab_of('TELEOP', True, crab_deg=-4.5) == (9, None)    # 手操走档位，不走共角
+    assert crab_of('AUTO', True) == (9, None)                     # 没给 = 旧形状
+
+
+def test_nav_v2_is_backward_compatible_at_the_byte_level():
+    """9 与 13 字节的前 9 字节必须逐字相同——旧固件的守卫是 `len < 9`，
+    字段都在固定偏移上，所以多发 4 个字节不会让任何已有字段错位。
+    这句话是本批敢扩 NAV 而不改帧型的唯一理由，钉住它。"""
+    v1 = P.pack_nav(0.13, 0.21, 2)
+    v2 = P.pack_nav(0.13, 0.21, 2, crab_deg=7.25)
+    assert v2[:9] == v1
+    assert P.unpack_nav(v1) == P.unpack_nav(v2)          # arity 不变
+    assert abs(P.nav_crab_deg(v2) - 7.25) < 1e-6
+    with pytest.raises(ValueError):
+        P.unpack_nav(b'x' * 10)                          # 10/11/12 字节一律拒

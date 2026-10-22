@@ -50,6 +50,21 @@
    probe; set to 0 and rebuild to give the slot back. */
 #define RETRO_REPORT_TELEOP_GEAR 1
 #define RETRO_TELEOP_MAX 0.2f
+/* AUTO crab (2026-10-22, ledger Hw-30).  The vendor's "straight ahead" zero
+   physically points at the author's "2" (vehicle left), while weeding travels
+   toward "1" -- the side the knives hang on.  The vendor's own lateral mode
+   is exactly this offset: path_plan.c:212-218 writes Switch_direction =
+   1.570796 rad = 90 deg and main.c adds it to all four wheels with per-side
+   signs, so all four stay parallel and the chassis shifts sideways.
+   Fw-11 zeroed that sum in AUTO/TELEOP (correctly, so the RC cannot steer an
+   unmanned vehicle); the replacement is a PC-supplied trim on top of a
+   compile-time base, not the RC switch.  SIGN (+90 or -90) is to be settled
+   by eye on the bench -- which side "1" is has not been observed yet. */
+#define AUTO_CRAB_BASE_DEG   90.0
+/* How far the PC may bend that base per frame.  15 deg is an envelope, not a
+   tuned gain: the trim law itself is not wired yet (pc/main.py still steers
+   AUTO differentially), this only opens the channel. */
+#define AUTO_CRAB_TRIM_MAX   15.0
 
 /* ---- MODE.request (must equal common/protocol.py) ---- */
 #define MODE_REQ_MANUAL       0x00
@@ -64,7 +79,12 @@
 #define PROFILE_ID   PROFILE_PREV   /* change vehicle = edit this line + rebuild; never hot-switched at run time */
 
 /* ---- entry permit (A5): compile-time constant, NEVER sent by the PC ---- */
-#define PERMIT_GATE_N 1    /* gate N: run along the row only, knives forced up, no lateral travel */
+#define PERMIT_GATE_N 1    /* gate N: run along the row only, knives forced up, no
+                              * LATERAL SLIDE travel -- "lateral" here is the middle
+                              * tool offset (tool_offset_mm), NOT the chassis.  The
+                              * four shared wheel angles are a different axis entirely
+                              * (ledger Hw-30, corrected 2026-10-21 after this comment
+                              * was read as "AUTO may not crab"). */
 #define PERMIT_GATE_F 2    /* gate F: knives may drop and lateral travel is allowed */
 #define ENTRY_PERMIT  PERMIT_GATE_N
 
@@ -131,6 +151,7 @@ void retrofit_clear_estop(void);   /* manual reset only (key/button path) */
 uint8_t retrofit_mode(void);
 uint8_t retrofit_sbus_ok(void); /* H2.3: SBUS fresh within timeout? */
 uint8_t retrofit_teleop_gear(void);  /* 2026-10-14: gear read by main.c */
+double retrofit_auto_angle(void);    /* 2026-10-21: AUTO base + PC trim, radians */
 uint8_t retrofit_estop_latched(void);   /* 1 while ESTOP latched */
 
 

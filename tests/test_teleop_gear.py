@@ -102,6 +102,8 @@ _FW_H = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
                      'firmware', '大车proj', '大车', 'HARDWARE', 'retrofit', 'retrofit.h')
 _FW_MAIN = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                         'firmware', '大车proj', '大车', 'USER', 'main.c')
+_FW_C = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                   'firmware', '大车proj', '大车', 'HARDWARE', 'retrofit', 'retrofit.c')
 
 
 def _fw_bytes(path):
@@ -137,3 +139,36 @@ def test_lateral_gear_uses_its_own_90_degree_constant():
     # LEFT / RIGHT 两档仍走 tg：数一下整份文件里 tg 的赋值处
     assert main.count('angle[0] = tg;') == 1, 'LEFT 档应当还在用 tg，且只有一处'
     assert main.count('angle[0] = -tg;') == 1, 'RIGHT 档应当还在用 -tg，且只有一处'
+
+
+def test_auto_crab_constants_and_the_call_site():
+    """AUTO 共角的两个常数、`main.c` 真的调用它、以及 `retrofit.c` 的两道守卫。
+
+    钉四件事，每件都对应一个会静默发生的错法：
+      · 常数是 90 且只有一个（写了第二份就会有两套"朝 1"）；
+      · `main.c` 的 AUTO 分支调 `retrofit_auto_angle()` 而不是又写死一个 0.0
+        ——写死 0.0 就是 Fw-11 那条"抹 0"，本批要换掉的正是它；
+      · `retrofit.c` 里 13 字节的读法带**钳位**与 **NaN 兜底**（对 NaN 的一切比较都是
+        false，只钳位会让 NaN 原样进伺服角）；
+      · 9 字节那一支显式把 trim 归 0，不留着上一帧的值。
+    """
+    import re
+    hdr = _fw_bytes(_FW_H)
+    base = re.findall(r'#\s*define\s+AUTO_CRAB_BASE_DEG\s+([0-9]*\.?[0-9]+)', hdr)
+    trim = re.findall(r'#\s*define\s+AUTO_CRAB_TRIM_MAX\s+([0-9]*\.?[0-9]+)', hdr)
+    assert len(base) == 1 and abs(float(base[0]) - 90.0) < 1e-9, base
+    assert len(trim) == 1 and 0 < float(trim[0]) <= 30, trim
+
+    main = _fw_bytes(_FW_MAIN)
+    i = main.find('if (retrofit_mode() == MODE_AUTO) {')
+    assert i > 0
+    block = main[i:main.find('} else if', i)]
+    assert 'retrofit_auto_angle();' in block, block[-200:]
+    assert 'angle[0] = angle[1] = angle[2] = angle[3] = 0.0;' not in block,         'AUTO 分支还写死 0.0 = Fw-11 那条"抹 0"没换掉'
+
+    c = _fw_bytes(_FW_C)
+    assert 'if (len >= 13)' in c and 'nav_crab_deg != nav_crab_deg' in c
+    assert 'AUTO_CRAB_TRIM_MAX' in c
+    j = c.find('if (len >= 13)')
+    assert 'nav_crab_deg = 0.0f;' in c[j:j + 600], '9 字节那一支要显式归 0'
+    assert 'double retrofit_auto_angle(void)' in c

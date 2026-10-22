@@ -41,6 +41,7 @@ static uint8_t  owner = OWNER_RC;          /* who may drive right now */
 static uint8_t  auth_reason = AUTH_BOOT;   /* last transition, reported in STATUS */
 static uint8_t  reject_code = REJ_NONE;    /* last refusal, reported in STATUS */
 static volatile uint8_t nav_gear = TELEOP_GEAR_STRAIGHT;  /* last accepted gear */
+static volatile float nav_crab_deg = 0.0f;  /* last accepted AUTO trim, deg (Hw-30) */
 static uint8_t  pc_profile = PROFILE_NONE_SAFE;  /* 0 until handshake */
 static uint8_t  handshake_ok = 0;
 /* 10-10 AUTHOR RULING: field lever revoked -- field_latched and
@@ -171,6 +172,23 @@ void retrofit_on_nav_frame(const uint8_t *payload, uint16_t len, uint16_t seq)
         reject_code = REJ_GEAR;
     } else {
         nav_gear = payload[8];
+    }
+    /* NAV v2 (13 B): the last field is the AUTO crab trim in degrees.
+       A 9 B frame -- every tool that predates this change -- leaves it at 0,
+       i.e. "no trim", the same behaviour as before the field existed.
+       Two guards, both deliberate:
+         * clamp to +/-AUTO_CRAB_TRIM_MAX: a number off the wire is never
+           trusted to be sane (same rule as the speed clamp below);
+         * the NaN test: every comparison against NaN is false, so a clamp
+           alone would let a NaN through untouched and straight into the
+           servo angle.  Not-a-number therefore falls back to 0. */
+    if (len >= 13) {
+        memcpy(&nav_crab_deg, &payload[9], 4);
+        if (nav_crab_deg != nav_crab_deg) nav_crab_deg = 0.0f;
+        if (nav_crab_deg >  AUTO_CRAB_TRIM_MAX) nav_crab_deg =  AUTO_CRAB_TRIM_MAX;
+        if (nav_crab_deg < -AUTO_CRAB_TRIM_MAX) nav_crab_deg = -AUTO_CRAB_TRIM_MAX;
+    } else {
+        nav_crab_deg = 0.0f;
     }
     /* guard: sane range only */
     if (cmd_vl < -1.0f) cmd_vl = -1.0f;
@@ -372,6 +390,7 @@ static void set_owner(uint8_t who, uint8_t reason)
        from the previous owner must not be able to drop a knife. */
     cmd_vl = 0.0f; cmd_vr = 0.0f;
     tool_offset_mm = 0.0f;
+    nav_crab_deg = 0.0f;   /* new owner -> stale trim must not survive */
     lift_bits = 0x07;          /* all beams up */
     last_tool_ms = 0;          /* forget the previous owner's TOOL freshness */
 }
@@ -603,6 +622,15 @@ static void stepper_update(void)
 uint8_t retrofit_teleop_gear(void)
 {
     return nav_gear;   /* last gear accepted by retrofit_on_nav_frame */
+}
+
+/* AUTO wheel angle actually sent to the servos: compile-time base plus the
+   PC-supplied trim, in radians.  main.c writes this to all four angle[]
+   entries, so the chassis keeps a parallel (crab) shape. */
+double retrofit_auto_angle(void)
+{
+    return (double)(AUTO_CRAB_BASE_DEG + (double)nav_crab_deg)
+           * (3.14159265358979 / 180.0);
 }
 
 uint8_t retrofit_estop_latched(void)

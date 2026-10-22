@@ -531,7 +531,13 @@ while(1)
 	     the calibrated straight position BEFORE send_angle runs - the
 	     gate further below is too late, path_plan() rewrote angle[]. */
 	  if (retrofit_mode() == MODE_AUTO) {
-	      angle[0] = angle[1] = angle[2] = angle[3] = 0.0;
+	      /* AUTO crab (ledger Hw-30): base 90 deg + the PC-supplied trim, so
+	         the vehicle travels toward the knife side ("1") instead of the
+	         vendor straight-ahead zero (which points at "2" on this machine).
+	         The Fw-11 intent is kept: the RC lateral switch still cannot steer
+	         an unmanned vehicle -- the trim below comes only from a NAV frame
+	         accepted from the current owner, and defaults to 0 without one. */
+	      angle[0] = angle[1] = angle[2] = angle[3] = retrofit_auto_angle();
 	  } else if (retrofit_mode() == MODE_TELEOP) {
 	      /* TELEOP steering gears (2026-10-14, source corrected 2026-10-15).
 	         The +/-20 pair shipped on 10-14 was copied from path_plan.c:97-110.

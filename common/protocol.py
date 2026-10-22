@@ -152,15 +152,48 @@ def unpack_frame(data: bytes):
 
 # ---- payload builders ----------------------------------------------------
 
-def pack_nav(v_left: float, v_right: float, flags: int = 0) -> bytes:
-    """NAV payload: left/right wheel speeds m/s, flags bitfield."""
-    return struct.pack('<ffB', v_left, v_right, flags)
+NAV_LEN_V1 = 9        # vL, vR, flags
+NAV_LEN_V2 = 13       # + crab_deg (f32)：AUTO 共角微调，2026-10-22 加（台账 Hw-30）
+
+
+def pack_nav(v_left: float, v_right: float, flags: int = 0,
+             crab_deg=None) -> bytes:
+    """NAV payload: 左右轮速 m/s + flags 档位 [可选 crab_deg 共角微调].
+
+    `crab_deg=None` ⇒ **9 字节，与 10-21 之前逐字节相同**。这不是偷懒，是兼容：
+    旧固件的守卫是 `if (len < 9) return;`，字段都在固定偏移上，所以一条 13 字节的
+    NAV 在旧镜像上会被当成"多四个字节没人读"的合法 9 字节帧——**不会字段错位**
+    （STATUS 那次 14→19 之所以危险，是因为旧解析器按固定长度算坏帧，这里不是）。
+    反过来新固件收到 9 字节就取 `crab_deg = 0`，行为与改动前一致（fail-closed 到
+    "不微调"，不是"猜一个角度"）。
+    """
+    if crab_deg is None:
+        return struct.pack('<ffB', v_left, v_right, flags)
+    return struct.pack('<ffBf', v_left, v_right, flags, float(crab_deg))
 
 
 def unpack_nav(payload: bytes):
-    if len(payload) != 9:
-        raise ValueError('nav payload must be 9 bytes')
-    return struct.unpack('<ffB', payload)
+    """返回 (vL, vR, flags)。9 或 13 字节都只回这三个——**不改 arity**。
+
+    把第四个值塞进这个函数会让所有现存调用点（`tools/bench_status.py`、
+    `tools/link_probe.py`、`tools/latency_probe.py`、`pc/main.py`、若干测试）
+    一起炸，而它们关心的就是那三个数。要读共角用 `nav_crab_deg()`。
+    """
+    if len(payload) not in (NAV_LEN_V1, NAV_LEN_V2):
+        raise ValueError('nav payload must be 9 or 13 bytes, got %d' % len(payload))
+    return struct.unpack('<ffB', payload[:NAV_LEN_V1])
+
+
+def nav_crab_deg(payload: bytes):
+    """13 字节帧里的共角微调（度）；9 字节帧返回 **None**（"没给"，不是 0）。
+
+    为什么不返回 0.0：`None` 与 `0.0` 在判读时是两件事——前者是"这一版工具根本不发
+    共角"，后者是"发了，值是零"。固件侧对应的是"取默认 0"，那是执行端的兜底，
+    不能倒过来当成 PC 发过零。
+    """
+    if len(payload) < NAV_LEN_V2:
+        return None
+    return struct.unpack('<f', payload[NAV_LEN_V1:NAV_LEN_V2])[0]
 
 
 def pack_tool(offset_mm: float, lift: int) -> bytes:

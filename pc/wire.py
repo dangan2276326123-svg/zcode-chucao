@@ -140,7 +140,7 @@ RUN_LOG_COLUMNS = [
     #    仍要配录像（执行清单 C25 的“不算过”栏早就写了这条）；② 没有 STATUS 时留空串而不是 0
     #    ——0 会被读成“车停着”，而当时可能只是没接线。
     'veh_speed_mps',
-    # ---- 2026-10-21 Pc-13：PC 记的状态与板子回报的 mode 对不对得上（末位追加） ----
+    # ---- 2026-10-22 Pc-13：PC 记的状态与板子回报的 mode 对不对得上（末位追加） ----
     # 取值 `'-'`（没有 STATUS 可判）/ `'ok'` / 不一致短码。加它的理由很具体：今天那
     # 1154 拍"屏幕写 TELEOP、板子在 ESTOP"**在表里本来看不出来**——`state` 与 `mcu_mode`
     # 两列各说各话，要人自己去对。这一列把"对一眼"变成表里的记录。
@@ -179,7 +179,7 @@ def reject_short(code):
     return REJECT_SHORT.get(code, 'UNKNOWN-%d' % code)
 
 
-# ---- Pc-13（2026-10-21）：PC 自己记的状态 vs 板子回报的 mode ----
+# ---- Pc-13（2026-10-22）：PC 自己记的状态 vs 板子回报的 mode ----
 # 现场证据是 `results/tel_C27/run_log.csv`：**1154 拍 `state=TELEOP` 而 `mcu_mode`=2**，
 # `authority` 全程 0、`reject` 出现过 4（ESTOP-LATCH）。那一跑被读成"按了 `g` 轮子不动
 # ⇒ 转向形状可疑"，白怀疑了固件一次；真实原因是根本没进手操——板子在急停锁存里，
@@ -229,8 +229,17 @@ def auth_mismatch_text(state, mcu_mode):
 
 
 
-def frames_for_state(state, usable, vl, vr, tool_mm, permit=GATE_N, gear=GEAR_STRAIGHT):
+def frames_for_state(state, usable, vl, vr, tool_mm, permit=GATE_N, gear=GEAR_STRAIGHT,
+                     crab_deg=None):
     """返回 [(frame_type, payload), ...]。
+
+    `crab_deg`（10-22 加，台账 Hw-30）是 **AUTO 的共角微调**：车体的"直行零位"物理上
+    朝"2"，作业方向是刀那一面"1"，固件在 AUTO 分支打的是 `AUTO_CRAB_BASE_DEG + crab_deg`
+    （两个常数都在 `retrofit.h`，符号待台架定）。**只有 `state == 'AUTO'` 且这一拍可用**
+    才把它发出去；锁零那一类（LIFT、AUTO 但瞎了）一律回到 9 字节——那等于告诉固件
+    "这一拍不微调"，与它自己的默认值同一个意思，不靠 PC 自觉传 0.0。
+    ⚠️ 本函数的 AUTO 分支现在**不主动算**这个值：`pc/main.py` 的横向控制律仍是差速那套，
+    共角通道今天只是打通（协议 + 固件 + 这一层形参），换控制律要等 90° 上板看过之后。
 
     规则（spec §5.1 表）：
       - 持权（AUTO/TELEOP/LIFT）→ 必须发 NAV+TOOL，**永不发 HEARTBEAT**；
@@ -240,6 +249,9 @@ def frames_for_state(state, usable, vl, vr, tool_mm, permit=GATE_N, gear=GEAR_ST
       - ESTOP → 稳态不发帧（跳变那一拍由调用方发一次 ESTOP 帧）。
     许可位（spec §5.3）：GATE_N 下横移恒 0、刀位恒 0x07；
       GATE_F 下只有 "AUTO 且视觉可用" 才允许落刀（lift=0）。
+    ⚠️ 这里"门 N 禁横移"禁的是**滑台**（`tool_mm` → 固件 `tool_offset_mm`），
+      **不是车体的四轮共角**——10-21 之前这句话被读过一次成"AUTO 不许横着走"，
+      那是错的，订正在台账 Hw-30。
     未知许可位一律 ValueError（fail-closed）：0 / None / '' / 名字串都不等于
       "允许落刀"。依据 = `docs/superpowers/plans/2026-10-08-e3-batch-1a-firmware.md:18`
       那条 fail-closed 约束（"任何拿不到的量都不得当作满足"）——**那句是给固件写的**，
@@ -273,7 +285,8 @@ def frames_for_state(state, usable, vl, vr, tool_mm, permit=GATE_N, gear=GEAR_ST
             return []
         return [(P.TYPE_HEARTBEAT, b'')]
 
-    if not usable or state == 'LIFT':
+    locked = (not usable) or state == 'LIFT'
+    if locked:
         vl, vr, tool_mm = 0.0, 0.0, 0.0
 
     if permit == GATE_N:
@@ -282,7 +295,11 @@ def frames_for_state(state, usable, vl, vr, tool_mm, permit=GATE_N, gear=GEAR_ST
         off = tool_mm
         lift = 0x00 if (state == 'AUTO' and usable) else 0x07
 
-    return [(P.TYPE_NAV, P.pack_nav(vl, vr)),
+    # 共角微调只在"AUTO 且这一拍可用"那一支上线；锁零那一类回到 9 字节，
+    # 含义是"这一拍不微调"——不靠 PC 自觉传 0.0，也不让一个旧工具发的 9 字节帧
+    # 与新帧在同一状态里来回跳（帧长一跳，`link_probe --serial` 那条字节级证据就难读了）。
+    crab = crab_deg if (state == 'AUTO' and not locked) else None
+    return [(P.TYPE_NAV, P.pack_nav(vl, vr, 0, crab)),
             (P.TYPE_TOOL, P.pack_tool(off, lift))]
 
 
