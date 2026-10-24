@@ -172,7 +172,7 @@
 | `docs/X5验机与接入执行清单.md` | RDK X5 到货验机四项与接入步骤 |
 | `docs/秋季图像采集清单.md` | 秋季采集执行文档（矩阵、命名、标注规范、IPM 顺带标定） |
 | `docs/整车尺寸实测表_20260921.md` | **M1–M12 量车型**：每项给测法、照片留档与"这个数用来判什么"；判据在 `tools/geometry_check.py` |
-| `docs/thesis_text_fixes_R7_H4.md` | 论文正文修改单（R7/H4 对应项） |
+| `docs/方位与轮序编号约定_20261024.md` | **沟通用的两套编号（方向 1-4 / 轮子 1-4）**：方向 1 = 挂刀那面 = 正面 = 相机朝前 = 作业方向；轮子按作者手编 1 左前、2 右前、3 右后、4 左后，并给出**与固件 `angle[]` 下标和 `send_angle()` 地址的对照**（作者编号的 3、4 与 `angle[]` 的 2、3 正好互换——这是 10-24 台架一次"2 和 4 转反了"的沟通事故根因）。另收一句现象模板、以及"从动轮按有驱动算"这条作者裁定与 09-28 现场记录并存的关系。**以后描述方位只用这张表，别自造编号** | | `docs/thesis_text_fixes_R7_H4.md` | 论文正文修改单（R7/H4 对应项） |
 | `docs/大板实物标注.jpg`、`近照A/B/C标注.jpg` | 主控板实物照（13 处编号标注）。**全仓无整机/刀架/电推杆照片**——见量车型 |
 | ~~`docs/组会汇报_20260907/`、`docs/组会汇报_20260916/`~~ | 组会 deck（Route C 可编辑 pptx + plan JSON + 证据合同 `paper_analysis.json` + `gen_map.py` 生成的溯源表 + 渲染 QA 图）→ **2026-10-12 起两版都本地不留**：0907 那目录里 5.4 MB 是逐页 png 与单页 pptx 的渲染 QA 中间产物（`export_png.ps1` 可再生），0916 那版是**作者自己先从工作树删掉的**，本次只是把那个删除落进提交。**现行 deck 是下一行的 0923** |
 | `docs/组会汇报_20260923/` | **现行组会 deck**：`组会汇报.pptx` + `deck_order_map.md`（逐页溯源表）+ `paper_analysis.json`／`paper_analysis_validation.json`（证据合同）+ `pragmatic_edit_plan.json` + `gen_map.py`／`export_png.ps1`。⚠️ 同目录的 `render_qa/`（逐页 `幻灯片N.PNG` + montage，2.3 MB）属可再生中间产物，**已写进 `.gitignore`、不进仓**——要重出图就跑 `export_png.ps1` |
