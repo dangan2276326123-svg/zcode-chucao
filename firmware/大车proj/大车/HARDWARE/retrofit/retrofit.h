@@ -43,7 +43,7 @@
    (ledger Hw-30, 2026-10-21).  LEFT/RIGHT keep TELEOP_STEER_DEG.  Author
    ruling the same day: prove it in TELEOP first, AUTO gets the offset next.
    Sign (+90 or -90) is to be settled by eye on the bench. */
-#define TELEOP_LATERAL_DEG   90.0
+#define TELEOP_LATERAL_DEG  -90.0   /* same reason: the gear must send the body toward "1" */
 /* STATUS has no spare byte, so the accepted gear is echoed through the
    current_a placeholder (adc_current_a() returns 0.0f; Fw-5 TODO).  THE A FIELD
    IS NOT AMPS WHILE THIS IS 1.  Same borrowed-slot trick as the Hw-17 battery_v
@@ -60,7 +60,7 @@
    unmanned vehicle); the replacement is a PC-supplied trim on top of a
    compile-time base, not the RC switch.  SIGN (+90 or -90) is to be settled
    by eye on the bench -- which side "1" is has not been observed yet. */
-#define AUTO_CRAB_BASE_DEG   90.0
+#define AUTO_CRAB_BASE_DEG  -90.0   /* 10-24 bench: +90 drove toward "3"; weeding is "1" */
 /* How far the PC may bend that base per frame.  15 deg is an envelope, not a
    tuned gain: the trim law itself is not wired yet (pc/main.py still steers
    AUTO differentially), this only opens the channel. */
