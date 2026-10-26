@@ -116,10 +116,11 @@ def _fw_bytes(path):
 def _fw_deg_constant(text, name):
     """取 `#define <name> 数值` 那一条，**允许前面带正负号**，且命中数必须是 1。
 
-    符号这条不是装饰：10-24 把两个 90° 常数改成 `-90.0` 之后，原来那个不带符号的写法
-    匹配不到带负号的字面量，`findall` 直接返回空表——两个测试一起红，红的理由是
-    "定义不存在"而不是"符号不对"（AGENTS 审查清单第 2 条 b：自检输出"零命中"时先怀疑
-    检查器自己写错了）。现在空表照样报错，符号由下面单独的 `assert deg < 0` 钉。
+    负号这条不是装饰：10-24 把两个 90° 常数从 `+90.0` 改成 `-90.0` 之后，
+    原来那个不带符号的写法匹配不到带负号的字面量，`findall` 直接返回空表——
+    两个测试一起红，而红的理由是"定义不存在"，不是"符号不对"
+    （AGENTS 审查清单第 2 条 b：自检输出"零命中"时先怀疑检查器自己写错了）。
+    现在空表照样报错，符号由下面两处 `assert lat < 0` / `assert base < 0` 单独钉。
     """
     import re
     hits = re.findall(r'#\s*define\s+' + name + r'\s+([+-]?[0-9]*\.?[0-9]+)', text)
@@ -128,66 +129,60 @@ def _fw_deg_constant(text, name):
 
 
 def test_lateral_gear_uses_its_own_90_degree_constant():
-    """手操横移档必须是 **−90°**，而且**不能顺手把 LEFT/RIGHT 也带到 90°**。
+    """LATERAL 必须是 **−90°**，而且**不能顺手把 LEFT/RIGHT 也带到 90°**。
 
-    符号今天在 `+90 / -90` 之间来回过三次，理由都记在台账 Hw-30，这里只钉最终口径与
-    它为什么是这个符号：作者 2026-10-26 在台架上把**遥控器**拨到横向、给油门、不按反向，
-    车**朝"3"走**——那是厂商自己的 `Switch_direction=+90` 落在四个伺服**同号**上的形状。
-    作业方向是"1" ⇒ 我们沿用同一个机制、把符号取反 ⇒ `TELEOP_LATERAL_DEG = -90.0`。
-    10-26 另一处改动：这个 90 不再写进 `angle[]`（那会经过逐轮 ± ⇒ 两组伺服反号，
-    就是他眼里"哪个轮转反了"），改成走补偿角那条通道，四个伺服收到同一个数。
-    LEFT/RIGHT 仍是 20°、仍走 `angle[]` 与逐轮 ±，那才是真转向。
+    钉三件事：① 常数存在、幅值 90、**符号为负**（作者 10-21 口径：无人作业方向 =
+    刀那一面 = "1"，而正常档零位是"2"，差的就是厂商 `path_plan.c:218` 那个
+    `Switch_direction=1.570796`；符号由 10-24 台架定——那一版写的是 +90，按 `g` 到
+    LATERAL、按 `A` 进 AUTO 后车朝"3"走 ⇒ 正号在这台车上把车带向"3"，推导链在台账 Hw-30）；
+    ② `main.c` 的 `TELEOP_GEAR_LATERAL` 分支用的是 `tl`，LEFT/RIGHT 仍用 `tg`。
+    把三档共用一个常数是这个改动最容易顺手做成的形状——那会让 LEFT/RIGHT 也变成 90°，
+    而"左/右"在 20° 下是斜行、在 90° 下就成了平移，C27 那三条目视判据当场全部失真。
     """
     hdr = _fw_bytes(_FW_H)
     lat = _fw_deg_constant(hdr, 'TELEOP_LATERAL_DEG')
     assert abs(lat) == 90.0, lat
-    assert lat < 0, ('TELEOP_LATERAL_DEG 要 -90：厂商 +90 的形状台架实测朝"3"，作业方向是"1"（台账 Hw-30）')
+    assert lat < 0, 'TELEOP_LATERAL_DEG 要 -90：台架实测 +90 让车朝"3"（台账 Hw-30）'
     assert 'TELEOP_STEER_DEG' in hdr, 'LEFT/RIGHT 那份 20° 常数不许消失'
 
     main = _fw_bytes(_FW_MAIN)
-    j = main.find('case TELEOP_GEAR_LATERAL:')
-    assert j > 0, 'LATERAL 分支不见了'
-    block = main[j:j + 220]
-    assert 'angle[0] = angle[1] = angle[2] = angle[3] = 0.0;' in block, block
-    assert 'tl' not in block, 'LATERAL 不许再往 angle[] 里写 90（那会经过逐轮 ±，四个伺服就分成两组反号）'
-    assert 'TELEOP_LATERAL_DEG' not in main, '90 这个量已经改走补偿角通道，main.c 里不该再引用它'
-    c = _fw_bytes(_FW_C)
-    assert 'TELEOP_LATERAL_DEG' in c, '补偿角函数里必须真的用这个常数（不是在 main.c 里）'
-    # LEFT / RIGHT 两档仍走 tg
+    i = main.find('case TELEOP_GEAR_LATERAL:')
+    assert i > 0, 'LATERAL 分支不见了'
+    block = main[i:i + 200]
+    assert 'angle[0] = tl;' in block and 'angle[3] = tl;' in block, block
+    assert 'tg;' not in block, 'LATERAL 不许再用 tg（那是 20° 斜行的量）'
+    assert 'tl = TELEOP_LATERAL_DEG' in main, 'tl 必须由 LATERAL 自己的常数算出来'
+    # LEFT / RIGHT 两档仍走 tg：数一下整份文件里 tg 的赋值处
     assert main.count('angle[0] = tg;') == 1, 'LEFT 档应当还在用 tg，且只有一处'
     assert main.count('angle[0] = -tg;') == 1, 'RIGHT 档应当还在用 -tg，且只有一处'
 
 
 def test_auto_crab_constants_and_the_call_site():
-    """AUTO 共角：常数是 −90、`main.c` 的 AUTO 分支把 `angle[]` 归零、90 走补偿角通道。
+    """AUTO 共角的两个常数、`main.c` 真的调用它、以及 `retrofit.c` 的两道守卫。
 
-    钉五件事，每件对一个会静默发生的错法：
-      · 常数存在、幅值 90、**符号为负**（同上一条的理由），且只有一份定义；
-      · `main.c` 的 AUTO 分支把四个 `angle[]` 写成 0.0——这条**不是回退到 Fw-11**，
-        Fw-11 的"抹 0"抹的是遥控来的方向，这里 0.0 是"转角通道不用"，方向在补偿角上；
-      · 四条 `send_angle` 都带 `retrofit_auto_offset()`，MANUAL 那一支仍是 `Switch_direction`
-        ⇒ 无人模式的方向永远来自编译期常数 + 当前持权者的 NAV，遥控 `ch[1]` 插手不进来；
+    钉四件事，每件都对应一个会静默发生的错法：
+      · 常数是 **−90** 且只有一个（幅值写歪 = 车不走刀侧；符号写歪 = 车朝"3"倒退，
+        这两个错台架都见过：10-24 那一版是 +90，作者报"按 A 向 3 行驶"，见台账 Hw-30；
+        写了第二份定义就会有两套"朝 1"）；
+      · `main.c` 的 AUTO 分支调 `retrofit_auto_angle()` 而不是又写死一个 0.0
+        ——写死 0.0 就是 Fw-11 那条"抹 0"，本批要换掉的正是它；
       · `retrofit.c` 里 13 字节的读法带**钳位**与 **NaN 兜底**（对 NaN 的一切比较都是
-        false，只钳位会让它原样进伺服角）；9 字节那一支显式把 trim 归 0；
-      · **只有一个杠杆**：`main.c` 里不许出现把轮速取负的写法（10-26 曾加过一版，撤了；
-        转角与驱动同时翻 = 等于没翻）。
+        false，只钳位会让 NaN 原样进伺服角）；
+      · 9 字节那一支显式把 trim 归 0，不留着上一帧的值。
     """
     hdr = _fw_bytes(_FW_H)
     base = _fw_deg_constant(hdr, 'AUTO_CRAB_BASE_DEG')
     trim = _fw_deg_constant(hdr, 'AUTO_CRAB_TRIM_MAX')
     assert abs(base) == 90.0, base
-    assert base < 0, 'AUTO_CRAB_BASE_DEG 要 -90：厂商 +90 的形状实测朝"3"（台账 Hw-30）'
+    assert base < 0, 'AUTO_CRAB_BASE_DEG 要 -90：+90 台架上把车带向"3"（台账 Hw-30）'
     assert 0 < trim <= 30, trim
 
     main = _fw_bytes(_FW_MAIN)
     i = main.find('if (retrofit_mode() == MODE_AUTO) {')
     assert i > 0
     block = main[i:main.find('} else if', i)]
-    assert 'angle[0] = angle[1] = angle[2] = angle[3] = 0.0;' in block, block[-260:]
-    assert 'retrofit_auto_angle();' not in block, 'AUTO 的 90 不该再写进 angle[]（见 test_lateral 那条说明）'
-    assert main.count(')?retrofit_auto_offset():Switch_direction)') == 4, \
-        '四条 send_angle 都要走补偿角通道，实测 %d' % main.count(')?retrofit_auto_offset():Switch_direction)')
-    assert 'vl = -vl;' not in main and 'vr = -vr;' not in main, '只许一个杠杆：驱动不许取负'
+    assert 'retrofit_auto_angle();' in block, block[-200:]
+    assert 'angle[0] = angle[1] = angle[2] = angle[3] = 0.0;' not in block,         'AUTO 分支还写死 0.0 = Fw-11 那条"抹 0"没换掉'
 
     c = _fw_bytes(_FW_C)
     assert 'if (len >= 13)' in c and 'nav_crab_deg != nav_crab_deg' in c
@@ -195,28 +190,32 @@ def test_auto_crab_constants_and_the_call_site():
     j = c.find('if (len >= 13)')
     assert 'nav_crab_deg = 0.0f;' in c[j:j + 600], '9 字节那一支要显式归 0'
     assert 'double retrofit_auto_angle(void)' in c
-    assert 'double retrofit_auto_offset(void)' in c
 
 
-def test_crab_offset_reaches_all_four_servos_with_the_same_sign():
-    """补偿角这一改的核心判据：**四个伺服收到同一个符号**，所以四个轮"都是正的"。
+def test_crab_travel_has_exactly_one_lever():
+    u"""朝"1"这一翻**只能有一个杠杆**：转角通道上那个 −90。今天试过的两条岔路都在这条测试里钉死。
 
-    `main.c` 四条 `send_angle` 里有两条是整体取负的写法（左前、右后），
-    补偿角在那两条里位于 `-(... - offset)` ⇒ 负负得正 ⇒ 四路出来都是 `+offset`。
-    这正是作者用遥控器拨横向时看到的形状，也是他说"为什么不能四个都正"的依据。
-    钉错法：如果把 90 写回 `angle[]`，它就落在外层负号里面 ⇒ 两路 +90 两路 -90，
-    四个轮就分成两组反号（10-24/10-26 那两版的样子）。
+    台账 Hw-30 记的是全过程，这条测试管的是"别再加回来"：
+      · **不许有第二个杠杆**：`main.c` 里不许出现把轮速取负的写法。转角打到 −90 已经把每个轮子
+        掉了一面，那本身就是换向；再取负一次等于没翻，而且会白白把 `pc/control.py` 那条差速纠偏的
+        偏航符号翻一遍（10-26 傍晚真的这么改过一版，撤了）。
+      · **90° 不许挪回补偿角**：`retrofit_auto_offset()` 这个函数已经删掉，三个源文件里都不该再出现
+        它的名字。那条路是作者 10-26 傍晚亲眼否掉的——四个伺服同号时按 `[A]` 会**右侧朝 3、左侧朝 1**，
+        两边互相顶；而 90 写在 `angle[]` 里（10-24 那一版）四个轮是一起走的。
+      · **`angle[]` 才是 90 的家**：AUTO 分支必须调 `retrofit_auto_angle()`、LATERAL 档必须用 `tl`
+        （上面两条测试已经钉过，这里再钉一次"头文件里那段解释还在"，因为注释丢了下一个改的人
+        就会把两条岔路再走一遍）。
     """
     main = _fw_bytes(_FW_MAIN)
-    lines = [l for l in main.split(chr(10)) if 'send_angle(' in l and 'retrofit_auto_offset' in l]
-    assert len(lines) == 4, len(lines)
-    neg_outer = [l for l in lines if 'send_angle(4,' in l or 'send_angle(3,' in l]
-    pos_outer = [l for l in lines if 'send_angle(1,' in l or 'send_angle(2,' in l]
-    assert len(neg_outer) == 2 and len(pos_outer) == 2, (neg_outer, pos_outer)
-    for l in neg_outer:
-        assert 'send_angle(%s,-(angle[' % l.split('send_angle(')[1][0] in l, l[:120]
-        assert '-((retrofit_mode()' in l, l[:160]      # 外层负号里再减补偿角 ⇒ 净效果 +offset
-    for l in pos_outer:
-        assert '+((retrofit_mode()' in l, l[:160]      # 直接加 ⇒ +offset
-    # MANUAL 那一支没被动过：遥控器自己拨横向时仍由厂商的 Switch_direction 说话
-    assert main.count(':Switch_direction)') == 4
+    c = _fw_bytes(_FW_C)
+    hdr = _fw_bytes(_FW_H)
+    assert 'vl = -vl' not in main, '只许一根杠杆：速度取负不许回来'
+    for name, blob in (('main.c', main), ('retrofit.c', c), ('retrofit.h', hdr)):
+        assert 'retrofit_auto_offset' not in blob, '%s 里不该再有补偿角那个函数' % name
+    assert 'angle[0] = angle[1] = angle[2] = angle[3] = retrofit_auto_angle();' in main, \
+        'AUTO 的 90 必须走 angle[]'
+    assert 'Two other ways to make the unmanned mode walk' in hdr, \
+        '两条死路的说明必须留在头文件里，不然下一个人会再走一遍'
+    base = _fw_deg_constant(hdr, 'AUTO_CRAB_BASE_DEG')
+    lat = _fw_deg_constant(hdr, 'TELEOP_LATERAL_DEG')
+    assert base < 0 and lat < 0, (base, lat)
