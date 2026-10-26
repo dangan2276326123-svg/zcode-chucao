@@ -22,7 +22,7 @@ if _ROOT not in sys.path:
 
 from pc.control import (MiddleToolPID, LatencyCompensator, DifferentialDrive,
                         LatErrorRate)
-from pc.state_machine import StateMachine
+from pc.state_machine import StateMachine, AutoGuard
 from pc.perception import px_to_meters
 from pc.replay import draw_overlay
 from pc.status_rx import StatusReceiver, STATUS_UDP_PORT
@@ -206,6 +206,12 @@ def main():
     ap.add_argument('--stream-port', type=int, default=STREAM_PORT)
     ap.add_argument('--out', default='results/run')
     ap.add_argument('--no-gui', action='store_true')
+    # AUTO 的两道台架保护（2026-10-26 作者读数逼出来的，见 pc/state_machine.AutoGuard）：
+    # 进 AUTO 后先只转向不给油的秒数；AUTO 单次运行时长上限（<=0 = 关掉，会在启动行打印）。
+    ap.add_argument('--auto-settle-s', type=float, default=3.0,
+                    help='seconds to hold wheel speed at 0 after entering AUTO (steering settle)')
+    ap.add_argument('--auto-limit-s', type=float, default=20.0,
+                    help='max seconds per AUTO run; 0 or less disables the limit (printed)')
     ap.add_argument('--overwrite', action='store_true',
                     help='明知故犯地复用 --out 目录（默认拒绝：CSV 是覆盖写的）')
     args = ap.parse_args()
@@ -297,6 +303,15 @@ def main():
     # 手操转向档位（NAV 的 flags 字节）：`g` 循环 直行->左->右。默认直行 = 现状，
     # 所以本批之后不按键的行为与之前逐字相同。
     tele_gear = wire.GEAR_STRAIGHT
+    # AUTO 两道保护。auto_prev 存的是**上一拍**的状态——不能用循环开头那个 prev_state：
+    # 它在状态事件之前捕获，而 [A] 的事件在本拍的发帧之后，于是同一拍里两者永远相等，
+    # 进 AUTO 的那个边缘会被吞掉（等待也就永远不会开始）。
+    guard = AutoGuard(settle_s=args.auto_settle_s, limit_s=args.auto_limit_s)
+    auto_prev = sm.state
+    print('AUTO guard: settle=%.1fs (steering moves first, wheels stay still), run limit=%s'
+          % (guard.settle_s,
+             '%.0fs' % guard.limit_s if guard.limit_enabled else
+             'OFF (--auto-limit-s <= 0: nothing stops AUTO but ESTOP / vision loss)'))
     # Pc-13：上一拍的不一致短码，只用来把 stdout 打印压成"边沿一次"。
     mism_prev = None
 
@@ -384,6 +399,14 @@ def main():
             # 原来这里是三分支（AUTO+usable / LIFT / else），"AUTO 但这一帧不可用
             # 且未满 2 秒"会掉进 else 发心跳，固件收心跳就把权限交回遥控，而 PC
             # 状态与 run_log 仍写 AUTO（codex 新发现一）。发帧内容整个交给 wire。
+            # ---- AUTO 两道保护：进 AUTO 的边缘复位；这一拍是不是"只转向不给油"----
+            if sm.state == 'AUTO' and auto_prev != 'AUTO':
+                guard.reset()
+            auto_prev = sm.state
+            auto_hold, auto_trip = False, False
+            if sm.state == 'AUTO':
+                auto_hold, auto_trip = guard.tick(dt)
+
             vl = vr = 0.0
             tool_mm = 0.0
             if sm.state == 'TELEOP':          # 字面量，与本文件其余判据同一写法；单测把 StateMachine 换成工厂函数，引类属性会撞
@@ -414,9 +437,21 @@ def main():
                 #   不是新行为（见 task-6-report.md §4 第 5 条）。
                 pid.reset()
 
+            if auto_hold:
+                # 到位等待/越限这一拍：转角照发、**速度按零**。仍走 AUTO 那一支，所以权限不掉
+                # （E3 §5.1：持权由 MODE 帧决定，不由 NAV 数值决定）；这里不许改成发 LIFT 帧——
+                # 那会顺带把刀提放一次，是另一件事。
+                vl = vr = 0.0
             for ftype, payload in wire.frames_for_state(
                     sm.state, usable, vl, vr, tool_mm, permit, gear=tele_gear):
                 send(ftype, payload)
+            if auto_trip:
+                # 越上限：上面那一拍已经把零速发出去了，这里才降 LIFT——顺序反了就存在
+                # "已经决定停、但速度还在线上"的一拍。run_limit 只从 AUTO 生效，也不消费 L2.5 闸门。
+                if sm.run_limit():
+                    print('AUTO run limit reached (%.1fs >= %.1fs) -> LIFT; '
+                          'press [C] then [A] to run another bounded pass'
+                          % (guard.run_s, guard.limit_s))
 
             # ---- Pc-13：拿板子回上来的 mode 对一眼 PC 自己记的状态 ----
             # 只做"让人看见"这一件事：**不自动抢权、也不自动交权**（判错的自动改权限
@@ -484,6 +519,9 @@ def main():
                         _rj = wire.reject_short(st.get('reject'))
                         if _rj:
                             alerts.append('rej:%s' % _rj)
+                    if auto_hold and sm.state == 'AUTO':
+                        # 让操作台看得见"现在只转向、还没给油"，否则开头那几秒会被读成卡住
+                        alerts.append('SETTLE%.1f' % guard.settle_left)
                     if rx.bad:
                         alerts.append('bad:%d' % rx.bad)
                     if rx.stale(t0):

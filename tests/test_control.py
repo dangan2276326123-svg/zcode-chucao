@@ -570,11 +570,17 @@ class _RebootingStatusReceiver(StatusReceiver):
 
 def _drive_main(tmp_path, monkeypatch, results, states=None, keys=(), n_status=None,
                 permit=wire.GATE_N, profile_id=1, gui=False,
-                vision_loss_beat=None, status_factory=None, log_tag='fake'):
+                vision_loss_beat=None, status_factory=None, log_tag='fake',
+                settle_s=0.0, limit_s=0.0):
     """跑 n=len(results) 拍，返回 {'sent','header','rows','sm','hud','permits','holder'}。
 
     `log_tag` 是给台账 Pc-10 那一列用的假档案值；传 `None` 造的是"档案里没有这一项"
     那种状态，`pc/main.py` 应当当场把它停下来而不是猜一个车型。
+
+    `settle_s` / `limit_s` 是 AUTO 的两道台架保护（`pc/state_machine.AutoGuard`）。
+    **这里默认全关（0）**，不是偷懒：这个 harness 用的是真实时钟，一拍之间只过几微秒，
+    开着等待就等于所有 AUTO 拍都被钉在零速上，本文件里那些"这一拍该给 0.14"的断言
+    全部失去意义。两道保护本身由 `test_auto_guard_*` 那几条专门验。
     """
     import numpy as np
     import pc.main as M
@@ -707,7 +713,9 @@ def _drive_main(tmp_path, monkeypatch, results, states=None, keys=(), n_status=N
         monkeypatch.setitem(sys.modules, 'cv2', _FakeCv2(keys, hud, hud_orgs))
 
     argv = ['pc/main.py', '--live', '--pi-ip', '127.0.0.1', '--source', 'fake',
-            '--out', str(tmp_path)]
+            '--out', str(tmp_path),
+            '--auto-settle-s', repr(float(settle_s)),
+            '--auto-limit-s', repr(float(limit_s))]
     if not gui:
         argv.append('--no-gui')
     monkeypatch.setattr(sys, 'argv', argv)
@@ -1258,3 +1266,68 @@ def test_pc13_flag_is_visible_in_both_the_csv_and_the_hud(tmp_path, monkeypatch)
         assert 'NOT-IN-HAND' not in _hud_text(good, 0)
     finally:
         _MCU_STATUS['mode'] = old
+
+
+# ---- AUTO 的两道台架保护（2026-10-26 作者的两条读数逼出来的） ----
+#   "2 和 4 没等 1 和 3 反转完就往 1 方向走，就会别劲"  -> 进 AUTO 先只转向不给油
+#   "按 A 后走多久停啊，我按急停才停，往前走了大概 4 米"  -> AUTO 单次运行时长上限
+
+def test_auto_guard_counts_settle_and_running_time_separately():
+    """等待的那几秒**不许**计进运行时长，越限那一拍**必须同时**报"这一拍零速"。
+
+    两条各对一个会静默发生的错法：等待也算进时长的话，上限就被等待悄悄吃掉；
+    越限那一拍只返回 tripped 而不同时返回 hold，就会有一拍"已经决定停、速度还发出去"。
+    """
+    from pc.state_machine import AutoGuard
+    g = AutoGuard(settle_s=0.3, limit_s=1.0)
+    g.reset()
+    assert g.tick(0.1) == (True, False)
+    assert g.tick(0.3) == (True, False)          # 跨过零点也不许顺手计进时长
+    assert g.run_s == 0.0
+    assert g.tick(0.5) == (False, False)         # 等待结束，开始计行驶
+    assert g.tick(0.6) == (True, True)           # 0.5+0.6 >= 1.0 -> 这一拍零速 + 越限
+    off = AutoGuard(settle_s=0.0, limit_s=0.0)
+    off.reset()
+    for _ in range(4):
+        assert off.tick(5.0) == (False, False), '上限 <=0 时不许自己停（但要由启动行说清楚）'
+    assert off.limit_enabled is False
+    assert AutoGuard(settle_s=-3.0).settle_s == 0.0
+
+
+def test_run_limit_leaves_auto_without_consuming_the_l25_gate():
+    """定时停走 LIFT（可恢复），**不置 `needs_confirm`**，也不许从 ESTOP 里动手。
+
+    L2.5 那道闸门保护的是"看不见边界之后要不要由人判继续"；把一次我们自己数的定时停
+    也记成"要人工确认"，就是把操作员训练成随便按 [C]，那道闸门会被磨钝。
+    """
+    from pc.state_machine import StateMachine
+    sm = StateMachine()
+    assert sm.run_limit() is False and sm.state == sm.MANUAL
+    assert sm.go_auto(confidence_ok=True) is True
+    assert sm.run_limit() is True
+    assert sm.state == sm.LIFT
+    assert sm.needs_confirm is False
+    other = StateMachine()
+    other.estop()
+    assert other.run_limit() is False and other.state == other.ESTOP
+
+
+def test_auto_settle_holds_the_throttle_but_keeps_authority(tmp_path, monkeypatch):
+    """进 AUTO 的头几拍：转角照发、速度按零，**但还在 AUTO**（不许顺手降成 LIFT）。"""
+    r = _drive_main(tmp_path, monkeypatch,
+                    results=[_USABLE] * 4, states=['AUTO'] * 4,
+                    settle_s=5.0, limit_s=0.0)
+    navs = [P.unpack_nav(f[2])[:2] for f in _data_frames(r['sent']) if f[1] == P.TYPE_NAV]
+    assert len(navs) >= 3, len(navs)
+    assert all(v == (0.0, 0.0) for v in navs), navs
+    assert r['sm'].state == 'AUTO', '等待期间权限与状态都不许变，否则等待就变成了停车'
+
+
+def test_auto_run_limit_stops_by_itself(tmp_path, monkeypatch):
+    """上限到点自己降 LIFT——作者那句"我按急停才停"要的就是这一格。"""
+    r = _drive_main(tmp_path / 'lim', monkeypatch,
+                    results=[_USABLE] * 6, states=['AUTO'] * 6,
+                    settle_s=0.0, limit_s=1e-6)
+    assert r['sm'].state == 'LIFT', r['sm'].state
+    assert [row[r['header'].index('state')].replace('"', '')
+            for row in r['rows']].count('AUTO') < 6, '越限之后不该继续写 AUTO'
