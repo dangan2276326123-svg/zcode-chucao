@@ -596,6 +596,14 @@ while(1)
 	if (retrofit_mode() == MODE_AUTO || retrofit_mode() == MODE_TELEOP) {
 		float vl = 0.0f, vr = 0.0f;
 		retrofit_get_wheel_cmd(&vl, &vr);
+		if (CRAB_DRIVE_REVERSED && retrofit_crab_posture()) {
+			/* Hw-30 crab travel sign (author 2026-10-26): the wheel planes stay as the
+			   10-24 build measured them, so the only thing that decides which side the
+			   chassis shifts to is this sign.  Applied HERE, after every zeroing path
+			   (ESTOP, not-in-hand, watchdog), so 0 can only ever stay 0. */
+			vl = -vl;
+			vr = -vr;
+		}
 		veloc[0] = veloc[2] = vl;   /* left front/rear */
 		veloc[1] = veloc[3] = vr;   /* right front/rear */
 	} else if (retrofit_mode() == MODE_ESTOP) {

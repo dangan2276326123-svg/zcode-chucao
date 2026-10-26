@@ -116,11 +116,11 @@ def _fw_bytes(path):
 def _fw_deg_constant(text, name):
     """取 `#define <name> 数值` 那一条，**允许前面带正负号**，且命中数必须是 1。
 
-    负号这条不是装饰：10-24 把两个 90° 常数从 `+90.0` 改成 `-90.0` 之后，
-    原来那个不带符号的写法匹配不到带负号的字面量，`findall` 直接返回空表——
-    两个测试一起红，而红的理由是"定义不存在"，不是"符号不对"
-    （AGENTS 审查清单第 2 条 b：自检输出"零命中"时先怀疑检查器自己写错了）。
-    现在空表照样报错，符号由下面两处 `assert lat < 0` / `assert base < 0` 单独钉。
+    符号这条不是装饰：10-24 把两个 90° 常数从 `+90.0` 改成 `-90.0` 之后，原来那个
+    不带符号的写法匹配不到带负号的字面量，`findall` 直接返回空表——两个测试一起红，
+    而红的理由是"定义不存在"，不是"符号不对"（AGENTS 审查清单第 2 条 b：自检输出
+    "零命中"时先怀疑检查器自己写错了）。现在空表照样报错，符号由 `abs(lat) == 90` 与
+    那条"符号必须为正"分开钉——10-26 起符号是正，方向改由行走符号决定（见下面两处）。
     """
     import re
     hits = re.findall(r'#\s*define\s+' + name + r'\s+([+-]?[0-9]*\.?[0-9]+)', text)
@@ -129,12 +129,14 @@ def _fw_deg_constant(text, name):
 
 
 def test_lateral_gear_uses_its_own_90_degree_constant():
-    """LATERAL 必须是 **−90°**，而且**不能顺手把 LEFT/RIGHT 也带到 90°**。
+    """LATERAL 必须是 **+90°**，而且**不能顺手把 LEFT/RIGHT 也带到 90°**。
 
-    钉三件事：① 常数存在、幅值 90、**符号为负**（作者 10-21 口径：无人作业方向 =
+    钉三件事：① 常数存在、幅值 90、**符号为正**（作者 10-21 口径：无人作业方向 =
     刀那一面 = "1"，而正常档零位是"2"，差的就是厂商 `path_plan.c:218` 那个
-    `Switch_direction=1.570796`；符号由 10-24 台架定——那一版写的是 +90，按 `g` 到
-    LATERAL、按 `A` 进 AUTO 后车朝"3"走 ⇒ 正号在这台车上把车带向"3"，推导链在台账 Hw-30）；
+    `Switch_direction=1.570796`）。**符号在 10-24/10-26 之间来回过一次，理由记在台账
+    Hw-30，这里只钉最终口径**：+90 才是作者 10-24 亲眼看过分组的那一版（轮 1、轮 3 在
+    伺服正号那一侧），而"朝 3"是用**正常驱动符号**测出来的 ⇒ 换朝 1 要翻的是行走符号
+    （`CRAB_DRIVE_REVERSED`），不是转角——转角与驱动**只能翻一个，两个都翻等于没翻**；
     ② `main.c` 的 `TELEOP_GEAR_LATERAL` 分支用的是 `tl`，LEFT/RIGHT 仍用 `tg`。
     把三档共用一个常数是这个改动最容易顺手做成的形状——那会让 LEFT/RIGHT 也变成 90°，
     而"左/右"在 20° 下是斜行、在 90° 下就成了平移，C27 那三条目视判据当场全部失真。
@@ -142,7 +144,8 @@ def test_lateral_gear_uses_its_own_90_degree_constant():
     hdr = _fw_bytes(_FW_H)
     lat = _fw_deg_constant(hdr, 'TELEOP_LATERAL_DEG')
     assert abs(lat) == 90.0, lat
-    assert lat < 0, 'TELEOP_LATERAL_DEG 要 -90：台架实测 +90 让车朝"3"（台账 Hw-30）'
+    assert lat > 0, ('TELEOP_LATERAL_DEG 要 +90：这是作者 10-24 看过分组的那一版，'
+                     '换朝"1"由 CRAB_DRIVE_REVERSED 负责，两处不许同时翻（台账 Hw-30）')
     assert 'TELEOP_STEER_DEG' in hdr, 'LEFT/RIGHT 那份 20° 常数不许消失'
 
     main = _fw_bytes(_FW_MAIN)
@@ -161,9 +164,8 @@ def test_auto_crab_constants_and_the_call_site():
     """AUTO 共角的两个常数、`main.c` 真的调用它、以及 `retrofit.c` 的两道守卫。
 
     钉四件事，每件都对应一个会静默发生的错法：
-      · 常数是 **−90** 且只有一个（幅值写歪 = 车不走刀侧；符号写歪 = 车朝"3"倒退，
-        这两个错台架都见过：10-24 那一版是 +90，作者报"按 A 向 3 行驶"，见台账 Hw-30；
-        写了第二份定义就会有两套"朝 1"）；
+      · 常数是 **+90** 且只有一个（幅值写歪 = 四轮不垂直于车体；符号写歪 = 转角与驱动
+        被同时翻了一次、等于没翻，这两种错台账 Hw-30 都记过；写了第二份定义就会有两套"朝 1"）；
       · `main.c` 的 AUTO 分支调 `retrofit_auto_angle()` 而不是又写死一个 0.0
         ——写死 0.0 就是 Fw-11 那条"抹 0"，本批要换掉的正是它；
       · `retrofit.c` 里 13 字节的读法带**钳位**与 **NaN 兜底**（对 NaN 的一切比较都是
@@ -174,7 +176,10 @@ def test_auto_crab_constants_and_the_call_site():
     base = _fw_deg_constant(hdr, 'AUTO_CRAB_BASE_DEG')
     trim = _fw_deg_constant(hdr, 'AUTO_CRAB_TRIM_MAX')
     assert abs(base) == 90.0, base
-    assert base < 0, 'AUTO_CRAB_BASE_DEG 要 -90：+90 台架上把车带向"3"（台账 Hw-30）'
+    assert base > 0, ('AUTO_CRAB_BASE_DEG 要 +90：分组照作者 10-24 看过的那版，'
+                     '方向由 CRAB_DRIVE_REVERSED 定，两处不许同时翻（台账 Hw-30）')
+    rev = _fw_deg_constant(hdr, 'CRAB_DRIVE_REVERSED')
+    assert rev == 1.0, ('CRAB_DRIVE_REVERSED 必须是 1：这一版的朝"1"全靠它（台账 Hw-30）')
     assert 0 < trim <= 30, trim
 
     main = _fw_bytes(_FW_MAIN)
@@ -190,3 +195,36 @@ def test_auto_crab_constants_and_the_call_site():
     j = c.find('if (len >= 13)')
     assert 'nav_crab_deg = 0.0f;' in c[j:j + 600], '9 字节那一支要显式归 0'
     assert 'double retrofit_auto_angle(void)' in c
+
+
+def test_crab_drive_sign_lives_at_the_drive_point():
+    u"""行走符号这一翻必须发生在 `main.c` 的速度出口上，而且只在 crab 姿态生效。
+
+    三件事各对一个会静默发生的错法：
+      · 取负在 `retrofit_get_wheel_cmd()` **之后**、写 `veloc[]` **之前**——再往前就被
+        后面三道锁零路径（ESTOP / 未持权 / 看门狗）覆盖，或者反过来给"零"带上符号；
+      · `CRAB_DRIVE_REVERSED` 与姿态查询都得真的出现在那个条件里：写死取负会让 20° 的
+        LEFT/RIGHT 档一起倒退，那两档是正常前进方向上的转向；
+      · `retrofit_crab_posture()` 只认 AUTO 与 TELEOP 的 LATERAL 档、默认返回 0，
+        且只读已有的 `mode` / `nav_gear`，**不许新增状态、不许掺急停逻辑**。
+    """
+    c = _fw_bytes(_FW_C)
+    i = c.find('uint8_t retrofit_crab_posture(void)')
+    assert i > 0, 'retrofit_crab_posture() 的定义不见了'
+    body = c[i:c.find(chr(10) + '}' + chr(10), i) + 3]
+    assert 'mode == MODE_AUTO' in body, body
+    assert 'mode == MODE_TELEOP' in body and 'TELEOP_GEAR_LATERAL' in body, body
+    assert body.rstrip().endswith('return 0;' + chr(10) + '}'), ('默认必须是 0：' + body[-90:])
+    assert 'estop' not in body.lower(), '姿态查询不许掺急停逻辑'
+    assert 'mode =' not in body.replace('==', '') and 'nav_gear =' not in body.replace('==', ''), \
+        '姿态查询只读状态，不许写状态'
+
+    main = _fw_bytes(_FW_MAIN)
+    j = main.find('retrofit_get_wheel_cmd(&vl, &vr);')
+    assert j > 0
+    k = main.find('veloc[0] = veloc[2] = vl;', j)
+    assert k > j, '取负那段跑到 veloc 之后了'
+    neg = main[j:k]
+    assert 'CRAB_DRIVE_REVERSED' in neg and 'retrofit_crab_posture()' in neg, neg
+    assert 'vl = -vl;' in neg and 'vr = -vr;' in neg, neg
+    assert main.count('vl = -vl;') == 1, ('行走符号只许有一处，实测 %d' % main.count('vl = -vl;'))

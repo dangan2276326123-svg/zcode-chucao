@@ -633,6 +633,20 @@ double retrofit_auto_angle(void)
            * (3.14159265358979 / 180.0);
 }
 
+/* Crab posture: the chassis is at 90 deg to its own straight-ahead zero, so what
+   used to be "forward" is now a side.  AUTO always; TELEOP only in the LATERAL
+   gear, because LEFT/RIGHT are 20 deg turns along the normal forward.  main.c uses
+   this to decide whether to flip the wheel speeds (CRAB_DRIVE_REVERSED, Hw-30).
+   Reads the two file-statics that own mode and gear -- no new state, no new latch. */
+uint8_t retrofit_crab_posture(void)
+{
+    if (mode == MODE_AUTO)
+        return 1;
+    if (mode == MODE_TELEOP && nav_gear == TELEOP_GEAR_LATERAL)
+        return 1;
+    return 0;
+}
+
 uint8_t retrofit_estop_latched(void)
 {
     return estop_latched;
