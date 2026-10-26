@@ -116,11 +116,10 @@ def _fw_bytes(path):
 def _fw_deg_constant(text, name):
     """取 `#define <name> 数值` 那一条，**允许前面带正负号**，且命中数必须是 1。
 
-    符号这条不是装饰：10-24 把两个 90° 常数从 `+90.0` 改成 `-90.0` 之后，原来那个
-    不带符号的写法匹配不到带负号的字面量，`findall` 直接返回空表——两个测试一起红，
-    而红的理由是"定义不存在"，不是"符号不对"（AGENTS 审查清单第 2 条 b：自检输出
-    "零命中"时先怀疑检查器自己写错了）。现在空表照样报错，符号由 `abs(lat) == 90` 与
-    那条"符号必须为正"分开钉——10-26 起符号是正，方向改由行走符号决定（见下面两处）。
+    符号这条不是装饰：10-24 把两个 90° 常数改成 `-90.0` 之后，原来那个不带符号的写法
+    匹配不到带负号的字面量，`findall` 直接返回空表——两个测试一起红，红的理由是
+    "定义不存在"而不是"符号不对"（AGENTS 审查清单第 2 条 b：自检输出"零命中"时先怀疑
+    检查器自己写错了）。现在空表照样报错，符号由下面单独的 `assert deg < 0` 钉。
     """
     import re
     hits = re.findall(r'#\s*define\s+' + name + r'\s+([+-]?[0-9]*\.?[0-9]+)', text)
@@ -129,65 +128,66 @@ def _fw_deg_constant(text, name):
 
 
 def test_lateral_gear_uses_its_own_90_degree_constant():
-    """LATERAL 必须是 **+90°**，而且**不能顺手把 LEFT/RIGHT 也带到 90°**。
+    """手操横移档必须是 **−90°**，而且**不能顺手把 LEFT/RIGHT 也带到 90°**。
 
-    钉三件事：① 常数存在、幅值 90、**符号为正**（作者 10-21 口径：无人作业方向 =
-    刀那一面 = "1"，而正常档零位是"2"，差的就是厂商 `path_plan.c:218` 那个
-    `Switch_direction=1.570796`）。**符号在 10-24/10-26 之间来回过一次，理由记在台账
-    Hw-30，这里只钉最终口径**：+90 才是作者 10-24 亲眼看过分组的那一版（轮 1、轮 3 在
-    伺服正号那一侧），而"朝 3"是用**正常驱动符号**测出来的 ⇒ 换朝 1 要翻的是行走符号
-    （`CRAB_DRIVE_REVERSED`），不是转角——转角与驱动**只能翻一个，两个都翻等于没翻**；
-    ② `main.c` 的 `TELEOP_GEAR_LATERAL` 分支用的是 `tl`，LEFT/RIGHT 仍用 `tg`。
-    把三档共用一个常数是这个改动最容易顺手做成的形状——那会让 LEFT/RIGHT 也变成 90°，
-    而"左/右"在 20° 下是斜行、在 90° 下就成了平移，C27 那三条目视判据当场全部失真。
+    符号今天在 `+90 / -90` 之间来回过三次，理由都记在台账 Hw-30，这里只钉最终口径与
+    它为什么是这个符号：作者 2026-10-26 在台架上把**遥控器**拨到横向、给油门、不按反向，
+    车**朝"3"走**——那是厂商自己的 `Switch_direction=+90` 落在四个伺服**同号**上的形状。
+    作业方向是"1" ⇒ 我们沿用同一个机制、把符号取反 ⇒ `TELEOP_LATERAL_DEG = -90.0`。
+    10-26 另一处改动：这个 90 不再写进 `angle[]`（那会经过逐轮 ± ⇒ 两组伺服反号，
+    就是他眼里"哪个轮转反了"），改成走补偿角那条通道，四个伺服收到同一个数。
+    LEFT/RIGHT 仍是 20°、仍走 `angle[]` 与逐轮 ±，那才是真转向。
     """
     hdr = _fw_bytes(_FW_H)
     lat = _fw_deg_constant(hdr, 'TELEOP_LATERAL_DEG')
     assert abs(lat) == 90.0, lat
-    assert lat > 0, ('TELEOP_LATERAL_DEG 要 +90：这是作者 10-24 看过分组的那一版，'
-                     '换朝"1"由 CRAB_DRIVE_REVERSED 负责，两处不许同时翻（台账 Hw-30）')
+    assert lat < 0, ('TELEOP_LATERAL_DEG 要 -90：厂商 +90 的形状台架实测朝"3"，作业方向是"1"（台账 Hw-30）')
     assert 'TELEOP_STEER_DEG' in hdr, 'LEFT/RIGHT 那份 20° 常数不许消失'
 
     main = _fw_bytes(_FW_MAIN)
-    i = main.find('case TELEOP_GEAR_LATERAL:')
-    assert i > 0, 'LATERAL 分支不见了'
-    block = main[i:i + 200]
-    assert 'angle[0] = tl;' in block and 'angle[3] = tl;' in block, block
-    assert 'tg;' not in block, 'LATERAL 不许再用 tg（那是 20° 斜行的量）'
-    assert 'tl = TELEOP_LATERAL_DEG' in main, 'tl 必须由 LATERAL 自己的常数算出来'
-    # LEFT / RIGHT 两档仍走 tg：数一下整份文件里 tg 的赋值处
+    j = main.find('case TELEOP_GEAR_LATERAL:')
+    assert j > 0, 'LATERAL 分支不见了'
+    block = main[j:j + 220]
+    assert 'angle[0] = angle[1] = angle[2] = angle[3] = 0.0;' in block, block
+    assert 'tl' not in block, 'LATERAL 不许再往 angle[] 里写 90（那会经过逐轮 ±，四个伺服就分成两组反号）'
+    assert 'TELEOP_LATERAL_DEG' not in main, '90 这个量已经改走补偿角通道，main.c 里不该再引用它'
+    c = _fw_bytes(_FW_C)
+    assert 'TELEOP_LATERAL_DEG' in c, '补偿角函数里必须真的用这个常数（不是在 main.c 里）'
+    # LEFT / RIGHT 两档仍走 tg
     assert main.count('angle[0] = tg;') == 1, 'LEFT 档应当还在用 tg，且只有一处'
     assert main.count('angle[0] = -tg;') == 1, 'RIGHT 档应当还在用 -tg，且只有一处'
 
 
 def test_auto_crab_constants_and_the_call_site():
-    """AUTO 共角的两个常数、`main.c` 真的调用它、以及 `retrofit.c` 的两道守卫。
+    """AUTO 共角：常数是 −90、`main.c` 的 AUTO 分支把 `angle[]` 归零、90 走补偿角通道。
 
-    钉四件事，每件都对应一个会静默发生的错法：
-      · 常数是 **+90** 且只有一个（幅值写歪 = 四轮不垂直于车体；符号写歪 = 转角与驱动
-        被同时翻了一次、等于没翻，这两种错台账 Hw-30 都记过；写了第二份定义就会有两套"朝 1"）；
-      · `main.c` 的 AUTO 分支调 `retrofit_auto_angle()` 而不是又写死一个 0.0
-        ——写死 0.0 就是 Fw-11 那条"抹 0"，本批要换掉的正是它；
+    钉五件事，每件对一个会静默发生的错法：
+      · 常数存在、幅值 90、**符号为负**（同上一条的理由），且只有一份定义；
+      · `main.c` 的 AUTO 分支把四个 `angle[]` 写成 0.0——这条**不是回退到 Fw-11**，
+        Fw-11 的"抹 0"抹的是遥控来的方向，这里 0.0 是"转角通道不用"，方向在补偿角上；
+      · 四条 `send_angle` 都带 `retrofit_auto_offset()`，MANUAL 那一支仍是 `Switch_direction`
+        ⇒ 无人模式的方向永远来自编译期常数 + 当前持权者的 NAV，遥控 `ch[1]` 插手不进来；
       · `retrofit.c` 里 13 字节的读法带**钳位**与 **NaN 兜底**（对 NaN 的一切比较都是
-        false，只钳位会让 NaN 原样进伺服角）；
-      · 9 字节那一支显式把 trim 归 0，不留着上一帧的值。
+        false，只钳位会让它原样进伺服角）；9 字节那一支显式把 trim 归 0；
+      · **只有一个杠杆**：`main.c` 里不许出现把轮速取负的写法（10-26 曾加过一版，撤了；
+        转角与驱动同时翻 = 等于没翻）。
     """
     hdr = _fw_bytes(_FW_H)
     base = _fw_deg_constant(hdr, 'AUTO_CRAB_BASE_DEG')
     trim = _fw_deg_constant(hdr, 'AUTO_CRAB_TRIM_MAX')
     assert abs(base) == 90.0, base
-    assert base > 0, ('AUTO_CRAB_BASE_DEG 要 +90：分组照作者 10-24 看过的那版，'
-                     '方向由 CRAB_DRIVE_REVERSED 定，两处不许同时翻（台账 Hw-30）')
-    rev = _fw_deg_constant(hdr, 'CRAB_DRIVE_REVERSED')
-    assert rev == 1.0, ('CRAB_DRIVE_REVERSED 必须是 1：这一版的朝"1"全靠它（台账 Hw-30）')
+    assert base < 0, 'AUTO_CRAB_BASE_DEG 要 -90：厂商 +90 的形状实测朝"3"（台账 Hw-30）'
     assert 0 < trim <= 30, trim
 
     main = _fw_bytes(_FW_MAIN)
     i = main.find('if (retrofit_mode() == MODE_AUTO) {')
     assert i > 0
     block = main[i:main.find('} else if', i)]
-    assert 'retrofit_auto_angle();' in block, block[-200:]
-    assert 'angle[0] = angle[1] = angle[2] = angle[3] = 0.0;' not in block,         'AUTO 分支还写死 0.0 = Fw-11 那条"抹 0"没换掉'
+    assert 'angle[0] = angle[1] = angle[2] = angle[3] = 0.0;' in block, block[-260:]
+    assert 'retrofit_auto_angle();' not in block, 'AUTO 的 90 不该再写进 angle[]（见 test_lateral 那条说明）'
+    assert main.count(')?retrofit_auto_offset():Switch_direction)') == 4, \
+        '四条 send_angle 都要走补偿角通道，实测 %d' % main.count(')?retrofit_auto_offset():Switch_direction)')
+    assert 'vl = -vl;' not in main and 'vr = -vr;' not in main, '只许一个杠杆：驱动不许取负'
 
     c = _fw_bytes(_FW_C)
     assert 'if (len >= 13)' in c and 'nav_crab_deg != nav_crab_deg' in c
@@ -195,36 +195,28 @@ def test_auto_crab_constants_and_the_call_site():
     j = c.find('if (len >= 13)')
     assert 'nav_crab_deg = 0.0f;' in c[j:j + 600], '9 字节那一支要显式归 0'
     assert 'double retrofit_auto_angle(void)' in c
+    assert 'double retrofit_auto_offset(void)' in c
 
 
-def test_crab_drive_sign_lives_at_the_drive_point():
-    u"""行走符号这一翻必须发生在 `main.c` 的速度出口上，而且只在 crab 姿态生效。
+def test_crab_offset_reaches_all_four_servos_with_the_same_sign():
+    """补偿角这一改的核心判据：**四个伺服收到同一个符号**，所以四个轮"都是正的"。
 
-    三件事各对一个会静默发生的错法：
-      · 取负在 `retrofit_get_wheel_cmd()` **之后**、写 `veloc[]` **之前**——再往前就被
-        后面三道锁零路径（ESTOP / 未持权 / 看门狗）覆盖，或者反过来给"零"带上符号；
-      · `CRAB_DRIVE_REVERSED` 与姿态查询都得真的出现在那个条件里：写死取负会让 20° 的
-        LEFT/RIGHT 档一起倒退，那两档是正常前进方向上的转向；
-      · `retrofit_crab_posture()` 只认 AUTO 与 TELEOP 的 LATERAL 档、默认返回 0，
-        且只读已有的 `mode` / `nav_gear`，**不许新增状态、不许掺急停逻辑**。
+    `main.c` 四条 `send_angle` 里有两条是整体取负的写法（左前、右后），
+    补偿角在那两条里位于 `-(... - offset)` ⇒ 负负得正 ⇒ 四路出来都是 `+offset`。
+    这正是作者用遥控器拨横向时看到的形状，也是他说"为什么不能四个都正"的依据。
+    钉错法：如果把 90 写回 `angle[]`，它就落在外层负号里面 ⇒ 两路 +90 两路 -90，
+    四个轮就分成两组反号（10-24/10-26 那两版的样子）。
     """
-    c = _fw_bytes(_FW_C)
-    i = c.find('uint8_t retrofit_crab_posture(void)')
-    assert i > 0, 'retrofit_crab_posture() 的定义不见了'
-    body = c[i:c.find(chr(10) + '}' + chr(10), i) + 3]
-    assert 'mode == MODE_AUTO' in body, body
-    assert 'mode == MODE_TELEOP' in body and 'TELEOP_GEAR_LATERAL' in body, body
-    assert body.rstrip().endswith('return 0;' + chr(10) + '}'), ('默认必须是 0：' + body[-90:])
-    assert 'estop' not in body.lower(), '姿态查询不许掺急停逻辑'
-    assert 'mode =' not in body.replace('==', '') and 'nav_gear =' not in body.replace('==', ''), \
-        '姿态查询只读状态，不许写状态'
-
     main = _fw_bytes(_FW_MAIN)
-    j = main.find('retrofit_get_wheel_cmd(&vl, &vr);')
-    assert j > 0
-    k = main.find('veloc[0] = veloc[2] = vl;', j)
-    assert k > j, '取负那段跑到 veloc 之后了'
-    neg = main[j:k]
-    assert 'CRAB_DRIVE_REVERSED' in neg and 'retrofit_crab_posture()' in neg, neg
-    assert 'vl = -vl;' in neg and 'vr = -vr;' in neg, neg
-    assert main.count('vl = -vl;') == 1, ('行走符号只许有一处，实测 %d' % main.count('vl = -vl;'))
+    lines = [l for l in main.split(chr(10)) if 'send_angle(' in l and 'retrofit_auto_offset' in l]
+    assert len(lines) == 4, len(lines)
+    neg_outer = [l for l in lines if 'send_angle(4,' in l or 'send_angle(3,' in l]
+    pos_outer = [l for l in lines if 'send_angle(1,' in l or 'send_angle(2,' in l]
+    assert len(neg_outer) == 2 and len(pos_outer) == 2, (neg_outer, pos_outer)
+    for l in neg_outer:
+        assert 'send_angle(%s,-(angle[' % l.split('send_angle(')[1][0] in l, l[:120]
+        assert '-((retrofit_mode()' in l, l[:160]      # 外层负号里再减补偿角 ⇒ 净效果 +offset
+    for l in pos_outer:
+        assert '+((retrofit_mode()' in l, l[:160]      # 直接加 ⇒ +offset
+    # MANUAL 那一支没被动过：遥控器自己拨横向时仍由厂商的 Switch_direction 说话
+    assert main.count(':Switch_direction)') == 4

@@ -42,10 +42,13 @@
    the tool side -- the author's "1", which is the weeding direction
    (ledger Hw-30, 2026-10-21).  LEFT/RIGHT keep TELEOP_STEER_DEG.  Author
    ruling the same day: prove it in TELEOP first, AUTO gets the offset next.
-   The sign itself only picks WHICH PAIR of servos sits on +90 (the grouping the author
-   watched on 10-24); which SIDE the chassis shifts to is CRAB_DRIVE_REVERSED's job,
-   because +90 and -90 share one rolling plane.  Ledger Hw-30. */
-#define TELEOP_LATERAL_DEG   90.0   /* 10-26 (Hw-30): keep the servo grouping the author measured on 10-24; the travel side is fixed by CRAB_DRIVE_REVERSED below */
+   10-26 final: the 90 degrees rides on the SERVO OFFSET (retrofit_auto_offset), the
+   slot the vendor's lateral switch writes, so all four servos get the same number and
+   none mirrors back.  The bench said that shape walks toward "3", so this value is
+   -90 = "1".  One lever: the sign.  Ledger Hw-30. */
+#define TELEOP_LATERAL_DEG  -90.0
+/* 10-26 (Hw-30): servo offset, same sign on all four servos.  The RC lateral mode
+   with the vendor's +90 walked toward "3" on the bench, so -90 walks "1". */
 /* STATUS has no spare byte, so the accepted gear is echoed through the
    current_a placeholder (adc_current_a() returns 0.0f; Fw-5 TODO).  THE A FIELD
    IS NOT AMPS WHILE THIS IS 1.  Same borrowed-slot trick as the Hw-17 battery_v
@@ -60,28 +63,23 @@
    signs, so all four stay parallel and the chassis shifts sideways.
    Fw-11 zeroed that sum in AUTO/TELEOP (correctly, so the RC cannot steer an
    unmanned vehicle); the replacement is a PC-supplied trim on top of a
-   compile-time base, not the RC switch.  SIGN: +90 is the grouping the author watched on 10-24
-   (wheels 1 and 3 on the +90 side of the servo command).  Travel toward "1" comes from
-   CRAB_DRIVE_REVERSED below, NOT from this sign -- flipping both = flipping nothing. */
-#define AUTO_CRAB_BASE_DEG   90.0   /* 10-26 (Hw-30): same reason as TELEOP_LATERAL_DEG - grouping from 10-24, travel fixed by the drive sign */
+   compile-time base, not the RC switch.  10-26: it is now an OFFSET added to all four
+   servos with the same sign (the vendor's mechanism) instead of a value in angle[];
+   measured +90 walked toward "3", so this is -90 to walk toward "1".  Flipping the
+   drive as well would be flipping nothing - there is only this one lever. */
+#define AUTO_CRAB_BASE_DEG  -90.0
+/* 10-26 (Hw-30): servo offset for AUTO, same sign on all four servos; the sign comes
+   from the bench read, see TELEOP_LATERAL_DEG above. */
 /* How far the PC may bend that base per frame.  15 deg is an envelope, not a
    tuned gain: the trim law itself is not wired yet (pc/main.py still steers
    AUTO differentially), this only opens the channel. */
 #define AUTO_CRAB_TRIM_MAX   15.0
-/* Crab TRAVEL sign (2026-10-26, ledger Hw-30).  With the two bases above the
-   four servos sit at (+90, +90, -90, -90) for (angle[1], angle[2], angle[0],
-   angle[3]) -- exactly the grouping the author reported on 10-24 ("wheels 2 and
-   4 look reversed"), and on that build the lifted wheels all rolled toward "3"
-   with the drive at its normal sign.  A wheel rolled to +90 and one rolled to
-   -90 share ONE rolling plane, so keeping those planes and reversing the drive
-   reverses the travel: the chassis then shifts toward "1", the tool side, with
-   no dependence on how the steering servos are mirrored.  1 = reverse the wheel
-   speeds while the chassis is in a crab posture (AUTO, or TELEOP in the LATERAL
-   gear); 0 = leave the drive alone (vendor behaviour).  The 20-degree LEFT and
-   RIGHT gears are NOT crab posture and keep the normal travel direction.
-   main.c applies this at the drive point, AFTER the ESTOP / owner / watchdog
-   zeroes, so a zero can never become a non-zero through this sign. */
-#define CRAB_DRIVE_REVERSED    1
+/* One lever only (2026-10-26).  For about an hour this file carried a second one,
+   CRAB_DRIVE_REVERSED, reversing the wheel speeds while in the crab posture.  It existed
+   only to undo the consequence of putting the 90 degrees in angle[] instead of on the
+   servo offset.  With the 90 moved onto the offset the speed reversal is gone: the single
+   knob is the SIGN of AUTO_CRAB_BASE_DEG / TELEOP_LATERAL_DEG.  Do not re-add a speed
+   reversal - flipping steering 180 deg AND the drive is flipping nothing. */
 
 /* ---- MODE.request (must equal common/protocol.py) ---- */
 #define MODE_REQ_MANUAL       0x00
@@ -169,7 +167,7 @@ uint8_t retrofit_mode(void);
 uint8_t retrofit_sbus_ok(void); /* H2.3: SBUS fresh within timeout? */
 uint8_t retrofit_teleop_gear(void);  /* 2026-10-14: gear read by main.c */
 double retrofit_auto_angle(void);    /* 2026-10-21: AUTO base + PC trim, radians */
-uint8_t retrofit_crab_posture(void); /* 1 while the chassis sits at the crab angle (Hw-30) */
+double retrofit_auto_offset(void);    /* radians; same sign on all four servos (Hw-30) */
 uint8_t retrofit_estop_latched(void);   /* 1 while ESTOP latched */
 
 

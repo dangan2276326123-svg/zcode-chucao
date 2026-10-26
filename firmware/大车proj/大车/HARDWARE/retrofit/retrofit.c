@@ -633,19 +633,29 @@ double retrofit_auto_angle(void)
            * (3.14159265358979 / 180.0);
 }
 
-/* Crab posture: the chassis is at 90 deg to its own straight-ahead zero, so what
-   used to be "forward" is now a side.  AUTO always; TELEOP only in the LATERAL
-   gear, because LEFT/RIGHT are 20 deg turns along the normal forward.  main.c uses
-   this to decide whether to flip the wheel speeds (CRAB_DRIVE_REVERSED, Hw-30).
-   Reads the two file-statics that own mode and gear -- no new state, no new latch. */
-uint8_t retrofit_crab_posture(void)
+/* The servo-frame offset for the unmanned crab, in radians - the slot the vendor's own
+   lateral mode uses.  Checked line by line in main.c: Switch_direction reaches all four
+   send_angle() calls with the SAME sign (the two lines negated as a whole carry
+   -(... - Switch_direction), so it comes out positive there too).  That is why flipping the
+   RC's lateral switch turns four wheels together and none of them looks mirrored back.
+
+   Fw-11 zeroed that sum in AUTO/TELEOP so the RC could not steer an unmanned vehicle.
+   This replaces the mechanism, not the invariant: the value comes from compile-time
+   constants plus the trim carried by the CURRENT OWNER's accepted NAV frame, never from
+   ch[1].  MANUAL keeps Switch_direction untouched, and any other gear returns 0.0 -
+   byte for byte the Fw-11 behaviour.  Sign: the vendor's +90 walked toward "3" on the
+   bench on 2026-10-26, so AUTO_CRAB_BASE_DEG / TELEOP_LATERAL_DEG are -90 = "1", the tool
+   side.  Steering by 180 deg is what reverses the travel here; the drive commands stay
+   exactly as the vendor drives them. */
+double retrofit_auto_offset(void)
 {
     if (mode == MODE_AUTO)
-        return 1;
+        return retrofit_auto_angle();
     if (mode == MODE_TELEOP && nav_gear == TELEOP_GEAR_LATERAL)
-        return 1;
-    return 0;
+        return (double)TELEOP_LATERAL_DEG * (3.14159265358979 / 180.0);
+    return 0.0;
 }
+
 
 uint8_t retrofit_estop_latched(void)
 {
