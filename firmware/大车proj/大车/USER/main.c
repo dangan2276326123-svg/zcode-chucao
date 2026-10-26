@@ -531,13 +531,15 @@ while(1)
 	     the calibrated straight position BEFORE send_angle runs - the
 	     gate further below is too late, path_plan() rewrote angle[]. */
 	  if (retrofit_mode() == MODE_AUTO) {
-	      /* AUTO crab (ledger Hw-30): base 90 deg + the PC-supplied trim, so
-	         the vehicle travels toward the knife side ("1") instead of the
-	         vendor straight-ahead zero (which points at "2" on this machine).
-	         The Fw-11 intent is kept: the RC lateral switch still cannot steer
-	         an unmanned vehicle -- the trim below comes only from a NAV frame
-	         accepted from the current owner, and defaults to 0 without one. */
-	      angle[0] = angle[1] = angle[2] = angle[3] = retrofit_auto_angle();
+	      /* AUTO crab (ledger Hw-30): angle[] goes to zero and the 90 degrees is carried
+	         by retrofit_auto_offset() at the four servo slots, paired with the wheel-speed
+	         grouping further down - the same mechanism the RC lateral switch uses, so all
+	         four wheels sit at ONE servo number and none looks mirrored back.
+	         The sign is the travel selector: the vendor-side +90 walked toward "3" on the
+	         bench, the -90 here is meant to walk toward "1", the knife side.
+	         Fw-11's intent is kept: the trim comes only from a NAV frame accepted from the
+	         current owner, and ch[1] decides nothing in here. */
+	      angle[0] = angle[1] = angle[2] = angle[3] = 0.0;   /* the 90 is the servo offset */
 	  } else if (retrofit_mode() == MODE_TELEOP) {
 	      /* TELEOP steering gears (2026-10-14, source corrected 2026-10-15).
 	         The +/-20 pair shipped on 10-14 was copied from path_plan.c:97-110.
@@ -559,7 +561,6 @@ while(1)
 	         high-speed crab".  STILL TO OBSERVE on the first lifted-wheel run:
 	         that + really points left on this vehicle, and which axle moves. */
 	      double tg = TELEOP_STEER_DEG / 180.0 * 3.14159265358979;
-	      double tl = TELEOP_LATERAL_DEG / 180.0 * 3.14159265358979;  /* 90 deg = travel toward "1" */
 	      switch (retrofit_teleop_gear()) {
 	      case TELEOP_GEAR_LEFT:
 	          angle[0] = tg;  angle[1] = tg;  angle[2] = 0.0; angle[3] = 0.0;
@@ -568,23 +569,23 @@ while(1)
 	          angle[0] = -tg; angle[1] = -tg; angle[2] = 0.0; angle[3] = 0.0;
 	          break;
 	      case TELEOP_GEAR_LATERAL:
-	          angle[0] = tl;  angle[1] = tl;  angle[2] = tl;  angle[3] = tl;
+	          angle[0] = angle[1] = angle[2] = angle[3] = 0.0;  /* the 90 is the servo offset */
 	          break;
 	      default:                    /* 0 = straight, and the safe fallback */
 	          angle[0] = angle[1] = angle[2] = angle[3] = 0.0;
 	          break;
 	      }
 	  }
-	  send_angle(4,-(angle[0]-wheel_Angle_correct[0]-Last_wheel_Angle_correct_run[1]-((retrofit_mode()==MODE_AUTO||retrofit_mode()==MODE_TELEOP)?0.0:Switch_direction)));   //角度控制  adress, angle    四个轮子 但是一个伺服电机控制两个  所以只控制两个就可以
+	  send_angle(4,-(angle[0]-wheel_Angle_correct[0]-Last_wheel_Angle_correct_run[1]-((retrofit_mode()==MODE_AUTO||retrofit_mode()==MODE_TELEOP)?retrofit_auto_offset():Switch_direction)));   //角度控制  adress, angle    四个轮子 但是一个伺服电机控制两个  所以只控制两个就可以
 	  delay_ms(12);
  
-	  send_angle(1,(angle[1]+wheel_Angle_correct[1]-Last_wheel_Angle_correct_run[1]+((retrofit_mode()==MODE_AUTO||retrofit_mode()==MODE_TELEOP)?0.0:Switch_direction)));   //角度控制  adress, angle    四个轮子 但是一个伺服电机控制两个  所以只控制两个就可以
+	  send_angle(1,(angle[1]+wheel_Angle_correct[1]-Last_wheel_Angle_correct_run[1]+((retrofit_mode()==MODE_AUTO||retrofit_mode()==MODE_TELEOP)?retrofit_auto_offset():Switch_direction)));   //角度控制  adress, angle    四个轮子 但是一个伺服电机控制两个  所以只控制两个就可以
 	  delay_ms(12);
 	
-	  send_angle(2,(angle[2]-wheel_Angle_correct[2]-Last_wheel_Angle_correct_run[1]+((retrofit_mode()==MODE_AUTO||retrofit_mode()==MODE_TELEOP)?0.0:Switch_direction)));   //角度控制  adress, angle    四个轮子 但是一个伺服电机控制两个  所以只控制两个就可以
+	  send_angle(2,(angle[2]-wheel_Angle_correct[2]-Last_wheel_Angle_correct_run[1]+((retrofit_mode()==MODE_AUTO||retrofit_mode()==MODE_TELEOP)?retrofit_auto_offset():Switch_direction)));   //角度控制  adress, angle    四个轮子 但是一个伺服电机控制两个  所以只控制两个就可以
 	  delay_ms(12);
 	
-	  send_angle(3,-(angle[3]+wheel_Angle_correct[3]-Last_wheel_Angle_correct_run[1]-((retrofit_mode()==MODE_AUTO||retrofit_mode()==MODE_TELEOP)?0.0:Switch_direction)));   //角度控制  adress, angle    四个轮子 但是一个伺服电机控制两个  所以只控制两个就可以
+	  send_angle(3,-(angle[3]+wheel_Angle_correct[3]-Last_wheel_Angle_correct_run[1]-((retrofit_mode()==MODE_AUTO||retrofit_mode()==MODE_TELEOP)?retrofit_auto_offset():Switch_direction)));   //角度控制  adress, angle    四个轮子 但是一个伺服电机控制两个  所以只控制两个就可以
 	  delay_ms(12);
 		
 	//控制伺服电机
@@ -596,8 +597,34 @@ while(1)
 	if (retrofit_mode() == MODE_AUTO || retrofit_mode() == MODE_TELEOP) {
 		float vl = 0.0f, vr = 0.0f;
 		retrofit_get_wheel_cmd(&vl, &vr);
-		veloc[0] = veloc[2] = vl;   /* left front/rear */
-		veloc[1] = veloc[3] = vr;   /* right front/rear */
+		if (retrofit_crab_posture()) {
+			/* Paired with retrofit_auto_offset(): with all four servos at the same angle,
+			   all four tyres are parallel, so the four wheels cannot all be pushed the same way or
+			   they fight - the author saw exactly that fight on 10-26 with the offset and no pairing.
+			   The pattern written below is the vendor's, and the argument for copying it is a
+			   COMPOSITION, not a wheel model, because which physical wheel sits on which index is
+			   the part that has been corrected twice (see the numbering doc, 10-26):
+			     path_plan.c:654-663   a straight command (direction==0) puts the SAME velocity on
+			                         all four veloc[] entries;
+			     path_plan.c:548-555   the lateral flag then rewrites them to (-v, +v, +v, -v);
+			     main.c:20-23          DIR_SWAP_LF=1, RF=0, LR=1, RR=0 flips two of them again on the
+			                         way to the motor - identically for the RC route and this one;
+			     observed with the RC in lateral + throttle, no reverse button: four wheels turning
+			                         together, all positive, the body walking toward "3".
+			   This block writes the same (-v, +v, +v, -v) from the accepted NAV pair, so the only
+			   difference left between our crab and the working RC crab is the SIGN of the 90 deg.
+			   Both numbers it reads are accepted NAV values and it runs AFTER every zeroing path, so
+			   a zero can never become a non-zero here.  Nor can it stack with the vendor's remap:
+			   every path_plan() call in this loop (307/342/368/395) is earlier in the beat, so an RC
+			   left in the lateral position permutes numbers this block then overwrites. */
+			veloc[0] = -vr;     /* vendor: new[0] = -old[1] */
+			veloc[1] =  vr;     /* vendor: new[1] =  old[3] */
+			veloc[2] =  vl;     /* vendor: new[2] =  old[0] */
+			veloc[3] = -vl;     /* vendor: new[3] = -old[2] */
+		} else {
+			veloc[0] = veloc[2] = vl;   /* left front/rear */
+			veloc[1] = veloc[3] = vr;   /* right front/rear */
+		}
 	} else if (retrofit_mode() == MODE_ESTOP) {
 		veloc[0] = veloc[1] = veloc[2] = veloc[3] = 0.0;
 	} else if (retrofit_mode() == MODE_MANUAL && !retrofit_sbus_ok()) {

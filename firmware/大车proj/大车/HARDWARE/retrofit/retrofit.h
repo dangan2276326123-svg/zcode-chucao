@@ -16,14 +16,16 @@
    两层的值一旦漂开，现场真正生效的是漂移的那一个，所以两边都别偷偷改。 */
 /* Teleop steering gear, carried in NAV.flags -- the byte that has been on the
    wire since batch 1a and that nobody read until 2026-10-14.
-   0 straight / 1 left / 2 right.  3 is RESERVED for lateral (crab) and stays
-   refused: the crab angle needs the real track/wheelbase, and none of the four
-   geometry constants in this firmware matches what was measured (ledger Hw-23),
-   so shipping 45 deg now would scrub the tyres. */
+   0 straight / 1 left / 2 right / 3 lateral (crab).  3 was refused until
+   2026-10-21, when it stopped being "a bigger LEFT" and became the vendor's own
+   lateral mode: the body turns as a whole by Switch_direction, so it needs no
+   track/wheelbase number and the tyre-scrubbing worry (ledger Hw-23) does not
+   apply to it.  LEFT/RIGHT are still the placeholder pair at TELEOP_STEER_DEG,
+   and their numbers are NOT calibrated. */
 #define TELEOP_GEAR_STRAIGHT 0
 #define TELEOP_GEAR_LEFT     1
 #define TELEOP_GEAR_RIGHT    2
-#define TELEOP_GEAR_LATERAL  3   /* crab attempt: all four wheels same sign */
+#define TELEOP_GEAR_LATERAL  3   /* the vendor lateral: 4 servos one number + paired speeds */
 #define TELEOP_GEAR_MAX      TELEOP_GEAR_LATERAL
 /* Steering magnitude for the manual gears.  20 deg is NOT derived here -- the
    NUMBER is the one the vendor uses at path_plan.c:97-110, but that block is
@@ -42,7 +44,12 @@
    the tool side -- the author's "1", which is the weeding direction
    (ledger Hw-30, 2026-10-21).  LEFT/RIGHT keep TELEOP_STEER_DEG.  Author
    ruling the same day: prove it in TELEOP first, AUTO gets the offset next.
-   Sign (+90 or -90) is to be settled by eye on the bench. */
+   The sign was settled by eye on 2026-10-26 on the RC path: lateral + throttle,
+   no reverse button -> four wheels at ONE servo number and the body walking
+   toward "3".  Weeding travels toward "1", so the number is -90.  This gear now
+   runs the same channel as AUTO (retrofit_auto_offset() plus the paired wheel
+   speeds at main.c); the -90 is inherited from that RC observation and has not
+   been re-watched on this build. */
 #define TELEOP_LATERAL_DEG  -90.0   /* same reason: the gear must send the body toward "1" */
 /* STATUS has no spare byte, so the accepted gear is echoed through the
    current_a placeholder (adc_current_a() returns 0.0f; Fw-5 TODO).  THE A FIELD
@@ -58,29 +65,35 @@
    signs, so all four stay parallel and the chassis shifts sideways.
    Fw-11 zeroed that sum in AUTO/TELEOP (correctly, so the RC cannot steer an
    unmanned vehicle); the replacement is a PC-supplied trim on top of a
-   compile-time base, not the RC switch.  SIGN (+90 or -90) is to be settled
-   by eye on the bench -- which side "1" is has not been observed yet. */
+   compile-time base, not the RC switch.
+   Sign = two bench looks, not a derivation: on 10-24 this base at +90 walked
+   toward "3", and on 10-26 the RC lateral at +90 (four wheels same number, vendor
+   speed pairing) also walked toward "3".  Weeding is "1" => -90.  What has NOT
+   been observed is this pairing build itself: the first thing to look at after
+   Download is whether the four wheels still sit at one number and which side the
+   body walks. */
 #define AUTO_CRAB_BASE_DEG  -90.0   /* 10-24 bench: +90 drove toward "3"; weeding is "1" */
 /* How far the PC may bend that base per frame.  15 deg is an envelope, not a
    tuned gain: the trim law itself is not wired yet (pc/main.py still steers
    AUTO differentially), this only opens the channel. */
 #define AUTO_CRAB_TRIM_MAX   15.0
-/* Two other ways to make the unmanned mode walk toward "1" were tried on the bench on
-   2026-10-26 and both are dead ends - keep this note so nobody re-invents them:
-   1) reversing the wheel speeds while in the crab posture (a CRAB_DRIVE_REVERSED switch).
-      Removed: steering to -90 already turns every wheel around by 180 deg, which is
-      itself a travel reversal, so doing the speeds as well does nothing - and it flipped
-      the sign of the differential correction for no reason.
-   2) putting the 90 degrees on the servo offset instead of in angle[] (the slot the
-      vendor's own lateral switch writes, which reaches all four servos with the same
-      sign, so no wheel looks mirrored).  Removed: it looked right and drove wrong.
-      Pressing [A] made the right-hand wheels roll toward "3" and the left-hand wheels
-      toward "1" - the two sides fighting each other.  With the 90 in angle[] all four
-      tires rolled the same way together (10-24).  So the per-wheel +/- in main.c really
-      is mirror-mounting compensation: two servos on the negative side is what a parallel
-      crab looks like on this vehicle, and it is also the only shape that stays parallel
-      away from 90 deg, which the crab_deg trim will need.  Ledger Hw-30.
-   One lever left: the SIGN of AUTO_CRAB_BASE_DEG / TELEOP_LATERAL_DEG. */
+/* The 90 degrees and the wheel speeds are PAIRED.  The author's question "then why can the RC
+   do it with all four wheels the same way?" found the missing half on 2026-10-26: the vendor's
+   lateral mode does TWO things - Switch_direction = +90 reaches all four servos with the same
+   sign (path_plan.c:212-218 + the four send_angle calls), and path_plan.c:548-555 immediately
+   remaps the wheel speeds so entries 0 and 3 of veloc[] carry the opposite sign to
+   entries 1 and 2.  Which physical wheel that is has been corrected twice (see the
+   numbering doc), so this note stays index-level; the vendor's own comment at :548
+   adds that which wheels are grouped is a per-model PCB wiring question.
+   Both half-measures were run on the bench today and both were wrong: same-sign servos with
+   un-paired speeds fought side against side; opposite-sign servos with un-paired speeds walk
+   fine but two wheels look mirrored back.  What is implemented now is the vendor pairing
+   taken verbatim, cross-assignment included: the negated wheels get the OPPOSITE side's
+   number - invisible while vl == vr, a different wheel speed under differential.  Copy
+   rather than paraphrase, because the whole route (planner signs, this offset, DIR_SWAP,
+   pwm_veloc) is the one the author has watched work with the RC in the lateral position.
+   Travel side is still the sign below: the vendor's +90 walked toward "3", so -90 = "1".
+   Ledger Hw-30. */
 
 /* ---- MODE.request (must equal common/protocol.py) ---- */
 #define MODE_REQ_MANUAL       0x00
@@ -167,7 +180,15 @@ void retrofit_clear_estop(void);   /* manual reset only (key/button path) */
 uint8_t retrofit_mode(void);
 uint8_t retrofit_sbus_ok(void); /* H2.3: SBUS fresh within timeout? */
 uint8_t retrofit_teleop_gear(void);  /* 2026-10-14: gear read by main.c */
-double retrofit_auto_angle(void);    /* 2026-10-21: AUTO base + PC trim, radians */
+double retrofit_auto_angle(void);
+/* Crab posture: AUTO always, TELEOP only in the LATERAL gear. Everything that has to
+   be "paired" (the servo offset AND the wheel-speed grouping) asks this one question,
+   so the two halves can never disagree. Manual is never a crab posture. */
+uint8_t retrofit_crab_posture(void);
+/* The 90 degrees, on the SERVO side: main.c adds it to all four send_angle() calls
+   with the SAME sign, exactly like the vendor's Switch_direction does in lateral mode
+   (so no wheel looks mirrored back). Radians; 0.0 outside a crab posture. */
+double retrofit_auto_offset(void);    /* 2026-10-21: AUTO base + PC trim, radians */
 uint8_t retrofit_estop_latched(void);   /* 1 while ESTOP latched */
 
 

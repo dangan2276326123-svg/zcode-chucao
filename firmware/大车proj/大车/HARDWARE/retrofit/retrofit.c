@@ -624,13 +624,42 @@ uint8_t retrofit_teleop_gear(void)
     return nav_gear;   /* last gear accepted by retrofit_on_nav_frame */
 }
 
-/* AUTO wheel angle actually sent to the servos: compile-time base plus the
-   PC-supplied trim, in radians.  main.c writes this to all four angle[]
-   entries, so the chassis keeps a parallel (crab) shape. */
+/* Compile-time base plus the PC-supplied trim, in radians.  This IS the crab offset:
+   retrofit_auto_offset() hands it to main.c, which adds it to all four send_angle() calls
+   with the same sign - the vendor mechanism.  It is deliberately NOT written into angle[]
+   any more: behind main.c's per-wheel +/- it would mirror two wheels back (ledger Hw-30).
+   The trim is clamped and NaN-guarded where it is parsed, in retrofit_on_nav_frame. */
 double retrofit_auto_angle(void)
 {
     return (double)(AUTO_CRAB_BASE_DEG + (double)nav_crab_deg)
            * (3.14159265358979 / 180.0);
+}
+
+/* Crab posture - see the note in retrofit.h: the servo offset and the wheel-speed
+   grouping both key off this, so they cannot drift apart.  Reads only the two
+   file-statics that already own mode and gear; no new state, no latch, no ESTOP logic. */
+uint8_t retrofit_crab_posture(void)
+{
+    if (mode == MODE_AUTO)
+        return 1;
+    if (mode == MODE_TELEOP && nav_gear == TELEOP_GEAR_LATERAL)
+        return 1;
+    return 0;
+}
+
+/* The 90 degrees on the servo side, in radians: main.c folds it into all four
+   send_angle() calls with the SAME sign, which is what the vendor's lateral switch
+   does - so all four servos sit at one number and no wheel mirrors back.  Fw-11's
+   invariant is kept: in AUTO/TELEOP this never comes from ch[1]; it is the
+   compile-time base plus the trim carried by the current owner's accepted NAV frame.
+   Outside a crab posture it returns 0.0, i.e. byte for byte the Fw-11 behaviour. */
+double retrofit_auto_offset(void)
+{
+    if (!retrofit_crab_posture())
+        return 0.0;
+    if (mode == MODE_AUTO)
+        return retrofit_auto_angle();
+    return (double)TELEOP_LATERAL_DEG * (3.14159265358979 / 180.0);
 }
 
 uint8_t retrofit_estop_latched(void)
