@@ -611,16 +611,25 @@ while(1)
 			                         way to the motor - identically for the RC route and this one;
 			     observed with the RC in lateral + throttle, no reverse button: four wheels turning
 			                         together, all positive, the body walking toward "3".
-			   This block writes the same (-v, +v, +v, -v) from the accepted NAV pair, so the only
-			   difference left between our crab and the working RC crab is the SIGN of the 90 deg.
+			   TWO things moved together on 2026-10-27, because the author asked for the wheels to look
+			   right (he asked why the four wheels must read reversed at all):
+			     (a) the base angle went -90 -> +90, so all four servos now sit on the SAME side the RC
+			         lateral sits on - the look the author calls zheng (right way round);
+			     (b) all four wheel speeds flipped sign, which is what cancels (a) wheel by wheel: a 180 deg
+			         servo flip plus a drive flip leaves that wheel rolling EXACTLY as it did, so the body
+			         keeps the behaviour the bench just saw - only the look of the tyres changed.
+			   The RC reaches this same state with lateral + the reverse button: path_plan.c:721-731
+			   (reverse + straight command puts -velocity on all four entries) composed with the lateral
+			   remap at :548-555 gives (+v, -v, -v, +v), which is what is written above from the accepted
+			   NAV pair.  A vendor mechanism, not an invention of ours.
 			   Both numbers it reads are accepted NAV values and it runs AFTER every zeroing path, so
 			   a zero can never become a non-zero here.  Nor can it stack with the vendor's remap:
 			   every path_plan() call in this loop (307/342/368/395) is earlier in the beat, so an RC
 			   left in the lateral position permutes numbers this block then overwrites. */
-			veloc[0] = -vr;     /* vendor: new[0] = -old[1] */
-			veloc[1] =  vr;     /* vendor: new[1] =  old[3] */
-			veloc[2] =  vl;     /* vendor: new[2] =  old[0] */
-			veloc[3] = -vl;     /* vendor: new[3] = -old[2] */
+			veloc[0] =  vr;     /* lateral+reverse: new[0] = +old[1] */
+			veloc[1] = -vr;     /* lateral+reverse: new[1] = -old[3] */
+			veloc[2] = -vl;     /* lateral+reverse: new[2] = -old[0] */
+			veloc[3] =  vl;     /* lateral+reverse: new[3] = +old[2] */
 		} else {
 			veloc[0] = veloc[2] = vl;   /* left front/rear */
 			veloc[1] = veloc[3] = vr;   /* right front/rear */

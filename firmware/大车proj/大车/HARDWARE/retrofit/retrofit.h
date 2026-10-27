@@ -46,11 +46,14 @@
    ruling the same day: prove it in TELEOP first, AUTO gets the offset next.
    The sign was settled by eye on 2026-10-26 on the RC path: lateral + throttle,
    no reverse button -> four wheels at ONE servo number and the body walking
-   toward "3".  Weeding travels toward "1", so the number is -90.  This gear now
-   runs the same channel as AUTO (retrofit_auto_offset() plus the paired wheel
-   speeds at main.c); the -90 is inherited from that RC observation and has not
-   been re-watched on this build. */
-#define TELEOP_LATERAL_DEG  -90.0   /* same reason: the gear must send the body toward "1" */
+   toward "3".  As of 10-27 the number is +90: the gear keeps the LOOK the RC
+   lateral shows (four wheels right way round) and the SIDE the body walks comes
+   from main.c negating all four wheel speeds in a crab posture.  Per wheel that
+   is a 180 deg servo flip plus a drive flip, which cancels - the body rolls as
+   the bench just saw it, only the tyres look different.  Same state the RC reaches
+   with lateral + reverse button (path_plan.c:721-731 puts -velocity on all four).
+   Neither the look nor the side has been re-watched on this build. */
+#define TELEOP_LATERAL_DEG  +90.0   /* 10-27: the right-way-round look; the walked side is set by the flipped speeds */
 /* STATUS has no spare byte, so the accepted gear is echoed through the
    current_a placeholder (adc_current_a() returns 0.0f; Fw-5 TODO).  THE A FIELD
    IS NOT AMPS WHILE THIS IS 1.  Same borrowed-slot trick as the Hw-17 battery_v
@@ -66,13 +69,15 @@
    Fw-11 zeroed that sum in AUTO/TELEOP (correctly, so the RC cannot steer an
    unmanned vehicle); the replacement is a PC-supplied trim on top of a
    compile-time base, not the RC switch.
-   Sign = two bench looks, not a derivation: on 10-24 this base at +90 walked
-   toward "3", and on 10-26 the RC lateral at +90 (four wheels same number, vendor
-   speed pairing) also walked toward "3".  Weeding is "1" => -90.  What has NOT
-   been observed is this pairing build itself: the first thing to look at after
-   Download is whether the four wheels still sit at one number and which side the
-   body walks. */
-#define AUTO_CRAB_BASE_DEG  -90.0   /* 10-24 bench: +90 drove toward "3"; weeding is "1" */
+   Sign story = three bench looks, none of them a derivation: on 10-24 this base
+   at +90 walked toward "3"; on 10-26 the RC lateral at +90 (vendor forward
+   pairing) walked toward "3" too; on 10-27 the -90 base with the same pairing
+   turned all four wheels reversed and the author asked to make them right.  So
+   the base is +90 again and the walked side rides on the four flipped wheel
+   speeds in main.c - lateral + reverse button, written into the firmware.  What
+   has NOT been re-watched here: whether the wheels read right way round, and
+   which side the body walks. */
+#define AUTO_CRAB_BASE_DEG  +90.0   /* 10-27: the RC lateral LOOK; direction from the flipped speeds */
 /* How far the PC may bend that base per frame.  15 deg is an envelope, not a
    tuned gain: the trim law itself is not wired yet (pc/main.py still steers
    AUTO differentially), this only opens the channel. */
@@ -87,13 +92,16 @@
    adds that which wheels are grouped is a per-model PCB wiring question.
    Both half-measures were run on the bench today and both were wrong: same-sign servos with
    un-paired speeds fought side against side; opposite-sign servos with un-paired speeds walk
-   fine but two wheels look mirrored back.  What is implemented now is the vendor pairing
-   taken verbatim, cross-assignment included: the negated wheels get the OPPOSITE side's
+   fine but two wheels look mirrored back.  That forward pairing is the reference the
+   drive block below, taken verbatim, cross-assignment included: the negated wheels
    number - invisible while vl == vr, a different wheel speed under differential.  Copy
    rather than paraphrase, because the whole route (planner signs, this offset, DIR_SWAP,
    pwm_veloc) is the one the author has watched work with the RC in the lateral position.
-   Travel side is still the sign below: the vendor's +90 walked toward "3", so -90 = "1".
-   Ledger Hw-30. */
+   10-27: the sign below is +90 (four wheels right way round, the RC lateral look)
+   and ALL FOUR wheel speeds are negated against that forward pattern - per wheel a
+   servo flip plus a drive flip cancels, so the body keeps rolling the way the -90
+   build rolled it; only the look changed.  That is the RC's reverse button on the
+   lateral, done in firmware.  Ledger Hw-30. */
 
 /* ---- MODE.request (must equal common/protocol.py) ---- */
 #define MODE_REQ_MANUAL       0x00

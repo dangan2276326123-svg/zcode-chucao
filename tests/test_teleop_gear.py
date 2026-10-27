@@ -132,24 +132,23 @@ def _fw_deg_constant(text, name):
 
 
 def test_lateral_gear_uses_its_own_90_degree_constant():
-    """LATERAL 必须是 **−90°**，而且**不能顺手把 LEFT/RIGHT 也带到 90°**。
+    """LATERAL 的基准角必须是 **+90°** —— 就是厂商横向档那个"四个轮都正"的 LOOK；
+    而且**不许顺手把 LEFT/RIGHT 也带到 90°**。
 
-    钉三件事：① 常数存在、幅值 90、**符号为负**（作者 10-21 口径：无人作业方向 =
-    刀那一面 = "1"，而正常档零位是"2"，差的就是厂商 `path_plan.c:218` 那个
-    `Switch_direction=1.570796`；符号由台架两次目视定：10-24 那一版写 +90，按 `A` 车朝
-    "3"；10-26 用遥控器拨横向给油门（厂商那条活路，+90）还是朝"3" ⇒ 正号这台车上就是朝
-    "3"，要朝"1"得取负。推导链与两次读数在台账 Hw-30）；
-    ② 这个常数**由 `retrofit.c` 的 `retrofit_auto_offset()` 消费**，不再由 main.c 的
-    `tl` 变量写进 `angle[]`——10-26 起 90° 走的是补偿角那条通道（跟厂商横向档同一个入口），
-    `angle[]` 在 LATERAL 档归零；
-    ③ LEFT/RIGHT 仍用 `tg`（20°）。把三档共用一个常数是这个改动最容易顺手做成的形状——
-    那会让 LEFT/RIGHT 也变成 90°，而"左/右"在 20° 下是斜行、在 90° 下就成了平移，
-    C27 那三条目视判据当场全部失真。
+    钉三件事：
+      · 常数存在、幅值 90、**符号为正**。这是 10-27 第五次改判（台账 Hw-30）：作者烧上 −90 配对版后
+        报"四个轮都反了"，要求"把四个轮改正"。±90 共用同一条滚动平面，姿态那一定不了朝几 ⇒ 基准角放回
+        厂商横向档的 +90（遥控器不推反向键时就是这个样子），**车朝哪一边改由驱动那一半承担**：main.c
+        共角分支把四个轮速整体取负 = "横向 + 反向键"，由 test_crab_needs_both_halves_and_one_sign 钉住；
+      · 这个常数**由 retrofit.c 的 retrofit_auto_offset() 消费**，不再由 main.c 的 tl 变量写进 angle[]
+        （10-26 起 90° 走补偿角那条通道，跟厂商横向档同一个入口；angle[] 在 LATERAL 档归零）；
+      · LEFT/RIGHT 仍用 tg（20°）。三档共用一个常数是这个改动最容易顺手做成的错法：那会让 LEFT/RIGHT
+        也变成 90°，而"左/右"在 20° 下是斜行、在 90° 下就成了平移，C27 那三条目视判据当场全部失真。
     """
     hdr = _fw_bytes(_FW_H)
     lat = _fw_deg_constant(hdr, 'TELEOP_LATERAL_DEG')
     assert abs(lat) == 90.0, lat
-    assert lat < 0, 'TELEOP_LATERAL_DEG 要 -90：台架实测 +90 让车朝"3"（台账 Hw-30）'
+    assert lat > 0, 'TELEOP_LATERAL_DEG 要 +90：厂商横向档的 LOOK；朝哪边由共角分支的四轮取负决定（10-27 第五次改判，台账 Hw-30）'
     assert 'TELEOP_STEER_DEG' in hdr, 'LEFT/RIGHT 那份 20° 常数不许消失'
 
     main = _fw_bytes(_FW_MAIN)
@@ -168,25 +167,24 @@ def test_lateral_gear_uses_its_own_90_degree_constant():
 
 
 def test_auto_crab_constants_and_the_call_site():
-    """AUTO 共角的两个常数、四个伺服槽都调它、以及 `retrofit.c` 的三道守卫。
+    """AUTO 共角的两个常数、四个伺服槽都调它、以及 retrofit.c 的三道守卫。
 
     钉五件事，每件都对应一个会静默发生的错法：
-      · 常数是 **−90** 且只有一个（幅值写歪 = 车不走刀侧；符号写歪 = 车朝"3"，
-        这两个错台架都见过：10-24 那一版 +90 作者报"按 A 向 3 行驶"，10-26 用遥控器
-        走厂商那条活路 +90 还是朝"3"，见台账 Hw-30；写了第二份定义就会有两套"朝 1"）；
-      · `main.c` 的 AUTO 分支把 `angle[]` 归 0，90° 一律走四个伺服槽的
-        `retrofit_auto_offset()` ——10-26 当天第三次改判那一版把它写回过 `angle[]`，作者目视
-        "按 `g` 1 和 3 反了"，走的正是注释里说的那条镜像路；当晚第四次改判又换回补偿角 + 速度配对；
+      · 常数是 **+90** 且只有一个（幅值写歪 = 车不走刀侧；符号写歪 = 四个轮看着反 —— 这两种错台架都
+        见过：10-24 那版 +90 作者报"按 A 向 3 行驶"；10-26 配对版 −90 报"四个轮都反了"；写了第二份定义
+        就会有两套"朝 1"。行走方向现在由驱动符号决定，不由这个符号决定，见 test_crab_needs_both_halves）；
+      · main.c 的 AUTO 分支把 angle[] 归 0，90° 一律走四个伺服槽的 retrofit_auto_offset()：10-26 傍晚
+        那一版把它写回 angle[]，作者目视"1、3 反了"，走的正是逐轮 ± 那条镜像路；当晚又换回补偿角；
       · 四个伺服槽**每一个**都带这个条件（少一个 = 那一个轮不转 90°，剩下的三个顶它）；
-      · `retrofit.c` 里 13 字节的读法带**钳位**与 **NaN 兜底**（对 NaN 的一切比较都是
-        false，只钳位会让 NaN 原样进伺服角）；
+      · retrofit.c 里 13 字节的读法带**钳位**与 **NaN 兜底**（对 NaN 的一切比较都是 false，
+        只钳位会让它原样进伺服角）；
       · 9 字节那一支显式把 trim 归 0，不留着上一帧的值。
     """
     hdr = _fw_bytes(_FW_H)
     base = _fw_deg_constant(hdr, 'AUTO_CRAB_BASE_DEG')
     trim = _fw_deg_constant(hdr, 'AUTO_CRAB_TRIM_MAX')
     assert abs(base) == 90.0, base
-    assert base < 0, 'AUTO_CRAB_BASE_DEG 要 -90：+90 台架上把车带向"3"（台账 Hw-30）'
+    assert base > 0, 'AUTO_CRAB_BASE_DEG 要 +90（四个轮都正的 LOOK）；方向由共角分支的四轮取负承担（10-27 第五次改判，台账 Hw-30）'
     assert 0 < trim <= 30, trim
 
     main = _fw_bytes(_FW_MAIN)
@@ -216,11 +214,12 @@ _SLOT_POS = u'+((retrofit_mode()==MODE_AUTO||retrofit_mode()==MODE_TELEOP)?' \
 
 
 def test_four_servo_slots_get_the_same_signed_offset():
-    u"""四个伺服收到的是**同一个数**——这才是"四个轮一起转、都是正的"那一眼的代码形状。
+    u"""四个伺服收到的是**同一个数** —— 这才是"四个轮一起转、都是正的"那一眼的代码形状。
 
-    `main.c` 的四条 send_angle 里有两条整体取负（厂商的逐轮镜像安装补偿）。补偿角必须
-    **写在负号内侧**，负负得正，四路才同号；写在括号外面就变成两组反号，也就是作者
-    10-26 报的"1、3 反了"。这条测试把两两相乘后的有效符号算出来看，不看措辞。
+    main.c 的四条 send_angle 里有两条整体取负（厂商的逐轮镜像安装补偿）。补偿角必须**写在负号内侧**，
+    负负得正，四路才同号；写在括号外面就变成两组反号，也就是作者 10-26 报的"1、3 反了"。这条测试把
+    两两相乘后的有效符号算出来看，不看措辞 —— 10-27 那次把基准角从 −90 换回 +90，靠的就是这条：符号
+    换了，四个槽仍必须同号，否则又回到"一组看着反"的老形状。
     """
     import re
     main = _fw_bytes(_FW_MAIN)
@@ -244,15 +243,18 @@ def test_four_servo_slots_get_the_same_signed_offset():
 
 
 def test_crab_needs_both_halves_and_one_sign():
-    u"""共角要**两半都在**，而"朝哪一边"只许**一个杠杆**。
+    u"""共角要**两半都在**，而"朝哪一边"只许**一个杠杆** —— 10-27 起这根杠杆是轮速，不是转角符号。
 
-    10-26 一天里两条"只做一半"的形状都上台架跑过了：
+    10-26 一天里两条"只做一半"的形状都上台架跑过：
       · 四个伺服同号 + 轮速不配对 ⇒ 左右两边互相顶（作者原话"别劲"）；
-      · 转角打在 `angle[]`（两组反号）+ 轮速取负 ⇒ 把第一版的"翻一次"抵消掉了，
-        等于没有朝 1，还白白把 `pc/control.py` 那条差速纠偏的偏航符号翻一遍。
-    厂商那条活路是两半都在：同号的补偿角 + 一组对角取负的轮速，
-    所以这里钉的是**配对本身**（转角通道与速度分组必须同时出现），
-    以及**没有第三根杠杆**（不许出现 `vl = -vl` 那种整侧取负）。
+      · 转角打在 angle[]（两组反号）+ 轮速不配对 ⇒ 车能走，但有两组轮看着镜像（"1、3 反了"）。
+    厂商那条活路是两半都在：横向档 = 同号补偿角 + 按 (−vr,+vr,+vl,−vl) 分组的轮速。10-27 第五次改判
+    在这两半之上再叠"整体取负"（= 横向 + 反向键：path_plan.c:721-731 的后退支把四个 veloc 都写成
+    −velocity），因为作者要把四个轮"改正"，而 ±90 是同一条滚动平面、姿态答不了朝几，能改的只有驱动符号。
+    所以这条测试钉三件事：
+      ① 转角通道还在（四个伺服槽都带 retrofit_auto_offset()）；
+      ② 共角分支的轮速写成 (vr, −vr, −vl, vl) 这一组，而 else 支仍是不配对的差速；
+      ③ 没有第三根杠杆：main.c 里不许出现 vl = -vl / vr = -vr 那种就地整侧取负。
     """
     main = _fw_bytes(_FW_MAIN)
     c = _fw_bytes(_FW_C)
@@ -260,14 +262,14 @@ def test_crab_needs_both_halves_and_one_sign():
 
     # 第一半：补偿角走四个伺服槽（上一条测试已经逐槽验过符号，这里只钉"通道还在"）
     assert main.count(u'?retrofit_auto_offset():Switch_direction)') == 4
-    # 第二半：共角姿态下的轮速分组，逐字抄 path_plan.c:548-555 的有效形状 (-v,+v,+v,-v)
+    # 第二半：共角姿态下的轮速 = 厂商横向档 (+v,-v,-v,+v)，即"横向 + 反向键"那一组
     i = main.find(u'if (retrofit_crab_posture()) {')
     assert i > 0, u'共角判据没接进驱动点：转角与速度两半会各走各的'
     end = main.find(u'} else if (retrofit_mode() == MODE_ESTOP)', i)
     assert end > i, u'驱动点的分支结构变了，这条测试的窗口要先重看'
     block = main[i:end]
-    for frag in (u'veloc[0] = -vr;', u'veloc[1] =  vr;',
-                 u'veloc[2] =  vl;', u'veloc[3] = -vl;'):
+    for frag in (u'veloc[0] =  vr;', u'veloc[1] = -vr;',
+                 u'veloc[2] = -vl;', u'veloc[3] =  vl;'):
         assert frag in block, frag
     assert u'veloc[0] = veloc[2] = vl;' in block and u'veloc[1] = veloc[3] = vr;' in block, \
         u'else 分支必须还是原来的差速，LEFT/RIGHT/直行不许被共角改掉'
@@ -288,4 +290,4 @@ def test_crab_needs_both_halves_and_one_sign():
     assert u'The 90 degrees and the wheel speeds are PAIRED' in hdr
     base = _fw_deg_constant(hdr, 'AUTO_CRAB_BASE_DEG')
     lat = _fw_deg_constant(hdr, 'TELEOP_LATERAL_DEG')
-    assert base < 0 and lat < 0, (base, lat)
+    assert base > 0 and lat > 0, (base, lat)

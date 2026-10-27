@@ -652,7 +652,7 @@ uint8_t retrofit_crab_posture(void)
    does - so all four servos sit at one number and no wheel mirrors back.  Fw-11's
    invariant is kept: in AUTO/TELEOP this never comes from ch[1]; it is the
    compile-time base plus the trim carried by the current owner's accepted NAV frame.
-   Outside a crab posture it returns 0.0, i.e. byte for byte the Fw-11 behaviour. */
+   Outside a crab posture it returns 0.0, i.e. byte for byte the Fw-11 behaviour.  As of 10-27 this sign only fixes how the wheels LOOK (the RC lateral look = +90);  which side the body walks is set by the four wheel speeds in main.c. */
 double retrofit_auto_offset(void)
 {
     if (!retrofit_crab_posture())
