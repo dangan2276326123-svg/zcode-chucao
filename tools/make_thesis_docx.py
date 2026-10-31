@@ -155,6 +155,9 @@ MARKS = [
     # 清零清单不只一种关键词：正文里除 `<待补充：…>` 外还有 `<待核实：…>`、
     # `<待登记：…>`、`<待实测：…>`。原先只认"待补充"，那几处就以普通文字落纸、
     # 既不高亮也不计数——清单少报，比格式不好看更糟。
+    # 行内反引号在 Word 里不该原样露出来：源码里 18 处 `标识符` 只是在强调
+    # 那是个代码名，落纸时去掉反引号、文字保留。
+    (re.compile(r'`([^`]+)`'), 'code'),
     (re.compile(r'<待[^\n<>]{0,200}>', re.S), 'todo'),
     (re.compile(r'\*\*(.+?)\*\*', re.S), 'bold'),
 ]
@@ -173,8 +176,9 @@ class Counter(dict):
 
 
 def strip_marks(text):
-    return re.sub(r'\[\[([^\]:]+):([^\]]*)\]\]',
-                  lambda m: m.group(2), text).strip()
+    text = re.sub(r'\[\[([^\]:]+):([^\]]*)\]\]', lambda m: m.group(2), text)
+    # 表题/图题走的是这条路径（不经 emit），反引号在这里也要去掉
+    return re.sub(r'`([^`]+)`', lambda m: m.group(1), text).strip()
 
 
 def _flag(p, text, colour):
@@ -265,6 +269,9 @@ def emit(text, p, c):
                   else 'fig_placeholder'] += 1
                 if p is not None:
                     _flag(p, u'〔待补图：%s〕' % key, WD_COLOR_INDEX.YELLOW)
+        elif kind == 'code':
+            if p is not None:
+                p.add_run(inner)
         elif kind == 'todo':
             c['todo'] += 1
             if p is not None:

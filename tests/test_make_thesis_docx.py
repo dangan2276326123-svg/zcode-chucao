@@ -133,6 +133,20 @@ def test_other_pending_markers_are_highlighted_too():
         '一处待办标记都不许以普通文字混过版面'
 
 
+def test_inline_code_backticks_are_dropped_not_printed():
+    """源码用 `标识符` 强调代码名；纸面上露反引号就是排版事故。
+
+    118 处反引号散在 ch02/ch03/ch06，其中表题那一条走的是 strip_marks（不经 emit），
+    所以两条路径都得去；这条测试把两处都钉住。
+    """
+    c = M.Counter()
+    p = FakePara()
+    M.emit(u'见 `status` 与 `train_metric_log.csv` 两处。', p, c)
+    assert '`' not in p.plain(), p.plain()
+    assert 'status' in p.plain() and 'train_metric_log.csv' in p.plain()
+    assert '`' not in M.strip_marks(u'表 3-1 指标（取自 `train_metric_log.csv`）')
+
+
 def test_bold_mark_produces_a_bold_run_and_no_asterisks():
     c = M.Counter()
     p = FakePara()
