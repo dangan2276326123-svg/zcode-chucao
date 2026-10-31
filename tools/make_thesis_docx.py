@@ -73,6 +73,10 @@ CHAPTERS = os.path.join(THESIS, '03_chapters')
 OUTDIR = os.path.join(THESIS, '10_output')
 PREV_DOCX = os.path.join(OUTDIR, 'thesis_draft_v14.docx')
 OUT_DOCX = os.path.join(OUTDIR, 'thesis_draft_v15_clean.docx')
+# 作者要"在 qoder 文件夹里直接看到最新一版"。这一份是**覆盖式副本**：每次生成都重写，
+# 只保留最新；权威产物（含版本清单）仍在 thesis_cau/10_output/，这里不进版本库。
+LATEST = os.environ.get('THESIS_LATEST') or os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'thesis_latest.docx')
 FIGDIR = os.path.join(THESIS, '04_figures')
 FIGMAN = os.path.join(FIGDIR, 'figures_manifest.md')
 # 占位标记 -> 图片文件名。由 load_figure_map() 从清单读入；
@@ -923,6 +927,14 @@ def build(check_only=False, cover='academic'):
         if not os.path.isdir(OUTDIR):
             os.makedirs(OUTDIR)
         doc.save(OUT_DOCX)
+        # 覆盖式副本：只留最新一版。复制后比一次字节数，避免"看着复制了其实是旧文件"。
+        try:
+            import shutil
+            shutil.copyfile(OUT_DOCX, LATEST)
+            assert os.path.getsize(LATEST) == os.path.getsize(OUT_DOCX)
+            c['latest_copy'] = LATEST
+        except OSError as e:
+            c['latest_copy'] = 'FAILED: %s' % e
     return c, len(refs)
 
 
@@ -1001,6 +1013,7 @@ def main():
           % (c['ref_num'], c['ref_pending']))
     print('references  : %d entries carried over, %d corrected against registry'
           % (nrefs, c.get('ref_fixed', 0)))
+    print('latest copy : %s' % (c.get('latest_copy') or '-'))
     # 页眉改向是"写了才算做了"的那类事，所以把当场结果打出来，不让人靠读代码推断。
     # check 模式不写文件也不改页眉，这里如实报 0。
     print('running hdr : %d body-section header reference(s) repointed'

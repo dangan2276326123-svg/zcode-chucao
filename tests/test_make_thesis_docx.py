@@ -400,8 +400,13 @@ def test_body_section_carries_running_header_and_page_numbers(tmp_path, monkeypa
 
     monkeypatch.setattr(M, 'OUTDIR', str(tmp_path))     # 绝不往 thesis_cau 里写
     monkeypatch.setattr(M, 'OUT_DOCX', str(tmp_path / 'built.docx'))
+    # 生成器还会往"最新副本"写一份；不钉住的话这一跑会落进仓库根目录
+    monkeypatch.setattr(M, 'LATEST', str(tmp_path / 'latest.docx'))
     c, _ = M.build(check_only=False)
     assert c['hdr_repointed'] == 1, '没找到可改向的跑动页眉，改动就没生效'
+    # 覆盖式副本：内容必须与主产物逐字节相同（"看着有文件、其实是旧的"是最坏形状）
+    latest = tmp_path / 'latest.docx'
+    assert latest.exists() and latest.read_bytes() == (tmp_path / 'built.docx').read_bytes()
 
     d = Document(str(tmp_path / 'built.docx'))
     front, body = d.sections[-2], d.sections[-1]
