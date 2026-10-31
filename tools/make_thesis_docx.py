@@ -222,6 +222,7 @@ def emit(text, p, c):
                 # 已定号的引文：GB/T 7714 顺序编码制在正文里是**上标 [n]**，
                 # 不是灰底占位。这一支是 2026-10-17 那次机械替换之后才会走到的。
                 c['ref_num'] += 1
+                c['ref_max'] = max(c.get('ref_max', 0), int(num))
                 if p is not None:
                     run = p.add_run('[%s]' % num)
                     run.font.superscript = True
@@ -774,6 +775,26 @@ def apply_pagination(doc):
     return out
 
 
+# 2026-10-27 新增的 7 条文献（编号接在 v14 搬运的 26 条之后）。
+# 只收**本机能读到全文或已发表摘要**的文献：五篇学位论文来自作者桌面的 PDF（摘要逐字读过），
+# 两篇 Elsevier 综述的卷期页取自 Crossref 记录，期刊论文（农业工程学报）页码取自 PDF
+# 首页 34 与末页 44。查不到卷期页的**不收**——"题名看着对就编一条引用"是本仓明令禁止的事。
+EXTRA_REFERENCES = (
+    u'[27] 赖汉荣. 玉米行间除草机器人控制技术研究[D]. 北京: 中国农业大学, 2023.',
+    u'[28] 李俊. 玉米作物行间除草机器人行走控制方法与系统设计[D]. 合肥: 安徽农业大学, 2021.',
+    u'[29] 张硕. 面向对行视觉导航的作物行识别与跟踪方法研究[D]. 北京: 中国农业大学, 2025.',
+    u'[30] 苏童. 基于单目相机的玉米中后期智能农机导航方法研究[D]. 北京: 中国农业大学, 2025.',
+    u'[31] 王硕, 苏道毕力格, 王子蒙, 等. 凸轮摆杆式生菜株间除草装置设计与试验[J]. '
+    u'农业工程学报, 2021, 37(21): 34-44.',
+    u'[32] Upadhyay A, Zhang Y, Koparan C, et al. Advances in ground robotic technologies '
+    u'for site-specific weed management in precision agriculture: A review[J]. '
+    u'Computers and Electronics in Agriculture, 2024, 225: 109363.',
+    u'[33] Saini P, Nagesh D S. A review of deep learning applications in weed detection: '
+    u'UAV and robotic approaches for precision agriculture[J]. European Journal of '
+    u'Agronomy, 2025, 168: 127652.',
+)
+
+
 def build(check_only=False, cover='academic'):
     doc = docx.Document(TEMPLATE)
     if not check_only:
@@ -861,6 +882,13 @@ def build(check_only=False, cover='academic'):
 
     refs = extract_references(PREV_DOCX)
     refs, n_fixed = apply_reference_fixes(refs)
+    refs = refs + list(EXTRA_REFERENCES)   # 编号接在 26 条之后：27..33
+    # 渲染完再查：正文里最大的引文号不得超过参考文献条数。2026-10-27 差点栽在这里——
+    # 先把 [[REF:27..33]] 写进正文、参考文献表还是 26 条，产物会印出指向空号的 [27]。
+    if not check_only:
+        assert c.get('ref_max', 0) <= len(refs), (
+            'citation [%d] points past the %d-entry reference list'
+            % (c.get('ref_max', 0), len(refs)))
     c['ref_fixed'] = n_fixed
     r.heading(1, '参考文献')
     for entry in refs:
