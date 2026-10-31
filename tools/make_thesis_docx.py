@@ -790,6 +790,8 @@ def apply_pagination(doc):
 # 只收**本机能读到全文或已发表摘要**的文献：五篇学位论文来自作者桌面的 PDF（摘要逐字读过），
 # 两篇 Elsevier 综述的卷期页取自 Crossref 记录，期刊论文（农业工程学报）页码取自 PDF
 # 首页 34 与末页 44。查不到卷期页的**不收**——"题名看着对就编一条引用"是本仓明令禁止的事。
+DROP_REF_NO = 1   # 作者 2026-10-31 裁定删除的那一条
+
 EXTRA_REFERENCES = (
     u'[27] 赖汉荣. 玉米行间除草机器人控制技术研究[D]. 北京: 中国农业大学, 2023.',
     u'[28] 李俊. 玉米作物行间除草机器人行走控制方法与系统设计[D]. 合肥: 安徽农业大学, 2021.',
@@ -899,7 +901,11 @@ def build(check_only=False, cover='academic'):
 
     refs = extract_references(PREV_DOCX)
     refs, n_fixed = apply_reference_fixes(refs)
-    refs = refs + list(EXTRA_REFERENCES)   # 编号接在 26 条之后：27..33
+    refs = refs + list(EXTRA_REFERENCES)   # 编号接在 26 条之后：27..37
+    # 2026-10-31 作者裁定删掉 [1]（潘月占等：期刊不合格且未发表），其后全部前移一位。
+    # 两条号码订正在上面按**旧号**做完再删，所以 apply_reference_fixes 里的编号不用动。
+    refs = [r for i, r in enumerate(refs, 1) if i != DROP_REF_NO]
+    refs = [re.sub(r'^\[\d+\]', '[%d]' % i, r) for i, r in enumerate(refs, 1)]
     # 渲染完再查：正文里最大的引文号不得超过参考文献条数。2026-10-27 差点栽在这里——
     # 先把 [[REF:27..33]] 写进正文、参考文献表还是 26 条，产物会印出指向空号的 [27]。
     if not check_only:
