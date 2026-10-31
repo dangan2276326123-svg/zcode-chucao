@@ -792,6 +792,12 @@ EXTRA_REFERENCES = (
     u'[33] Saini P, Nagesh D S. A review of deep learning applications in weed detection: '
     u'UAV and robotic approaches for precision agriculture[J]. European Journal of '
     u'Agronomy, 2025, 168: 127652.',
+    u'[34] 王硕. 基于深度学习与自适应模型预测控制的株间除草机器人导航方法研究[D]. '
+    u'北京: 中国农业大学, 2024.',
+    u'[35] 李湘南. 基于视觉的农业机器人生菜田导航算法研究[D]. 北京: 中国农业大学, 2024.',
+    u'[36] 班超. 基于多传感器融合的玉米田无人农机环境感知与定位方法研究[D]. '
+    u'北京: 中国农业大学, 2025.',
+    u'[37] 邱益清. 基于视觉与 GPS 组合的农业机器人自主导航方法研究[D]. 北京: 中国农业大学, 2024.',
 )
 
 
