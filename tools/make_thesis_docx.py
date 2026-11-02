@@ -191,6 +191,22 @@ def _flag(p, text, colour):
     return run
 
 
+def set_cjk(run, name):
+    """Pin the east-asian face of one run.
+
+    python-docx's `font.name` writes only w:ascii / w:hAnsi, so setting it to
+    黑体 leaves every Chinese glyph on the template's docDefaults face (宋体) --
+    the size changes and the typeface does not, which is the kind of defect that
+    reads fine in the XML dump and wrong on paper.
+    """
+    rPr = run._element.get_or_add_rPr()
+    rFonts = rPr.get_or_add_rFonts()
+    rFonts.set(qn('w:eastAsia'), name)
+    rFonts.set(qn('w:ascii'), 'Times New Roman')
+    rFonts.set(qn('w:hAnsi'), 'Times New Roman')
+    return run
+
+
 def emit(text, p, c):
     """Write `text` into paragraph `p`, splitting on inline marks. `p` may be
     None for a count-only pass, in which case the tallies still move -- that is
@@ -287,6 +303,94 @@ def emit(text, p, c):
         text = text[end:]
 
 
+# ------------------------------------------------------------------ numbering
+_CN = u'零一二三四五六七八九十'
+
+
+def cn_num(n):
+    """1 -> 一. Chapter titles take the Chinese numeral (第一章) because that is
+    what the CAU 撰写规范 writes for a 一级标题 and what every graduated thesis in
+    the author's reference folder prints -- the author's own 目录.docx says
+    "第1章", which is the one shape the规范 does not use."""
+    return _CN[n] if 0 < n < len(_CN) else str(n)
+
+
+def chapter_of(name):
+    """'ch01_draft.md' -> 1, 'abstract_draft.md' -> None (None = never numbered).
+
+    Taken from the file name rather than an incrementing counter, so a chapter
+    this tool skips cannot silently shift every later chapter number -- the same
+    reason check_thesis_sections.build_numbers() enumerates the FILES list.
+    """
+    m = re.match(r'ch0*(\d+)', name)
+    return int(m.group(1)) if m else None
+
+
+class Numbering(object):
+    """Positional heading numbers: 第一章 / 1.1 / 1.1.1 / 1.1.1.1.
+
+    The rule is deliberately the same one tools/check_thesis_sections.py uses to
+    resolve the "见 3.4.1 节" references in the prose, and it is *not* re-derived
+    here: the sources carry no numbers, so if the renderer and that checker ever
+    disagreed, the paper would print numbers its own cross-references do not
+    point at. tests/test_make_thesis_docx.py pins the two against each other.
+
+    State advances only on the headings that are fed in, in document order -- so
+    every caller must walk the same block stream (see _heading_rows()).
+    """
+
+    def __init__(self, chapter):
+        self.chapter = chapter
+        self.count = [0, 0, 0]          # h2, h3, h4
+
+    def prefix(self, level):
+        if self.chapter is None:
+            return u''
+        level = min(level, 4)
+        if level == 1:
+            self.count = [0, 0, 0]
+            return u'第%s章 ' % cn_num(self.chapter)
+        self.count[level - 2] += 1
+        for i in range(level - 1, 3):   # deeper levels restart, as in build_numbers
+            self.count[i] = 0
+        parts = [str(self.chapter)] + [str(x) for x in self.count[:level - 1]]
+        return u'%s ' % '.'.join(parts)
+
+
+def _heading_rows(name):
+    """[(level, prefix, title)] for one source, counters advanced on every
+    heading whether or not the caller keeps it. outline() and render_source()
+    both go through here, which is what keeps the table of contents and the
+    printed headings from ever disagreeing."""
+    num = Numbering(chapter_of(name))
+    rows = []
+    for kind, a, b in [(x[0], x[1], x[2] if len(x) > 2 else '')
+                       for x in parse_blocks(read_source(name))]:
+        if kind == 'h':
+            rows.append((a, num.prefix(a), strip_marks(b)))
+    return rows
+
+
+def hanging_indent(p, chars=2):
+    """Give a paragraph a 悬挂缩进 (first line flush, continuation indented).
+
+    Reference lists are set this way -- 王硕(2024) 那一页就是这样排的。段落若沿用
+    Normal 的 firstLineChars=200，结果正好相反："[1]" 缩两格、第二行顶格，条目之间
+    的边界看不出来。twips 与 *Chars 两套都写：WPS 认字符单位，Word 两个都吃，
+    只写一个时另一家会退回默认。
+    """
+    ind = p._p.get_or_add_pPr().get_or_add_ind()
+    size = int(p.runs[0].font.size.pt * 20) if (p.runs and p.runs[0].font.size) \
+        else 210
+    ind.set(qn('w:left'), str(size * chars))
+    ind.set(qn('w:hanging'), str(size * chars))
+    ind.set(qn('w:leftChars'), str(chars * 100))
+    ind.set(qn('w:hangingChars'), str(chars * 100))
+    ind.set(qn('w:firstLine'), '0')
+    ind.set(qn('w:firstLineChars'), '0')
+    return p
+
+
 class Renderer(object):
     """Writes blocks into a docx document, or only tallies when check_only."""
 
@@ -314,12 +418,25 @@ class Renderer(object):
                 # pageBreakBefore 出现 0 次），章标题会接在上一章末尾。学校格式
                 # 要求每章另起一页，所以这里逐段加。
                 p.paragraph_format.page_break_before = True
+            if level >= 2:
+                # 模板只在"标题 1"和"标题 3"的样式里写了 firstLine=0，"标题 2"
+                # 与"标题 4"没有 ind 覆盖，于是继承 Normal 的首行缩进 2 字符——
+                # 1.1 那一行会被推进去两格。规范写"1.1□□□□□（二级标题，左对齐，
+                # 单列一行）"，作者参考夹里王硕(2024)、班超(2025)两篇的 1.1 都是
+                # 顶格的。与嵌图那一处同理：w:firstLine 顶不过 w:firstLineChars，
+                # 两个都得清。
+                p.paragraph_format.first_line_indent = 0
+                p._p.get_or_add_pPr().get_or_add_ind().set(
+                    qn('w:firstLineChars'), '0')
 
     def caption(self, text):
         p = self.para(align=WD_ALIGN_PARAGRAPH.CENTER, tight=True)
         if p is not None:
             run = p.add_run(strip_marks(text))
             run.font.size = Pt(9)
+            # 规范："图、表标题采用小五号黑体"。此前只给了 9pt，中文字形仍由模板
+            # docDefaults 的 eastAsia=宋体 决定，落纸是小五宋体。
+            set_cjk(run, u'黑体')
 
     def paragraph(self, text):
         self.c['para'] += 1
@@ -421,13 +538,14 @@ def read_source(name):
 
 
 def outline():
-    """Heading tree for the dead-text table of contents."""
+    """Heading tree for the dead-text table of contents, with the same numbers
+    the body headings carry -- a 目录 that says "研究背景与意义" while the page
+    says "1.1 研究背景与意义" is the defect this closes."""
     tree = []
     for name in SOURCES:
-        for kind, a, b in [(x[0], x[1], x[2] if len(x) > 2 else '')
-                           for x in parse_blocks(read_source(name))]:
-            if kind == 'h' and a <= 3:
-                tree.append((a, strip_marks(b)))
+        for level, prefix, title in _heading_rows(name):
+            if level <= 3:
+                tree.append((level, prefix + title))
     return tree
 
 
@@ -907,6 +1025,183 @@ FINAL_REFERENCES = (
     '[90] 邢钦淞, 丁素明, 薛新宇, 崔龙飞, 乐飞翔, 李鹰航. 智能田间除草机器人发展现状研究[J]. 中国农机化学报, 2022, 43(8): 173-181.',
 )
 
+# ------------------------------------------------------- reference-list cleanup
+# FINAL_REFERENCES was merged from three sources (v14 搬运、作者 10-31 导出的
+# CNKI .net、开题报告参考文献). Each source brought its own spacing habits, and
+# the 外文那一族是从 PDF 里复制的——复制被截断在约 120 字符处，于是 13 条只到
+# 期刊名一半。2026-11-02 按作者"论文格式也要合格"的要求统一处理，分两层：
+#   REFERENCE_COMPLETIONS —— 补内容（截断的条目按 Crossref 逐条 DOI 回填）
+#   normalize_reference() —— 补格式（空格、断词、三位以上责任者）
+# 两层都在 build() 里做，测试钉住"产物里不许再出现这些形状"。
+#
+# 补全的每一条都带 DOI：数值不是记忆，是当场 API 读数，作者可十秒复核。
+REFERENCE_COMPLETIONS = {
+    # 专利：GB/T 7714 的著录责任者是申请人；公开日 2014-07-09、申请号取自
+    # Google Patents 的 CN103914071A/B 页（原条目只写了发明人和公开号）。
+    7: u'[7] 中国农业大学. 一种用于谷物联合收割机的视觉导航路径识别系统: '
+       u'CN201410132110.3[P]. 2014-07-09.',
+    # 开题那条是从开题报告里整段复制的，把"二、研究方案……"的模板正文一起带进了
+    # 参考文献表（原条目末尾 200 多字都是开题文字）。这里只留著录项本身。
+    31: u'[31] 石文锐. 轮式农业移动机器人轨迹跟踪控制研究[D]. 四川农业大学, 2020.',
+    # 下面 12 条原文被复制截断（期刊名/年/卷/页缺失）。每一条的 DOI 记在本条注释
+    # 里，不进论文正文（GB/T 7714 的期刊条目不要求 DOI，且句末句点会粘在 URL 上）：
+    #   37 10.1016/j.compag.2020.105638   54 10.1016/j.compag.2022.106880
+    #   55 10.1016/j.compag.2026.111491   56 10.1007/s11119-019-09697-z
+    #   64 10.1016/j.biosystemseng.2025.104227
+    #   65 10.3390/agronomy13051305       66 10.3390/agronomy14071426
+    #   67 10.3389/fpls.2024.1469098      68 10.3390/agriculture13112157
+    #   70 10.1016/j.rineng.2025.105202   78 10.3389/fpls.2025.1754679
+    #   79 10.3390/agriculture16010042
+    # 年、卷、页一律取 Crossref 当场读数（tools/_ref_doi.py、tools/_ref_dates.py）。
+    37: u'[37] Machleb J, Peteinatos G G, Kollenda B L, et al. Sensor-based '
+        u'mechanical weed control: Present state and prospects[J]. Computers and '
+        u'Electronics in Agriculture, 2020, 176: 105638.',
+    54: u'[54] Li Y, Guo Z, Shuang F, et al. Key technologies of machine vision '
+        u'for weeding robots: A review and benchmark[J]. Computers and Electronics '
+        u'in Agriculture, 2022, 196: 106880.',
+    55: u'[55] Sampurno R M, Liu Z, Nakaguchi V M, et al. Development of a new '
+        u'Single-Tree-Row-Tracking robot navigation for intra-row weeding '
+        u'operations in orchards using a machine stereo vision system and LiDAR[J]. '
+        u'Computers and Electronics in Agriculture, 2026, 244: 111491.',
+    56: u'[56] Kanagasingham S, Ekpanyapong M, Chaihan R. Integrating machine '
+        u'vision-based row guidance with GPS and compass-based routing to achieve '
+        u'autonomous navigation for a rice field weeding robot[J]. Precision '
+        u'Agriculture, 2020, 21(4): 831-855.',
+    64: u'[64] Zhang M, Liu D, Xu J, et al. A non-contact intra-row weeding device '
+        u'for rice based on high-speed gas jet: Design and experiment[J]. '
+        u'Biosystems Engineering, 2025, 257: 104227.',
+    65: u'[65] Zhou W, Song K, Sun X, et al. Design optimization and mechanism '
+        u'analysis of water jet-type inter-plant weeding device for water '
+        u'fields[J]. Agronomy, 2023, 13(5): 1305.',
+    66: u'[66] Yu Z, He X, Qi P, et al. A static laser weeding device and system '
+        u'based on fiber laser: Development, experimentation, and evaluation[J]. '
+        u'Agronomy, 2024, 14(7): 1426.',
+    67: u'[67] Hu R, Niu L T, Su W H. A novel mechanical-laser collaborative '
+        u'intra-row weeding prototype: structural design and optimization, weeding '
+        u'knife simulation and laser weeding experiment[J]. Frontiers in Plant '
+        u'Science, 2024, 15: 1469098.',
+    68: u'[68] Ye S, Xue X, Si S, et al. Design and testing of an elastic comb '
+        u'reciprocating a soybean plant-to-plant seedling avoidance and weeding '
+        u'device[J]. Agriculture, 2023, 13(1): 2157.',
+    70: u'[70] Khadatkar A, Sujit P, Agrawal R, et al. WeeRo: Design, development '
+        u'and application of a remotely controlled robotic weeder for mechanical '
+        u'weeding in row crops for sustainable crop production[J]. Results in '
+        u'Engineering, 2025, 26: 105202.',
+    78: u'[78] Liu H, Han Z, Yin J, et al. Path tracking control method for tracked '
+        u'agricultural vehicles based on slip-aware look-ahead point offset[J]. '
+        u'Frontiers in Plant Science, 2026, 16: 1754679.',
+    79: u'[79] An G, Du J, Jin C, et al. Error threshold-based autonomous navigation '
+        u'with right-angle turning for crawler-type combine harvesters in paddy '
+        u'fields[J]. Agriculture, 2025, 16(1): 42.',
+}
+
+# 从 PDF 复制时按行断开留下的"词中被拆开"。逐条列出、不做通用猜测：
+# 通用规则会把 "in A" 这类正常搭配也粘上，宁可漏一处也不制造错词。
+REF_SPLIT_WORDS = (
+    (u'G PS', u'GPS'),
+    (u'ga s jet', u'gas jet'),
+    (u'Inter -Plant', u'Inter-Plant'),
+    (u'Inter - row', u'Inter-row'),
+    (u'Intra- Row', u'Intra-Row'),
+    (u'Develop ment', u'Development'),
+    (u'structur al', u'structural'),
+    (u'Plant-to-Pl ant', u'Plant-to-Plant'),
+    (u'Org anic', u'Organic'),
+    (u'co ntrolled', u'controlled'),
+    (u'sli p-aware', u'slip-aware'),
+    (u'Single- Tree', u'Single-Tree'),
+    (u'visu al', u'visual'),
+    (u'reciprocat ing', u'reciprocating'),
+)
+
+
+_REF_TYPE_MARK = re.compile(r'\[(?:J|D|C|M|R|S|EB/OL|DB/OL|CP/OL|A|Z)\]')
+
+
+def _author_span(s):
+    """Index range of the 责任者 segment, or None when it cannot be told apart.
+
+    The segment ends at the first '.' that is followed by a space, a capital or a
+    Chinese character, and it never runs past the type mark -- that is what keeps
+    "Pekkeriet E.Agricultural Robotics for Field Operations[J]" from being read as
+    one long author list, which is how [36] lost its title on the first attempt.
+    """
+    m = re.match(r'^\[\d+\]\s*', s)
+    if not m:
+        return None
+    start = m.end()
+    mark = _REF_TYPE_MARK.search(s)
+    limit = mark.start() if mark else len(s)
+    j = start
+    while j < limit:
+        k = s.find('.', j, limit)
+        if k < 0:
+            break
+        nxt = s[k + 1:k + 2]
+        if nxt == u' ' or (nxt and (nxt.isupper()
+                                    or u'\u4e00' <= nxt <= u'\u9fff')):
+            return (start, k)
+        j = k + 1
+    return None
+
+
+def normalize_reference(entry):
+    """One reference line -> the shape GB/T 7714 顺序编码制 prints.
+
+    Mechanical only: no bibliographic claim is invented here. Everything that
+    needed a fact (year, volume, pages) went through REFERENCE_COMPLETIONS, whose
+    DOIs are recorded in the comment above that table.
+    """
+    s = entry.strip()
+    # 1. 复制时混进来的裸数字（开题正文的条目序号被当成作者名第一个 token）
+    s = re.sub(r'^(\[\d+\])\s+\d+\s+', r'\1 ', s)
+    for bad, good in REF_SPLIT_WORDS:
+        s = s.replace(bad, good)
+    # 2. 数字被拆开：'20 26'（年）、'42 (3)'（卷期）、'150-15 4'（页码）、'146-.'
+    s = re.sub(r'\b(19|20)\s+(\d{2})\b', r'\1\2', s)
+    s = re.sub(r'(\d)\s+\((\d+)\)', r'\1(\2)', s)
+    s = re.sub(r'(?<=\d)-(\d{1,3})\s+(\d)', r'-\1\2', s)
+    s = re.sub(r'(?<=\d)-\s+(\d)', r'-\1', s)
+    s = re.sub(r'(?<=\d)-(?=\.?\s*$)', '', s)
+    # 3. 类型标记之后统一 '. '（'[C]//' 是会议录的写法，斜杠前不加点）
+    s = re.sub(r'\[(J|D|C|M|R|S|EB/OL|DB/OL|CP/OL|A|Z)\]\.(?=\S)', r'[\1]. ', s)
+    s = re.sub(r'\[(J|D|C|M|R|S|EB/OL|DB/OL|CP/OL|A|Z)\](?=[^\s./])', r'[\1]. ', s)
+    # 4. 逗号之后先统一一个空格——**必须在责任者截断之前**：'Fountas S,Mylonas N,…'
+    #    这种没有空格的写法若后处理，split(', ') 会把六个作者读成一个，截断静默失效。
+    s = re.sub(u'，', u', ', s)
+    s = re.sub(r',(?=[0-9A-Za-z\u4e00-\u9fff(])', ', ', s)
+    # 5. GB/T 7714：责任者 3 名以上只列前 3 名，其后加"等"/"et al."
+    span = _author_span(s)
+    if span:
+        head = s[span[0]:span[1]]
+        parts = [p.strip() for p in head.split(u', ') if p.strip()]
+        if len(parts) > 3 and not any(p.startswith((u'等', 'et al'))
+                                      for p in parts[3:]):
+            tail = u'et al.' if re.search(r'[A-Za-z]', parts[0]) else u'等'
+            s = s[:span[0]] + u', '.join(parts[:3]) + u', ' + tail + s[span[1]:]
+    # 6. 句点之后统一一个空格（'尹麒麟.丘陵'、'2020.105638' 里的数字除外）
+    s = re.sub(r'\.(?=[A-Z\u4e00-\u9fff])', '. ', s)
+    # 6. 页码前统一 ': '
+    s = re.sub(r':(?=\d)', r': ', s)
+    # 7. 收尾：全角冒号、多余空格、句点叠印、句末点号
+    s = s.replace(u'：', ': ')
+    s = re.sub(r':\s{2,}', ': ', s)
+    # 责任者截断把 "…Pekkeriet E" 换成 "…et al." 时，原来那个分隔句点还在，
+    # 于是印出 "et al.."。参考文献里没有合法的连续句点，直接压成一个。
+    s = re.sub(r'\.{2,}', '.', s)
+    s = re.sub(r'\s{2,}', ' ', s)
+    if not s.endswith('.'):
+        s += '.'
+    return s
+
+
+def build_references():
+    """The list that actually goes on paper: completions first, then format."""
+    refs = []
+    for i, entry in enumerate(FINAL_REFERENCES, 1):
+        refs.append(normalize_reference(REFERENCE_COMPLETIONS.get(i, entry)))
+    return refs
+
 
 def build(check_only=False, cover='academic'):
     doc = docx.Document(TEMPLATE)
@@ -916,7 +1211,18 @@ def build(check_only=False, cover='academic'):
         for child in list(body):
             if child is not sect:
                 body.remove(child)
-        doc.styles['Normal'].font.size = Pt(10.5)
+        # 正文尺寸**不由这里决定**（2026-11-02 撤掉原先的
+        # `doc.styles['Normal'].font.size = Pt(10.5)`）。撤的理由是实测：
+        # 模板自己的 Normal 是 sz=24（小四 12pt）+ 行距 360 exact（18 磅），而
+        # 作者参考夹里 10 篇中国农业大学已毕业硕士论文（王硕/班超/苏童/赖汉荣/
+        # 邱益清/程园/张硕/李湘南/李俊/V11）正文可抽取字数的众数**全是 12pt
+        # SimSun**，没有一篇是 10.5pt。那句覆盖是首版生成器顺手加的、没有出处，
+        # 它让整篇正文比模板和所有样本小一档。规范条文里"五号宋体/18 磅"这一句
+        # 与模板和样本都不一致，按模板与样本执行。
+        #
+        # 也不是写成 `font.size = None`：那会把模板 Normal 里那条 <w:sz w:val="24"/>
+        # 删掉，而 docDefaults 没有 sz，Word 会退回 10pt——正文反而更小。
+        # 什么都不做才是"用模板的 12pt"。
         if cover in ('academic', 'both'):
             blocks, fm_tally = extract_front_matter(
                 TEMPLATE, keep_box=cover)
@@ -934,10 +1240,11 @@ def build(check_only=False, cover='academic'):
     r = Renderer(doc, c, check_only=check_only)
 
     def render_source(name):
+        num = Numbering(chapter_of(name))
         for kind, a, b in [(x[0], x[1], x[2] if len(x) > 2 else '')
                            for x in parse_blocks(read_source(name))]:
             if kind == 'h':
-                r.heading(a, b)
+                r.heading(a, num.prefix(a) + b)
             elif kind == 'table':
                 add_table(doc, a, c, check_only)
             else:
@@ -993,10 +1300,12 @@ def build(check_only=False, cover='academic'):
     for name in SOURCES[1:]:
         render_source(name)
 
-    # 2026-10-31 起参考文献表是**固定列表**（79 条，按正文首次出现排序），不再从 v14 搬：
+    # 2026-10-31 起参考文献表是**固定列表**（90 条，按正文首次出现排序），不再从 v14 搬：
     # 三条来源合并去重后人工挑定，逐条都在正文有引用。extract_references/apply_reference_fixes
     # 保留下来给测试与追溯用，build() 不再调用。
-    refs = list(FINAL_REFERENCES)
+    # 2026-11-02：落纸前再过一层 build_references()——12 条被复制截断的外文按
+    # Crossref 当场读数补全，其余做格式归一（空格、断词、三位以上责任者）。
+    refs = build_references()
     n_fixed = 0   # 两条页码订正已写进 FINAL_REFERENCES 本体，运行时不再单独订正
     # 2026-10-31 作者裁定删掉 [1]（潘月占等：期刊不合格且未发表），其后全部前移一位。
     # 两条号码订正在上面按**旧号**做完再删，所以 apply_reference_fixes 里的编号不用动。
@@ -1014,6 +1323,7 @@ def build(check_only=False, cover='academic'):
         if p is not None:
             run = p.add_run(entry)
             run.font.size = Pt(9)
+            hanging_indent(p)
 
     if not check_only:
         # 页眉改向：不修的话每一页右上角都是"作者简介"（理由见函数 docstring）。

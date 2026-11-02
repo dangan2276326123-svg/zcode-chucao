@@ -469,3 +469,281 @@ def test_reference_fix_bites_when_the_list_changes():
     short = ['[1] only one entry.']
     with pytest.raises(ValueError):
         M.apply_reference_fixes(short)
+
+
+# --------------------------------------------------------------- heading numbers
+# The chapter sources carry no numbers on purpose: there is then exactly one
+# place that decides what "3.4.1" means. These tests guard that single place --
+# if the printed numbers and tools/check_thesis_sections.py (which resolves the
+# "见 3.4.1 节" references in the prose) ever disagree, the paper shows numbers
+# its own cross-references do not point at, and no grep finds it.
+needs_chapters = pytest.mark.skipif(
+    not os.path.exists(os.path.join(M.CHAPTERS, 'ch01_draft.md')),
+    reason='chapter sources not on this machine')
+
+
+def test_heading_numbers_follow_the_positional_rule():
+    n = M.Numbering(3)
+    got = [n.prefix(l) for l in (1, 2, 3, 3, 4, 2, 3)]
+    assert got == [u'第三章 ', u'3.1 ', u'3.1.1 ', u'3.1.2 ', u'3.1.2.1 ',
+                   u'3.2 ', u'3.2.1 '], got
+    # a deeper level must not survive its parent: after 3.2.1 a new h2 restarts
+    assert n.prefix(2) == u'3.3 '
+
+
+def test_chapter_number_comes_from_the_file_name():
+    assert M.chapter_of('ch01_draft.md') == 1
+    assert M.chapter_of('ch06_draft.md') == 6
+    assert M.chapter_of('abstract_draft.md') is None, '摘要不能被编成章号'
+    assert M.Numbering(M.chapter_of('abstract_draft.md')).prefix(1) == u''
+
+
+@needs_chapters
+def test_outline_rows_match_the_section_checker():
+    """_heading_rows()（目录与正文共用的那一路）与节号检查器同源。"""
+    import check_thesis_sections as S
+    want = S.build_numbers()
+    got = {}
+    for name in M.SOURCES[1:]:
+        for level, prefix, title in M._heading_rows(name):
+            if level > 1:
+                got[prefix.strip()] = title
+    assert got == want, sorted(set(got) ^ set(want))[:5]
+    rows = M._heading_rows('ch03_draft.md')
+    h2 = [r for r in rows if r[0] == 2]
+    assert h2[0][1] == u'3.1 ' and h2[-1][1] == u'3.%d ' % len(h2), h2
+
+
+@needs_template
+@needs_prev
+def test_printed_numbers_equal_the_section_checker(tmp_path, monkeypatch):
+    """整份建一次，把**产物里印出来的号**对回 check_thesis_sections。
+
+    上一条只对齐到 _heading_rows，删掉 render_source 里那次 prefix() 调用它照样
+    绿（当场变异验出来过）——真正要保的是纸面上那一行。正文里"见 3.4.1 节"是
+    按 build_numbers() 那套位置号解的，印出来的号若是另一套，读者翻过去是空的，
+    而全文 grep 抓不到（号是派生的，不是写死的）。
+    """
+    import check_thesis_sections as S
+    from docx import Document
+
+    monkeypatch.setattr(M, 'OUTDIR', str(tmp_path))
+    monkeypatch.setattr(M, 'OUT_DOCX', str(tmp_path / 'built.docx'))
+    monkeypatch.setattr(M, 'LATEST', str(tmp_path / 'latest.docx'))
+    M.build(check_only=False)
+
+    got, chapters = {}, {}
+    for par in Document(str(tmp_path / 'built.docx')).paragraphs:
+        if not par.style.name.startswith('Heading'):
+            continue
+        t = par.text.strip()
+        m = re.match(u'第([一二三四五六])章 (.+)', t)
+        if m:
+            chapters[u'一二三四五六'.index(m.group(1)) + 1] = m.group(2)
+            continue
+        m = re.match(u'([1-6](?:\\.[0-9]+)+) (.+)', t)
+        if m:
+            got[m.group(1)] = m.group(2)
+    assert got == S.build_numbers(), '印出的节号与检查器不一致：%s' % sorted(
+        set(got) ^ set(S.build_numbers()))[:5]
+    assert len(chapters) == 6, '六章的章号没全印出来：%s' % sorted(chapters)
+
+
+@needs_chapters
+def test_front_matter_headings_stay_unnumbered_in_the_outline():
+    """目录条目要么完全不带号（摘要/Abstract），要么带正文那一套号。
+
+    注意 outline() 只走 SOURCES：目 录 / 主要符号表 / 参考文献 是 build() 里手写
+    的 heading(1, …)，不经过这条——它们不带号是由 Numbering(None) 那条分支之外
+    的"根本不调用 prefix"保证的，产物侧的反证在 _fmt_verify 那一次整份回读里。
+    """
+    tree = M.outline()
+    heads = [t for _, t in tree]
+    assert heads[0] == u'摘要' and heads[1] == u'Abstract', heads[:3]
+    for _, t in tree:
+        if t.startswith(u'第'):
+            assert re.match(u'^第[一二三四五六]章 ', t), t
+        elif re.match(u'^[0-9]', t):
+            assert re.match(u'^[1-6](\\.[0-9]+){1,2} ', t), t
+        else:
+            assert t in (u'摘要', u'Abstract'), u'不该有号的地方出现了 %r' % t
+
+
+@needs_template
+def test_caption_is_xiaowu_heiti():
+    """规范写"图、表标题采用小五号黑体"。只设 size 不设 eastAsia 的话，中文字形
+    仍由模板 docDefaults 的宋体决定——尺寸对了、字体没对，屏幕上看不出来。"""
+    from docx import Document
+    from docx.oxml.ns import qn
+    doc = Document()
+    r = M.Renderer(doc, M.Counter())
+    r.caption(u'图 2-6 车载控制板丝印与接口位号核对')
+    run = doc.paragraphs[-1].runs[0]
+    assert run.font.size.pt == 9, run.font.size
+    ea = run._element.rPr.rFonts.get(qn('w:eastAsia'))
+    assert ea == u'黑体', '图题仍是宋体：%r' % ea
+
+
+@needs_template
+def test_body_text_keeps_the_templates_own_size(tmp_path, monkeypatch):
+    """正文尺寸归模板管（小四 12pt + 行距 18 磅），生成器不许再覆盖一次。
+
+    首版在这里写过 `Normal.font.size = Pt(10.5)`，没有出处；作者参考夹里 10 篇
+    中国农大已毕业硕士论文的正文众数字号当场量出来全是 12pt，模板自己的 Normal
+    也是 sz=24。那一行让整篇正文比模板和所有样本小一档，而任何计数器都看不出。
+    """
+    import zipfile
+
+    monkeypatch.setattr(M, 'OUTDIR', str(tmp_path))
+    monkeypatch.setattr(M, 'OUT_DOCX', str(tmp_path / 'built.docx'))
+    monkeypatch.setattr(M, 'LATEST', str(tmp_path / 'latest.docx'))
+    M.build(check_only=False)
+
+    def normal_sz(path):
+        xml = zipfile.ZipFile(path).read('word/styles.xml').decode('utf-8')
+        m = re.search(r'<w:style [^>]*w:styleId="1".*?</w:style>', xml, re.S)
+        assert m, '没找到 Normal 那条样式'
+        found = re.findall(r'<w:sz w:val="(\d+)"', m.group(0))
+        return found
+
+    tpl = normal_sz(M.TEMPLATE)
+    got = normal_sz(str(tmp_path / 'built.docx'))
+    assert got == tpl, 'Normal 字号被生成器改过：模板 %s -> 产物 %s' % (tpl, got)
+    assert tpl and int(tpl[0]) == 24, '模板自身就不是 12pt，这条测试的前提变了'
+
+
+def test_sub_headings_are_flush_left():
+    """1.1 / 1.1.1 / 1.1.1.1 必须顶格——模板只在"标题 1""标题 3"里清了首行缩进，
+    "标题 2""标题 4"没有 ind 覆盖，会继承 Normal 的 2 字符缩进，于是节标题被推进
+    两格，而规范和王硕(2024)、班超(2025)两篇都是顶格的。"""
+    from docx import Document
+    from docx.oxml.ns import qn
+    doc = Document()
+    r = M.Renderer(doc, M.Counter())
+    for lvl in (2, 3, 4):
+        r.heading(lvl, u'%d.1 标题' % lvl)
+        p = doc.paragraphs[-1]
+        assert p.paragraph_format.first_line_indent == 0, '第 %d 级仍带首行缩进' % lvl
+        ind = p._p.get_or_add_pPr().find(qn('w:ind'))
+        assert ind.get(qn('w:firstLineChars')) == '0', \
+            '第 %d 级只清了 w:firstLine，字符单位的缩进会盖过它' % lvl
+
+
+# ------------------------------------------------------------ reference list
+def test_normalize_reference_fixes_the_known_shapes():
+    """三种来源各带各的毛病，逐条给一个"输入→必须输出"。"""
+    # 开题复制：条目序号混成了作者名第一个 token
+    assert M.normalize_reference(u'[17] 9 刘星星,车金宁,杨潇,等.枸杞[J].农业工程学报,'
+                                 u'2024,40(23):104-114.').startswith(
+        u'[17] 刘星星, 车金宁, 杨潇, 等. 枸杞[J]. 农业工程学报, 2024, 40(23): 104-114.')
+    # 年份与卷期被拆开、页码中间有空格
+    out = M.normalize_reference(u'[20] 罗强,韩彬,叶松林,等. 丘陵山地果园多功能除草机的'
+                                u'设计与试验[J].中国工程机械学报,2026,24 (1):150-15 4.')
+    assert u'24(1): 150-154.' in out, out
+    # PDF 换行把词拆开
+    assert u'based on slip-aware look-ahead' in M.normalize_reference(
+        u'[78] Liu H, Han Z, Yin J, et al. Path tracking control method for tracked '
+        u'agricultural vehicles based on sli p-aware look-ahead point offset[J].'
+        u'Frontiers in Plant Science, 2026, 16: 1754679.')
+    # 六个责任者 → 前三个 + et al.，题名不许被吃掉（第一版就吃掉了 [36]）
+    out = M.normalize_reference(
+        u'[36] Fountas S,Mylonas N,Malounas I,Rodias E,Hellmann Santos C,'
+        u'Pekkeriet E.Agricultural Robotics for Field Operations[J].Sensors,'
+        u'2020,20(9):2672.')
+    assert out.startswith(u'[36] Fountas S, Mylonas N, Malounas I, et al. '
+                          u'Agricultural Robotics for Field Operations[J]. '
+                          u'Sensors, 2020, 20(9): 2672.'), out
+    assert u'..' not in out, u'截断时把原来的分隔句点留下了'
+    # [C]// 是会议录的写法，不许被改成 "[C]. //"
+    assert u'[C]//Proceedings' in M.normalize_reference(
+        u'[38] Long J, Shelhamer E, Darrell T. Fully convolutional networks for '
+        u'semantic segmentation[C]//Proceedings of the IEEE CVPR. Boston: IEEE, '
+        u'2015: 3431-3440.')
+
+
+def test_reference_list_prints_clean():
+    """90 条落纸前的硬形状：不许有截断、叠句点、粘连、裸序号、开题模板文字。"""
+    refs = M.build_references()
+    assert len(refs) == len(M.FINAL_REFERENCES) == 90
+    problems = []
+    for i, s in enumerate(refs, 1):
+        if not re.match(u'^\\[%d\\] ' % i, s):
+            problems.append((i, u'编号不连续或前缀不对'))
+        if u'..' in s:
+            problems.append((i, u'连续句点'))
+        if re.search(u'研究方案|以下各项均可加页|拟采取的研究方法', s):
+            problems.append((i, u'开题模板文字混进参考文献'))
+        if re.search(r'\[(J|D|C|M|R|S)\]\.(?=\S)', s):
+            problems.append((i, u'类型标记后没有空格'))
+        if re.search(r',(?=[^\s])', s):
+            problems.append((i, u'逗号后没有空格'))
+        if re.search(r'\b(19|20)\s+\d{2}\b', s):
+            problems.append((i, u'年份被拆开'))
+        if not s.endswith(u'.'):
+            problems.append((i, u'句末缺点号'))
+        if u'[J]' in s and not re.search(r':\s*\d', s):
+            problems.append((i, u'期刊条目没有页码'))
+        if u'[D]' in s and not re.search(r'(19|20)\d{2}\.$', s):
+            problems.append((i, u'学位论文没有年'))
+        for bad, _ in M.REF_SPLIT_WORDS:
+            if bad in s:
+                problems.append((i, u'PDF 断词未修：%s' % bad))
+        if re.search(r'\d-\.(?=\s|$)', s):
+            problems.append((i, u'页码末尾悬着一个连字符'))
+    assert not problems, problems[:8]
+
+
+def test_completed_references_carry_their_pages():
+    """被复制截断的条目：补全后必须带齐自己那一类的必备项。
+
+    [J] 要年+卷+页码；[D] 只有年（学位论文没有卷期）；[P] 要公开日。
+    """
+    refs = M.build_references()
+    for num in M.REFERENCE_COMPLETIONS:
+        s = refs[num - 1]
+        assert u'doi.org' not in s, u'[%d] DOI 不该印进论文' % num
+        if num == 7:
+            assert u'[P]' in s and u'2014-07-09' in s, s
+            continue
+        if u'[D]' in s:
+            assert re.search(u'(19|20)\\d{2}\\.$', s), u'[%d] 学位论文缺年：%s' % (num, s)
+            continue
+        assert re.search(r'\d{4},\s*\d+', s), u'[%d] 仍缺年/卷：%s' % (num, s)
+        assert re.search(r':\s*\d', s), u'[%d] 仍缺页码：%s' % (num, s)
+
+
+def test_reference_paragraph_is_hanging_not_first_line():
+    """参考文献用悬挂缩进："[1]" 顶格、第二行缩两格。"""
+    from docx import Document
+    from docx.oxml.ns import qn
+    from docx.shared import Pt
+    doc = Document()
+    p = doc.add_paragraph()
+    run = p.add_run(u'[1] 示例条目')
+    run.font.size = Pt(9)
+    M.hanging_indent(p)
+    ind = p._p.get_or_add_pPr().find(qn('w:ind'))
+    assert ind.get(qn('w:hangingChars')) == '200', ind.get(qn('w:hangingChars'))
+    assert ind.get(qn('w:firstLineChars')) == '0', \
+        '首行缩进没清：Normal 的 2 字符会盖过悬挂'
+    assert int(ind.get(qn('w:hanging'))) == 360, ind.get(qn('w:hanging'))
+
+
+@needs_template
+@needs_prev
+def test_built_reference_entries_are_hanging(tmp_path, monkeypatch):
+    """整份建一次：90 条参考文献在产物里必须真的带上悬挂缩进。"""
+    from docx import Document
+    from docx.oxml.ns import qn
+    monkeypatch.setattr(M, 'OUTDIR', str(tmp_path))
+    monkeypatch.setattr(M, 'OUT_DOCX', str(tmp_path / 'built.docx'))
+    monkeypatch.setattr(M, 'LATEST', str(tmp_path / 'latest.docx'))
+    M.build(check_only=False)
+    d = Document(str(tmp_path / 'built.docx'))
+    refs = [p for p in d.paragraphs
+            if re.match(u'^\\[[0-9]+\\] ', p.text.strip())]
+    assert len(refs) == 90, '产物里的参考文献条数：%d' % len(refs)
+    bad = [p.text[:24] for p in refs
+           if (p._p.pPr is None or p._p.pPr.find(qn('w:ind')) is None
+               or p._p.pPr.find(qn('w:ind')).get(qn('w:hangingChars')) != '200')]
+    assert not bad, u'这些条目没带悬挂缩进：%s' % bad[:3]
