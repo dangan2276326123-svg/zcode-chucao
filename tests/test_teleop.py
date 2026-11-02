@@ -152,6 +152,48 @@ def test_no_backward_key_is_bound_in_phase_one():
     assert wire.teleop_speeds('x', 0.01) == (0.0, 0.0)
 
 
+# ---- 按键有效期跟着节拍走（10-28 台架暴露：慢节拍把 W 静默吃掉） ------------
+
+def test_hold_window_tracks_the_beat_and_stays_capped():
+    """窗口 = min(max(0.1, 2×拍间隔), 0.6)：地板保原行为，天花板是安全量。"""
+    assert wire.teleop_hold_window(0.045) == wire.TELEOP_HOLD_S == 0.1   # 10-21 那种快节拍
+    assert wire.teleop_hold_window(0.20) == 0.40
+    assert wire.teleop_hold_window(0.391) == 0.60                          # 10-28 实测值 → 撞顶
+    assert wire.teleop_hold_window(3.0) == wire.TELEOP_HOLD_CAP_S == 0.6   # 不许为"能动"抬顶
+    # 地板不是摆设：快节拍若也跟着 2× 缩，松手归零会提前到几十毫秒，那不是标定值
+    assert wire.teleop_hold_window(0.001) == wire.TELEOP_HOLD_S
+    for bad in (None, 0.0, -1.0):
+        assert wire.teleop_hold_window(bad) == wire.TELEOP_HOLD_S, bad      # 缺数不放大窗口
+
+
+def test_slow_beat_no_longer_silences_a_held_key():
+    """这一条就是 10-28 那个症状本身：拍间隔 0.391 s 时按住 W 必须还能出速度。
+
+    两边都钉：窗口按节拍放宽 ⇒ 非零；仍按老的固定 0.1 判 ⇒ 归零。
+    后一半是防"把窗口干脆取消"——归零机制必须还在，否则丢事件时车会一直走。
+    """
+    beat = 0.391
+    win = wire.teleop_hold_window(beat)
+    assert wire.teleop_speeds('w', beat, win) == (wire.TELEOP_MAX_MPS, wire.TELEOP_MAX_MPS)
+    assert wire.teleop_speeds('w', beat) == (0.0, 0.0), '固定窗口那一档必须仍然归零'
+    assert wire.teleop_speeds('w', win + 0.05) == (0.0, 0.0), '超出放宽后的窗口仍要归零'
+
+
+def test_main_loop_asks_for_the_beat_tracking_window():
+    """缺陷现场在主循环：它原来传两参（固定 0.1）。这里钉它确实传了窗口。
+
+    只读源码文本，不跑 GUI——单测起不了 cv2 按键那条路，能钉的是"调用点了窗口"。
+    """
+    import io
+    src = io.open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                               'pc', 'main.py'), encoding='utf-8').read()
+    assert src.count('wire.teleop_speeds(') == 1, '主循环只该有一处手操取值'
+    i = src.find('wire.teleop_speeds(')
+    call = src[i:i + 200]
+    assert 'teleop_hold_window(beat_gap)' in call, call
+    assert 'tele_key_t' in call, call
+
+
 # ---- 5. 两层限速值不许各说一套（10-13 晚 0.1 -> 0.2 这次改判时补） ----------
 
 FIRMWARE_RETROFIT_H = os.path.join(

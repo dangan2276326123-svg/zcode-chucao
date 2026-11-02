@@ -413,7 +413,11 @@ def main():
                 # 手操档：两侧速度就是「按住哪个键 + 按住多久」，视觉那条链整个不参与。
                 # 钳位（0.1 上限、第一阶段负值钳 0）在 wire.frames_for_state 里再做一遍——
                 # 两层都要，发帧那一道不依赖这里的自觉。
-                vl, vr = wire.teleop_speeds(tele_key, time.time() - tele_key_t)
+                # 窗口跟着**实际拍间隔**放宽（wire.teleop_hold_window）：10-28 台架拍间隔
+                # 中位 0.391 s > 固定窗口 0.1 s，每一拍都判"按键过期"，表现就是按住 W 车不动。
+                vl, vr = wire.teleop_speeds(
+                    tele_key, time.time() - tele_key_t,
+                    wire.teleop_hold_window(beat_gap))
                 pid.reset()          # 这一拍不驱动工具轴，积分不许跨过手操段
             elif sm.state == 'AUTO' and usable:
                 tool_px = res.get('tool_offset_px')
