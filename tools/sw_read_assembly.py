@@ -104,7 +104,7 @@ def components(asm):
     if top is None:
         ERRS.append("GetComponents(True) failed")
         return []
-    out = []
+    out, ABS = [], {}
 
     def walk(cs, depth, parent):
         for c in cs:
@@ -117,10 +117,16 @@ def components(asm):
                 rec["_err"] = repr(exc)[:100]
             try:
                 r, t = mat_of(call(c, "Transform"))
-                rec["rot"] = [[round(v, 4) for v in row] for row in r]
-                rec["xyz_mm"] = [round(v, 2) for v in t]
             except Exception as exc:
-                rec["_tf_err"] = repr(exc)[:100]
+                out.append(dict(rec, _tf_err=repr(exc)[:100]))
+                continue
+            if parent and parent in ABS:
+                pr, pt = ABS[parent]
+                r = [[sum(pr[i][k] * r[k][j] for k in range(3)) for j in range(3)] for i in range(3)]
+                t = [sum(pr[i][k] * t[k] for k in range(3)) + pt[i] for i in range(3)]
+            rec["rot"] = [[round(v, 4) for v in row] for row in r]
+            rec["xyz_mm"] = [round(v, 2) for v in t]
+            ABS[rec.get("name")] = (r, t)
             out.append(rec)
             try:
                 kids = list(call(c, "GetChildren"))
@@ -221,10 +227,18 @@ def read_one(sw, raw, mod, path, axes):
     if doc is None:
         return {"assembly": os.path.basename(path), "status": "open_failed",
                 "open_err": int(errs) if isinstance(errs, int) else -1}
+    target = doc
+    want = os.path.splitext(os.path.basename(path))[0]
     try:
-        target = raw.ActiveDoc
-    except Exception:
-        target = doc
+        ad = raw.ActiveDoc
+        title = str(call(ad, "GetTitle")) if ad is not None else ""
+        if want in title:
+            target = ad
+        else:
+            ERRS.append("ActiveDoc is %r, not the %s just opened -> using the typed handle "
+                        "(enumeration may come back empty)" % (title, want))
+    except Exception as exc:
+        ERRS.append("ActiveDoc: %r" % (exc,))
     asm = None
     try:
         asm = mod.IAssemblyDoc(target._oleobj_)
