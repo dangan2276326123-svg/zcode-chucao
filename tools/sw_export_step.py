@@ -95,10 +95,13 @@ def main():
         entry["seconds"] = round(time.time() - t0, 1)
         result["parts"].append(entry)
 
-    try:
-        sw.ExitApp()
-    except Exception as exc:
-        result["errors"].append("exit: %r" % (exc,))
+    # No sw.ExitApp() by default: the author has SolidWorks open on these same files, and
+    # exiting the shared instance would close his unsaved work.
+    if os.environ.get("SW_EXIT_AFTER"):
+        try:
+            sw.ExitApp()
+        except Exception as exc:
+            result["errors"].append("exit: %r" % (exc,))
 
     io.open(LOG, "w", encoding="utf-8").write(json.dumps(result, ensure_ascii=False, indent=2))
     ok = sum(1 for e in result["parts"] if e["status"] == "ok")

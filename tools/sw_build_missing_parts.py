@@ -77,6 +77,24 @@ def pad(w, h, t, bore):
                                   ("circle", 0.0, 0.0, bore / 2.0)], t)]
 
 
+def lug2(hole_span, hole_d, half_w, thick):
+    """Straight double-bore link: plate of width 2*half_w and length hole_span + 2*end_margin,
+    holes on the centre line at hole_span apart.
+
+    Ends are square, not semicircular, on purpose: a profile whose end circles straddle the
+    rectangle edge is not a valid single-extrude contour and SolidWorks extrudes an EMPTY body
+    while still reporting the feature as created (first version of this did exactly that -
+    "extrude FRONT ok", a 47 KB .SLDPRT, and a 4.5 KB STEP with no geometry in it). The end
+    radius is a finishing detail; the hole spacing is the dimension that actually matters here.
+    """
+    y = hole_span / 2.0
+    end_margin = half_w
+    ents = [("rect", -half_w, -(y + end_margin), half_w, y + end_margin),
+            ("circle", 0.0, -y, hole_d / 2.0),
+            ("circle", 0.0, y, hole_d / 2.0)]
+    return [("FRONT", "extrude", ents, thick)]
+
+
 def lug(span_mm, hole_d, width, thick):
     ents = [("rect", -width / 2, -span_mm / 2, width / 2, span_mm / 2),
             ("circle", 0.0, -span_mm / 2 + 12.0, hole_d / 2.0),
@@ -93,7 +111,10 @@ PARTS = [
     ("铰轴弹性衬垫_25x20x8", pad(25.0, 20.0, 8.0, 14.0), (25.0, 20.0, 8.0), [14.0],
      "derived 厚8/待实测 材料: 图1 黑色衬垫外形，材质与硬度未定"),
     ("吊耳_连杆2至刀柄1", lug(60.0, 10.0, 24.0, 8.0), (24.0, 60.0, 8.0), [10.0],
-     "待实测: 作者确认此件未建模，孔距 60 与板宽 24 是占位，不是实测"),
+     "作废(11-03): 作者已自建 吊耳1/吊耳2，此占位件不再使用"),
+    ("吊耳_推杆头至刀柄3", lug2(90.0, 10.0, 15.0, 6.0), (30.0, 120.0, 6.0), [10.0],
+     "孔距90占位/其余实测: 两端 φ10 由 电推杆② 与 刀柄3⑤ 实测孔定(两轴平行,余弦1.000); "
+     "厚6 由 电推杆叉口10(端面x=-16,-5,5,16) 与 刀柄3耳板3 共口推得; 孔距待作者给数"),
     ("刀腿弹簧_包络代表", pin(30.0, 80.0), (30.0, 30.0, 80.0), [30.0],
      "待实测: 螺旋实体本轮未建，此为包络代表；线径/中径/自由长/刚度均无依据"),
 ]
@@ -204,10 +225,13 @@ def main():
         report.append({"part": name, "status": status, "build": built, "readback": got,
                        "want_box": want_box, "want_dia": want_dia,
                        "verdict": "OK" if (box_ok and dia_ok) else "CHECK"})
-    try:
-        sw.ExitApp()
-    except Exception:
-        pass
+    # Deliberately NOT sw.ExitApp(): this is the same running SolidWorks the author edits in,
+    # and exiting would close his unsaved documents. We CloseDoc our own; the app stays up.
+    if os.environ.get("SW_EXIT_AFTER"):
+        try:
+            sw.ExitApp()
+        except Exception:
+            pass
     io.open(LOG, "w", encoding="utf-8").write(json.dumps(report, ensure_ascii=False, indent=2))
     for r in report:
         print("%-26s %-6s spans=%s dia=%s" % (r["part"], r["verdict"],
