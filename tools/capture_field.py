@@ -72,7 +72,7 @@ def log_row(hhmmss, path, shape, age):
     """`capture_log` 的一行。path 一律写成**正斜杠**，跨平台只有一种形状。
 
     10-21 第一次真跑（合成流，12 张）在 Windows 上落出来的这一列是混的：`--out`
-    给的是 `/`，`os.path.join` 又拼进 `\`。人读无所谓，但事后按前缀过滤或跨机比对
+    给的是 `/`，`os.path.join` 又拼进 `\\`。人读无所谓，但事后按前缀过滤或跨机比对
     路径的脚本会静默漏匹配——而这份日志是秋采唯一能对数的东西。
     帧龄没有时留空串：`0.00` 会被读成"帧是全新的"，而当时可能是没接 STATUS。
     """
@@ -89,8 +89,27 @@ def shot_path(folder, batch, day, index):
 VIDEO_PATH = os.path.join('data', 'autumn_data', 'video')
 
 
-def video_path(batch, day):
-    return os.path.join(VIDEO_PATH, '%s_%s.avi' % (batch, day))
+def video_next_index(folder, batch, day):
+    """同一批次、同一天里已有的 `_vNN.avi` 最大号 + 1。
+
+    存在理由是清单第 4 节要**三段**视频（逆光 / 阴天 / 任意）：原来 `video_path()` 不带序号，
+    同一天同一批次按第二次 `v` 就把第一段**直接冲掉**——`cv2.VideoWriter` 开同名文件是写语义，
+    不报错也不留备份，而田里只走这一趟。照片那侧一直有自增序号，视频这侧漏了
+    （11-03 读码发现，登记为台账 Pc-16）。
+    """
+    pat = re.compile(r'^%s_%s_v(\d{2})\.avi$' % (re.escape(batch), re.escape(day)))
+    top = 0
+    if os.path.isdir(folder):
+        for name in os.listdir(folder):
+            m = pat.match(name)
+            if m:
+                top = max(top, int(m.group(1)))
+    return top + 1
+
+
+def video_path(batch, day, index, folder=VIDEO_PATH):
+    """`<视频目录>/<批次>_<MMDD>_v<NN>.avi`——序号是必给参数，不许回到无名那一份。"""
+    return os.path.join(folder, '%s_%s_v%02d.avi' % (batch, day, index))
 
 
 def main():
@@ -199,7 +218,12 @@ def main():
 
 
 def record_video(a, feed, day):
-    """录 --video-s 秒到 data/autumn_data/video/<批次>_<日期>.avi（清单第 4 节）。"""
+    """录 `--video-s` 秒到 `data/autumn_data/video/<批次>_<MMDD>_v<NN>.avi`（清单第 4 节）。
+
+    `NN` 由 `video_next_index()` 当场数出来，所以同一天同一批次连按三次 `v` 是三个文件，
+    不是同一个文件被写三次。录完终端打的那行 `video -> …` 就是当天唯一能对上"哪一段是逆光"
+    的凭据——工具不知道光照，只有眼睛知道，**当场抄在本子上**。
+    """
     import cv2
     frame, _ = feed.get(max_age_s=2.0)
     if frame is None:
@@ -207,7 +231,7 @@ def record_video(a, feed, day):
         return None
     h, w = frame.shape[:2]
     os.makedirs(VIDEO_PATH, exist_ok=True)
-    path = video_path(a.batch, day)
+    path = video_path(a.batch, day, video_next_index(VIDEO_PATH, a.batch, day))
     vw = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*'MJPG'), 25, (w, h))
     t_end = time.time() + a.video_s
     n = 0

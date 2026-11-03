@@ -108,3 +108,40 @@ def test_capture_log_path_column_never_mixes_separators():
     assert row[3] == "0.02"
     assert cf.log_row("17:03:36", "a/b/c.jpg", (720, 960, 3), None)[3] == ""   # 无帧龄留空不写 0
 
+
+# ---- 视频那一侧的撞名（11-03 读码发现，登记为台账 Pc-16） --------------------
+
+def test_three_videos_in_one_batch_get_three_names(tmp_path):
+    """清单第 4 节要**三段**视频（逆光 / 阴天 / 任意），而 `cv2.VideoWriter` 开同名文件
+    是写语义：旧写法 `t01_1105.avi` 连按三次 `v` 就只剩最后一段，且不报错、田里只走一趟。"""
+    assert cf.video_next_index(str(tmp_path), 't01', '1105') == 1
+    (tmp_path / 't01_1105_v01.avi').write_bytes(b'x')
+    assert cf.video_next_index(str(tmp_path), 't01', '1105') == 2
+    (tmp_path / 't01_1105_v02.avi').write_bytes(b'x')
+    assert cf.video_next_index(str(tmp_path), 't01', '1105') == 3
+    names = [cf.video_path('t01', '1105', i, folder=str(tmp_path)) for i in (1, 2, 3)]
+    assert len(set(names)) == 3, names
+    assert names[2].endswith('t01_1105_v03.avi'), names[2]
+
+
+def test_video_index_ignores_other_batches_and_other_days(tmp_path):
+    """序号只在"同批次同一天"里数——跨批次借号会把两次走动混成一个文件名的邻居，
+    而分组键看的正是批次首段（清单第 6 节那条数据有效性警告）。"""
+    for name in ('t02_1105_v07.avi', 't01_1106_v05.avi', 't01_1105.jpg',
+                 't01_1105_vX.avi', 'capture_log_t01_1105.csv'):
+        (tmp_path / name).write_bytes(b'x')
+    assert cf.video_next_index(str(tmp_path), 't01', '1105') == 1
+
+
+def test_record_video_asks_for_the_next_index():
+    """文本钉：`record_video()` 必须现取序号。签名改三参以后漏处会 TypeError，
+    但那条报错要到田里按第二次 `v` 才看得见——所以钉在源码上，不靠运行。"""
+    import io
+    import os as _os
+    here = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    text = io.open(_os.path.join(here, 'tools', 'capture_field.py'),
+                   encoding='utf-8').read()
+    i = text.find('def record_video(')
+    assert i > 0
+    body = text[i:i + 1400]
+    assert 'video_path(a.batch, day, video_next_index(VIDEO_PATH, a.batch, day))' in body, body[:600]
