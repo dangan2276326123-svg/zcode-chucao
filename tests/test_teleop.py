@@ -4,9 +4,12 @@
 这批测试钉的是四件**别的测试钉不住**的事：
   1. 手操的进档门槛比无人少一道（不查视觉信心）——少错这道就变成"台架上永远进不去"；
   2. 手操期间**视觉瞎了不许抽走方向盘**（锁零速度是给无人用的，不是给人用的）；
-  3. 0.1 m/s 与"第一阶段负值钳成 0"这两条钳位必须在发帧层，不靠调用方自觉；
+  3. 0.2 m/s 与"第一阶段负值钳成 0"这两条钳位必须在发帧层，不靠调用方自觉；
   4. 手操绑门 N：permit 配成门 F 也不许落刀、不许横移。
+
+（有效期那条另写在文件末尾：固定 0.1 s、不跟拍间隔走，11-03 作者裁定。）
 """
+import inspect
 import os
 import re
 import struct
@@ -152,37 +155,37 @@ def test_no_backward_key_is_bound_in_phase_one():
     assert wire.teleop_speeds('x', 0.01) == (0.0, 0.0)
 
 
-# ---- 按键有效期跟着节拍走（10-28 台架暴露：慢节拍把 W 静默吃掉） ------------
+# ---- 按键有效期固定 0.1 s，不跟节拍走（11-03 作者裁定，推翻 10-28 那版放宽） ----
 
-def test_hold_window_tracks_the_beat_and_stays_capped():
-    """窗口 = min(max(0.1, 2×拍间隔), 0.6)：地板保原行为，天花板是安全量。"""
-    assert wire.teleop_hold_window(0.045) == wire.TELEOP_HOLD_S == 0.1   # 10-21 那种快节拍
-    assert wire.teleop_hold_window(0.20) == 0.40
-    assert wire.teleop_hold_window(0.391) == 0.60                          # 10-28 实测值 → 撞顶
-    assert wire.teleop_hold_window(3.0) == wire.TELEOP_HOLD_CAP_S == 0.6   # 不许为"能动"抬顶
-    # 地板不是摆设：快节拍若也跟着 2× 缩，松手归零会提前到几十毫秒，那不是标定值
-    assert wire.teleop_hold_window(0.001) == wire.TELEOP_HOLD_S
-    for bad in (None, 0.0, -1.0):
-        assert wire.teleop_hold_window(bad) == wire.TELEOP_HOLD_S, bad      # 缺数不放大窗口
+def test_hold_window_is_a_fixed_number_and_no_beat_tracking_exists():
+    """钉"这条没有第二套窗口"：模块里不许再出现跟拍间隔走的入口。
 
-
-def test_slow_beat_no_longer_silences_a_held_key():
-    """这一条就是 10-28 那个症状本身：拍间隔 0.391 s 时按住 W 必须还能出速度。
-
-    两边都钉：窗口按节拍放宽 ⇒ 非零；仍按老的固定 0.1 判 ⇒ 归零。
-    后一半是防"把窗口干脆取消"——归零机制必须还在，否则丢事件时车会一直走。
+    10-28 曾加过 `teleop_hold_window`（min(max(0.1, 2×拍间隔), 0.6)），作者 11-03 裁定改回固定
+    0.1。留着那个函数就算没人调用，也等于给下一个人留一条"抬一下窗口就动了"的路——
+    而窗口是"松手之后车最多还走多久"，属安全量。
     """
-    beat = 0.391
-    win = wire.teleop_hold_window(beat)
-    assert wire.teleop_speeds('w', beat, win) == (wire.TELEOP_MAX_MPS, wire.TELEOP_MAX_MPS)
-    assert wire.teleop_speeds('w', beat) == (0.0, 0.0), '固定窗口那一档必须仍然归零'
-    assert wire.teleop_speeds('w', win + 0.05) == (0.0, 0.0), '超出放宽后的窗口仍要归零'
+    assert wire.TELEOP_HOLD_S == 0.1
+    assert not hasattr(wire, 'teleop_hold_window'), '窗口不许跟着节拍走'
+    assert not hasattr(wire, 'TELEOP_HOLD_CAP_S'), '没有天花板 ⇒ 也不该留天花板这个常数'
+    assert len(inspect.signature(wire.teleop_speeds).parameters) == 2
 
 
-def test_main_loop_asks_for_the_beat_tracking_window():
-    """缺陷现场在主循环：它原来传两参（固定 0.1）。这里钉它确实传了窗口。
+def test_a_slow_beat_silences_a_held_key_by_design():
+    """把 10-28 那个症状本身钉成**规定行为**：拍间隔 0.391 s 时按住 W 就该归零。
 
-    只读源码文本，不跑 GUI——单测起不了 cv2 按键那条路，能钉的是"调用点了窗口"。
+    这条不是"车不动是对的"，而是"这一层不动它"——真要动的是拍间隔（台账 Pc-15 末列）。
+    把它写成断言，是为了让下一次有人看到 vL/vR 恒 0.000 时，先读 `beat_gap_s` 那一列、
+    再来改这里，而不是反过来。
+    """
+    assert wire.teleop_speeds('w', 0.391) == (0.0, 0.0)
+    assert wire.teleop_speeds('w', wire.TELEOP_HOLD_S - 0.01) == (wire.TELEOP_MAX_MPS,
+                                                                 wire.TELEOP_MAX_MPS)
+
+
+def test_main_loop_does_not_widen_the_window():
+    """缺陷现场在主循环：它曾传第三参把窗口放宽。这里钉它回到两参。
+
+    只读源码文本，不跑 GUI——单测起不了 cv2 按键那条路，能钉的是"调用点没传窗口"。
     """
     import io
     src = io.open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -190,8 +193,8 @@ def test_main_loop_asks_for_the_beat_tracking_window():
     assert src.count('wire.teleop_speeds(') == 1, '主循环只该有一处手操取值'
     i = src.find('wire.teleop_speeds(')
     call = src[i:i + 200]
-    assert 'teleop_hold_window(beat_gap)' in call, call
     assert 'tele_key_t' in call, call
+    assert 'teleop_hold_window' not in src, '主循环不许再放宽窗口'
 
 
 # ---- 5. 两层限速值不许各说一套（10-13 晚 0.1 -> 0.2 这次改判时补） ----------

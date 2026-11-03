@@ -411,13 +411,12 @@ def main():
             tool_mm = 0.0
             if sm.state == 'TELEOP':          # 字面量，与本文件其余判据同一写法；单测把 StateMachine 换成工厂函数，引类属性会撞
                 # 手操档：两侧速度就是「按住哪个键 + 按住多久」，视觉那条链整个不参与。
-                # 钳位（0.1 上限、第一阶段负值钳 0）在 wire.frames_for_state 里再做一遍——
+                # 钳位（0.2 上限、第一阶段负值钳 0）在 wire.frames_for_state 里再做一遍——
                 # 两层都要，发帧那一道不依赖这里的自觉。
-                # 窗口跟着**实际拍间隔**放宽（wire.teleop_hold_window）：10-28 台架拍间隔
-                # 中位 0.391 s > 固定窗口 0.1 s，每一拍都判"按键过期"，表现就是按住 W 车不动。
-                vl, vr = wire.teleop_speeds(
-                    tele_key, time.time() - tele_key_t,
-                    wire.teleop_hold_window(beat_gap))
+                # 有效期是固定 0.1 s（`wire.TELEOP_HOLD_S`），**不跟拍间隔走**：作者 11-03 裁定，
+                # 理由见那一段注释。代价是拍间隔 > 0.1 s 时按住 W 也归零（10-28 台架那个症状），
+                # 那种情况下要查的是 `beat_gap_s` 为什么慢，不是把窗口抬高。
+                vl, vr = wire.teleop_speeds(tele_key, time.time() - tele_key_t)
                 pid.reset()          # 这一拍不驱动工具轴，积分不许跨过手操段
             elif sm.state == 'AUTO' and usable:
                 tool_px = res.get('tool_offset_px')
