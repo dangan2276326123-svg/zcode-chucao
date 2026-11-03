@@ -142,7 +142,9 @@ def test_run_log_row_carries_l1_events_and_reject_short_codes():
     目前没有生产调用点，只有 `tools/link_probe.py` 在 stdout 打整句。
     """
     assert 'l1_events' in wire.RUN_LOG_COLUMNS
-    assert wire.RUN_LOG_COLUMNS[-7] == 'l1_events'   # 六次追加（tx_frames、nav_flags、beat_gap_s、vehicle_tag、veh_speed_mps、auth_mismatch）之后
+    # 位置：`l1_events` 是快照那一段的最后一列，追加链从 `tx_frames` 起。这样写而不是
+    # `[-7]`：11-03 之后末位又让了两次（见 `_APPENDED_AFTER_SNAPSHOT` 上面那段）。
+    assert wire.RUN_LOG_COLUMNS[:wire.RUN_LOG_COLUMNS.index('tx_frames')] == _PRE_TX_FRAMES_COLUMNS
     res = {'status': 'left_only', 'confidence': 0.9, 'lateral_px': 3.0}
     _args = (1.0, 7, 'AUTO', res, 0.01, 0.02, 0.07, 0.07, 0.0, 12.0, None,
              ({}, 0, None), wire.GATE_N)
@@ -183,25 +185,31 @@ _PRE_TX_FRAMES_COLUMNS = [
     'l1_events',
 ]
 
+# 追加链本身。11-03（Pc-17 那次）起改成按**名字顺序**钉，不再写"倒数第几列"：
+# 末位这个位置从写下那天起就没真当过末位（先后让位给 vehicle_tag、veh_speed_mps、
+# auth_mismatch，再加这次的 infer_ms / pipe_delay_ms = 四次），每追加一列都要回头改
+# 五六处 `[-N]`，改漏一处就是一根假红旗或者一处假绿。要保的东西没变——前面的列位不许动、
+# 新列只许往末尾挂——只是判据写法换成"快照之后恰好等于这份名单"。
+_APPENDED_AFTER_SNAPSHOT = ['tx_frames', 'nav_flags', 'beat_gap_s', 'vehicle_tag',
+                            'veh_speed_mps', 'auth_mismatch',
+                            'infer_ms', 'pipe_delay_ms']
+
 
 def test_tx_frames_is_appended_without_moving_earlier_columns():
     """位置锚：前 n 列一字不动，之后每追加一列只许往末尾挂。
 
     10-14 手操档位又追加了一列 `nav_flags` ⇒ 这里从 `n + 1` 改成 `n + 2`、
     `tx_frames` 从末位让到倒数第二。10-15（台账 Pc-10）再加 `vehicle_tag` ⇒ `n + 4`；
-    10-21 两次：`veh_speed_mps` ⇒ `n + 5`、Pc-13 的 `auth_mismatch` ⇒ `n + 6`。
+    10-21 两次：`veh_speed_mps` ⇒ `n + 5`、Pc-13 的 `auth_mismatch` ⇒ `n + 6`；
+    **11-03（台账 Pc-17）再加 `infer_ms` + `pipe_delay_ms` ⇒ `n + 8`**，这一批起判据换成
+    "快照之后恰好等于 `_APPENDED_AFTER_SNAPSHOT` 那份名单"，不再逐列写 `[-N]`。
     **改的是锚，不是历史**：快照本身没动，
     所以"前面那些列的列位被动过"这种破坏照样会红。
     """
     n = len(_PRE_TX_FRAMES_COLUMNS)
     assert wire.RUN_LOG_COLUMNS[:n] == _PRE_TX_FRAMES_COLUMNS
-    assert len(wire.RUN_LOG_COLUMNS) == n + 6
-    assert wire.RUN_LOG_COLUMNS[-6] == 'tx_frames'
-    assert wire.RUN_LOG_COLUMNS[-5] == 'nav_flags'
-    assert wire.RUN_LOG_COLUMNS[-4] == 'beat_gap_s'
-    assert wire.RUN_LOG_COLUMNS[-3] == 'vehicle_tag'
-    assert wire.RUN_LOG_COLUMNS[-2] == 'veh_speed_mps'
-    assert wire.RUN_LOG_COLUMNS[-1] == 'auth_mismatch'
+    assert len(wire.RUN_LOG_COLUMNS) == n + len(_APPENDED_AFTER_SNAPSHOT)
+    assert wire.RUN_LOG_COLUMNS[n:] == _APPENDED_AFTER_SNAPSHOT
 
 
 def test_run_log_row_puts_tx_frames_last_and_defaults_to_the_silent_marker():
@@ -274,7 +282,8 @@ def test_veh_speed_column_keeps_its_slot_and_reads_status_wheel_speed():
     派生写在 `run_log_row` 里而不是调用处，跟 `batt_v`/`mcu_mode` 同一套路——
     数据源只有一个（`st`），不许两处各读一遍。
     """
-    assert wire.RUN_LOG_COLUMNS[-2] == 'veh_speed_mps'
+    assert wire.RUN_LOG_COLUMNS.index('veh_speed_mps') == (
+        wire.RUN_LOG_COLUMNS.index('vehicle_tag') + 1)   # 紧跟 vehicle_tag，11-03 之后它也不是末位了
     i = wire.RUN_LOG_COLUMNS.index('veh_speed_mps')
     base = (1.0, 7, 'TELEOP', {'status': 'dual', 'confidence': 0.9, 'lateral_px': 3.0},
             0.01, 0.02, 0.2, 0.2, 0.0, 12.0, None, ({}, 0, None), wire.GATE_N)
@@ -335,10 +344,15 @@ def test_auth_mismatch_column_keeps_three_states_apart():
     assert wire.auth_mismatch_text('TELEOP', 2) == wire.MISMATCH_NOT_IN_HAND
 
 
-def test_auth_mismatch_is_appended_last_and_filled_from_the_row_itself():
-    """列在末位（不动前面的位置契约），值由 `run_log_row` 自己算——
-    让调用方传就等于给它一个忘传的机会。"""
-    assert wire.RUN_LOG_COLUMNS[-1] == 'auth_mismatch'
+def test_auth_mismatch_is_filled_from_the_row_itself_and_sits_before_the_pc17_pair():
+    """值由 `run_log_row` 自己算——让调用方传就等于给它一个忘传的机会。
+
+    函数名原来叫 `..._is_appended_last`，11-03（台账 Pc-17 加 `infer_ms`/`pipe_delay_ms`）
+    之后它不再是末位，一个说谎的名字比没名字更糟，所以改名并把位置判据写成
+    "它后面恰好是那两列"。
+    """
+    i = wire.RUN_LOG_COLUMNS.index('auth_mismatch')
+    assert wire.RUN_LOG_COLUMNS[i + 1:] == ['infer_ms', 'pipe_delay_ms']
     res = {'status': 'dual', 'confidence': 0.9, 'lateral_px': 3.0}
     st2 = {'seq': 1, 'mode': 2, 'v': 2, 'speed_mps': 0.0}
     st3 = dict(st2, mode=3)
@@ -348,9 +362,9 @@ def test_auth_mismatch_is_appended_last_and_filled_from_the_row_itself():
     row_none = wire.run_log_row(*args, None, ({}, 0, None), wire.GATE_N)
     for row in (row_bad, row_ok, row_none):
         assert len(row) == len(wire.RUN_LOG_COLUMNS)
-    assert row_bad[-1] == wire.MISMATCH_NOT_IN_HAND
-    assert row_ok[-1] == 'ok'
-    assert row_none[-1] == '-'
+    assert row_bad[i] == wire.MISMATCH_NOT_IN_HAND
+    assert row_ok[i] == 'ok'
+    assert row_none[i] == '-'        # 按列名取下标，不再写 [-1]：它今天后面又挂了两列
 
 
 # ---- AUTO 共角通道（2026-10-22，台账 Hw-30）----

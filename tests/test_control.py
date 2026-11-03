@@ -2,6 +2,7 @@
 import csv
 import os
 import sys
+import time
 
 import pytest
 from pc.control import (MiddleToolPID, LatencyCompensator, DifferentialDrive,
@@ -9,6 +10,7 @@ from pc.control import (MiddleToolPID, LatencyCompensator, DifferentialDrive,
 from pc.state_machine import StateMachine
 from pc.status_rx import StatusReceiver
 from pc import wire
+from pc.perception_worker import Reading
 from common import protocol as P
 from vehicle.bridge import decide_forward, extract_one_stream, poll_serial_frames
 
@@ -571,7 +573,7 @@ class _RebootingStatusReceiver(StatusReceiver):
 def _drive_main(tmp_path, monkeypatch, results, states=None, keys=(), n_status=None,
                 permit=wire.GATE_N, profile_id=1, gui=False,
                 vision_loss_beat=None, status_factory=None, log_tag='fake',
-                settle_s=0.0, limit_s=0.0):
+                settle_s=0.0, limit_s=0.0, worker_factory=None):
     """跑 n=len(results) 拍，返回 {'sent','header','rows','sm','hud','permits','holder'}。
 
     `log_tag` 是给台账 Pc-10 那一列用的假档案值；传 `None` 造的是"档案里没有这一项"
@@ -628,6 +630,9 @@ def _drive_main(tmp_path, monkeypatch, results, states=None, keys=(), n_status=N
     class _FakeSource:
         def __init__(self, *a, **k):
             self.feed = _FakeFeed()
+            # 11-03（Pc-17）：生产 FrameSource 在 live 模式会带这个属性（那张画在流里
+            # 已经多旧），替身不给就等于 harness 与生产接口不一致——main 会 AttributeError。
+            self.last_frame_age_s = 0.0
 
         def frames(self):
             for i in range(len(results)):
@@ -635,6 +640,47 @@ def _drive_main(tmp_path, monkeypatch, results, states=None, keys=(), n_status=N
                 # process() 之前，用 holder['beat']-1 会把它们标到上一拍去。
                 holder['cur'] = i
                 yield i + 1               # 非 None：这一拍有帧，走 per.process()
+
+    class _SyncWorker(object):
+        """`AsyncPerception` 的**同步替身**：`submit` 当场把 `process()` 跑完并发布。
+
+        为什么要它：harness 空跑 `main()` 验的是 main 的接线与发帧序列，不是线程调度。
+        真线程一进来，那 20 条既有测试里"第 N 拍该看到什么"就变成"看运气"。生产那个类
+        自己另有单测（`tests/test_perception_worker.py`：不阻塞、单槽最新赢、异常不吞），
+        这里钉的是 **main 用它的方式对不对**。`Reading` 用生产的那个类，所以 `delay_s()`
+        走的是同一条算式，不是 harness 里另写一遍（AGENTS 审查清单第 2 条）。
+        """
+
+        def __init__(self, process, clock=time.monotonic, name='fake', start=True):
+            self._process = process
+            self._clock = clock
+            self._latest = None
+            self._n = 0
+            self.submits = 0
+
+        def submit(self, frame, picked_at=None, frame_age_s=0.0):
+            if frame is None:
+                return False
+            if picked_at is None:
+                picked_at = self._clock()
+            t0 = self._clock()
+            res = self._process(frame)
+            infer = (self._clock() - t0) * 1000.0
+            self._n += 1
+            self.submits += 1
+            self._latest = Reading(res, self._n, picked_at, frame_age_s, infer)
+            return False
+
+        def latest(self):
+            return self._latest
+
+        def stats(self):
+            return {'processed': self._n, 'dropped': 0, 'pending': False,
+                    'infer_ms': None if self._latest is None else self._latest.infer_ms,
+                    'error': ''}
+
+        def stop(self):
+            return self.stats()
 
     # 没有默认值：main 必须**显式**把档案里的 permit 传进状态机。退回无参
     # `StateMachine()` 会让"permit 来自档案"这条断言失去意义（fix round 1 Minor）。
@@ -705,6 +751,8 @@ def _drive_main(tmp_path, monkeypatch, results, states=None, keys=(), n_status=N
     monkeypatch.setattr(M, 'StateMachine', _sm_factory)
     monkeypatch.setattr(M, 'MiddleToolPID', _CountingPID)
     monkeypatch.setattr(M, 'FrameSource', _FakeSource)
+    monkeypatch.setattr(M, 'AsyncPerception',
+                        worker_factory or _SyncWorker)   # 11-03 Pc-17：主拍不再自己跑推理
     monkeypatch.setattr(M, 'socket', _SocketModule())
     monkeypatch.setattr(M, 'draw_overlay', lambda res: np.zeros((8, 8, 3), 'uint8'))
     if status_factory is not None:      # I-5：模拟"检测到 MCU 重启"的接收器
@@ -1331,3 +1379,95 @@ def test_auto_run_limit_stops_by_itself(tmp_path, monkeypatch):
     assert r['sm'].state == 'LIFT', r['sm'].state
     assert [row[r['header'].index('state')].replace('"', '')
             for row in r['rows']].count('AUTO') < 6, '越限之后不该继续写 AUTO'
+
+
+# ---- 台账 Pc-17（11-03）：感知搬出主拍以后，main 的接线 ------------------
+# 这三条钉的都是**新形状才有的东西**：两列新读数的取值与"拿不到就留空"、
+# 以及"结果没更新时命令保持、不许把同一个 lat 再喂一遍 PID"。
+# 生产的那个线程类由 tests/test_perception_worker.py 自己验，这里不重复验它。
+
+
+class _PublishOddsWorker(object):
+    """每**两次** submit 才处理一张：这就是田里的形状——主拍 20 Hz、感知 3 fps。
+
+    第一次提交就处理（否则第一拍没有状态，harness 的 `states` 剧本走不下去）。
+    """
+
+    def __init__(self, process, **kw):
+        self._process = process
+        self._latest = None
+        self._n = 0
+        self._submits = 0
+
+    def submit(self, frame, picked_at=None, frame_age_s=0.0):
+        self._submits += 1
+        if self._submits % 2 == 1:
+            self._n += 1
+            self._latest = Reading(self._process(frame), self._n, time.monotonic(),
+                                   0.0, 1.0)
+        return False
+
+    def latest(self):
+        return self._latest
+
+    def stop(self):
+        return {'processed': self._n, 'submits': self._submits}
+
+
+class _NeverPublishWorker(object):
+    """一次结果都不发布：钉的是"拿不到就留空"，不是"拿不到写 0"。"""
+
+    def __init__(self, process, **kw):
+        pass
+
+    def submit(self, frame, picked_at=None, frame_age_s=0.0):
+        return False
+
+    def latest(self):
+        return None
+
+    def stop(self):
+        return {}
+
+
+def test_run_log_records_the_perception_cost_and_the_pipe_delay(tmp_path, monkeypatch):
+    """Pc-17 那两列必须有值。搬后台以后 `latency_ms`（本拍耗时）不再近似"这张画有多旧"，
+    时延那笔账要另两列才说得清（B8 四个口径里"PC 推理 + 下发前"那一段的落地凭据）。"""
+    r = _drive_main(tmp_path / 'pc17', monkeypatch, results=[_USABLE] * 4,
+                    states=['AUTO'] * 4)
+    i_infer = r['header'].index('infer_ms')
+    i_pipe = r['header'].index('pipe_delay_ms')
+    assert len(r['rows']) == 4, r['rows']
+    for row in r['rows']:
+        assert float(row[i_infer]) >= 0.0, row
+        assert float(row[i_pipe]) >= 0.0, row
+
+
+def test_the_two_new_columns_stay_empty_when_nothing_was_published(tmp_path, monkeypatch):
+    """一次结果都没有 ⇒ 留空串。写 0.0 会被读成"感知快得测量不出"，
+    而当时可能是一次都没跑成（与 `vehicle_tag`、`veh_speed_mps` 同一规矩）。"""
+    r = _drive_main(tmp_path / 'pc17_none', monkeypatch, results=[_USABLE] * 3,
+                    worker_factory=_NeverPublishWorker)
+    for col in ('infer_ms', 'pipe_delay_ms'):
+        i = r['header'].index(col)
+        assert [row[i] for row in r['rows']] == ['', '', ''], (col, r['rows'])
+    assert {row[r['header'].index('status')] for row in r['rows']} == {'no_frame'}
+
+
+def test_a_stale_result_holds_the_command_instead_of_refeeding_the_pid(tmp_path,
+                                                                      monkeypatch):
+    """这一条是新形状里最容易自动失效的地方：感知 3 fps 而主拍 20 Hz，
+    同一个 `lat_m` 连着喂 `rate.update` / `pid.update` 会把 e_dot 压成 0
+    （时延超前补偿自己归零），并把 PID 积分按 20 倍速累加。
+
+    判据用**可观测的调用次数**：工具 PID 的 update 次数 = 新结果的次数，不是拍数。
+    """
+    r = _drive_main(tmp_path / 'pc17_hold', monkeypatch, results=[_USABLE] * 6,
+                    states=['AUTO'] * 6, worker_factory=_PublishOddsWorker)
+    assert r['holder']['updates'] == 3, r['holder']          # 6 拍里只有 3 次新结果
+    assert r['sm'].state == 'AUTO'
+    # 命令还在发：每拍都有 NAV+TOOL（保持不等于静默——静默是 ESTOP 的语义）
+    kinds = _kinds_by_beat(_data_frames(r['sent']))
+    for beat in sorted(kinds):
+        if beat >= 1:                                        # 第 0 拍在握手/进档前
+            assert P.TYPE_NAV in kinds[beat], (beat, kinds[beat])

@@ -154,6 +154,13 @@ RUN_LOG_COLUMNS = [
     # 两列各说各话，要人自己去对。这一列把"对一眼"变成表里的记录。
     # 值在 `run_log_row()` 里就地算（不接新形参）：让调用方传就等于给它一个忘传的机会。
     'auth_mismatch',
+    # ---- 2026-11-03 Pc-17：感知搬出主拍以后，"本拍耗时"不再近似"这张画有多旧" ----
+    # `infer_ms` = 后台线程最近一次 `per.process()` 的耗时；`pipe_delay_ms` = 画面最后一字节
+    # 到本拍下命令的延迟，也就是时延超前补偿真正吃的那个数（B8 那四个口径里"PC 推理 +
+    # 下发前"那一段的落地凭据）。两列**拿不到时留空串、不写 0**：`0.0` 会被读成"感知跑得
+    # 飞快"，而当时可能一次结果都还没出过。仍然追加在末尾，跟着上面那条位置规矩走。
+    'infer_ms',
+    'pipe_delay_ms',
 ]
 
 # HUD 用的 ASCII 短码（fix round 1 I-4）。cv2.putText 画不出 CJK——
@@ -343,7 +350,7 @@ def run_log_row(t_rel, fid, state, res, lat_m, lat_comp_m, vl, vr, tool_mm,
                 latency_ms, st, feed_snapshot, permit,
                 rx_good='', rx_bad='', recv_timeouts='', link_drops='',
                 l1_events=0, tx_frames='-', nav_flags='', beat_gap_s='',
-                vehicle_tag=''):
+                vehicle_tag='', infer_ms=None, pipe_delay_ms=None):
     """按 RUN_LOG_COLUMNS 的顺序拼一行。st 可以是 None（无 STATUS）或 v1 字典。
 
     l1_events 是**累计的 L1 降级事件数**（spec §5.2，I-6），由调用方维护，
@@ -361,6 +368,11 @@ def run_log_row(t_rel, fid, state, res, lat_m, lat_comp_m, vl, vr, tool_mm,
     `run_log.csv` 一起归档时认车，不是运行时判定。这里的缺省 `''` 表示"这一版程序
     没把它接上"，与"接上了但车没标"（那种情况 `load()` 会直接报错、走不到这里）
     是两回事，所以留空串而不是留 `unknown`：空串一眼就是漏接线。
+
+    `infer_ms` / `pipe_delay_ms` 是台账 Pc-17 那两列（感知搬后台以后才有意义）：
+    前者是最近一次 `process()` 的耗时，后者是**画面最后一字节到本拍下命令**的延迟。
+    缺省 `None` 一律写成空串——`0.0` 会被读成"感知很快"，而当时可能一次结果都没出过；
+    这与上面 `vehicle_tag` 那条"空串就是没接上"是同一个规矩。
     """
     st = st or {}
     _feed, _seq, age = feed_snapshot if feed_snapshot else ({}, 0, None)
@@ -393,4 +405,6 @@ def run_log_row(t_rel, fid, state, res, lat_m, lat_comp_m, vl, vr, tool_mm,
         # Pc-13：拿本行的 `state` 与 STATUS 回读的 `mode` 对一眼。值在这里算而不是
         # 由调用方传——见 `RUN_LOG_COLUMNS` 末位那条注释里写的理由。
         auth_mismatch_text(state, st.get('mode')),
+        '' if infer_ms is None else '%.1f' % infer_ms,
+        '' if pipe_delay_ms is None else '%.1f' % pipe_delay_ms,
     ]

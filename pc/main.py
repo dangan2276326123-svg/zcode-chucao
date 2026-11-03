@@ -30,6 +30,7 @@ from pc.status_rx import StatusReceiver, STATUS_UDP_PORT
 # 这两件事在 pc/wire.py 与 pc/vehicle_profile.py 里各自只有一份事实，这里只引用。
 from pc import vehicle_profile
 from pc import wire
+from pc.perception_worker import AsyncPerception
 
 PI_IP = '192.168.127.10'        # RDK X5 (bridge) — control UDP target
 PI_PORT = 9000
@@ -93,6 +94,13 @@ NO_FRAME_RESULT = {'status': 'no_frame', 'lateral_px': None,
                    'nav_far': {}, 'nav_near': {}}
 
 
+# 后台线程出过结果，但那张画现在已经不算新了（`Reading.delay_s()` 超过 `FRAME_MAX_AGE_S`）。
+# 它和 `no_frame` 必须是**两个值**：前者是「感知在跑但跟不上」，后者是「根本没有画」，
+# 现场排查要的就是这两种读法。与 `no_frame` 一样，它的 status 不属于可用那一组，
+# 所以 `usable` 自然 False，不需要特判。
+STALE_RESULT = dict(NO_FRAME_RESULT, status='stale')
+
+
 class FrameSource:
     """Unified frame iterator over a video/dir (replay) or RTP stream (live)."""
 
@@ -103,6 +111,9 @@ class FrameSource:
         self.stream_host = stream_host
         self.stream_port = stream_port
         self.feed = None          # live only; set when _from_stream starts
+        # live only：`get()` 交回来那张画在流里已经多旧。后台感知要拿它算
+        # 「画面最后一字节 -> 本拍下命令」的管道延迟（台账 Pc-17），没这一手就只能猜。
+        self.last_frame_age_s = None
         if not live:
             if os.path.isdir(source):
                 files = sorted(os.path.join(source, f) for f in os.listdir(source)
@@ -144,6 +155,7 @@ class FrameSource:
         try:
             while True:
                 frame, _age = self.feed.get(max_age_s=FRAME_MAX_AGE_S)
+                self.last_frame_age_s = _age
                 yield frame
                 time.sleep(STREAM_POLL_S)
         finally:
@@ -320,8 +332,18 @@ def main():
         wr.writerow(wire.RUN_LOG_COLUMNS)     # 列定义与行构造都在 pc/wire.py（列数不在这里写，AGENTS 清单第 8 条）
         src = FrameSource(args.source, args.live, args.step,
                           args.stream_host, args.stream_port)
+        # 11-03（台账 Pc-17）：**live 模式把感知交给后台线程**，主拍不再跑 `per.process()`。
+        # 理由与判据写在 `pc/perception_worker.py` 文件头。回放模式**保持同步**——离线跑数
+        # 要的就是「每一帧当场出结果」，那不该被线程时序改写。
+        worker = AsyncPerception(per.process) if args.live else None
+        if worker is not None:
+            print('E3: perception off the beat (async worker, single-slot mailbox) — '
+                  'the control beat no longer waits for per.process()')
+        result_seq = 0        # 最近一次**用过的**结果序号
+        auto_held = None      # AUTO 的命令保持：(vl, vr, tool_mm)
         for fid, frame in enumerate(src.frames()):
             t0 = time.time()
+            now_mono = time.monotonic()   # 结果的年龄与提交时刻都用单调钟，防系统时钟跳
             # beat_gap_s 用**未钳位**的原始间隔：`dt` 被 max(...,1e-3) 保护过，
             # 是给 PID 用的；而我们要看的恰恰是「这一拍隔了多久没跑」，钳位会把它抹平。
             beat_gap = t0 - t_prev
@@ -351,9 +373,42 @@ def main():
             # E2-4: the feed snapshot exists on every beat, frame or not.
             _st, _seq, _age = src.feed.snapshot() if src.feed else ({}, 0, None)
 
-            res = NO_FRAME_RESULT if frame is None else per.process(frame)
+            # ---- 感知取值：live 取后台最新结果，回放当场算（11-03，台账 Pc-17）----
+            infer_ms = None          # 最近一次 process() 的耗时（CSV 新列）
+            pipe_delay_ms = None     # 画面最后一字节 -> 本拍下命令（CSV 新列，也是补偿项的输入）
+            new_result = False       # 这一拍是不是拿到了**新**结果（AUTO 的命令保持靠它）
+            if worker is None:
+                if frame is not None:
+                    _pt = time.time()
+                    res = per.process(frame)
+                    infer_ms = (time.time() - _pt) * 1000.0
+                    pipe_delay_ms = infer_ms   # 同步路径：算完就用，两者同值
+                    new_result = True
+                else:
+                    res = NO_FRAME_RESULT
+            else:
+                if frame is not None:
+                    worker.submit(frame, picked_at=now_mono,
+                                  frame_age_s=src.last_frame_age_s or 0.0)
+                rd = worker.latest()
+                if rd is None:
+                    res = NO_FRAME_RESULT        # 一次结果都还没出过
+                else:
+                    age = rd.delay_s(now_mono)
+                    infer_ms = rd.infer_ms
+                    if age > FRAME_MAX_AGE_S:
+                        res = STALE_RESULT       # 出过，但已经不是那张画了
+                    else:
+                        res = rd.res
+                        pipe_delay_ms = age * 1000.0
+                        new_result = (rd.seq != result_seq)
+                        result_seq = rd.seq
             latency = (time.time() - t0) * 1000.0
-            comp.report(latency / 1000.0)
+            # 时延超前补偿的输入改成**管道延迟**（画面到命令）。旧写法喂的是「本拍自身耗时」，
+            # 那只是推理挡在主拍上时的一个近似；推理搬到后台以后本拍只剩几十毫秒，
+            # 再喂它等于把补偿项默默归零。拿不到时**不喂**，不喂 0。
+            if pipe_delay_ms is not None:
+                comp.report(pipe_delay_ms / 1000.0)
 
             usable = res['status'] in ('dual', 'left_only', 'right_only') \
                 and res['confidence'] > 0.01
@@ -409,6 +464,10 @@ def main():
 
             vl = vr = 0.0
             tool_mm = 0.0
+            if sm.state != 'AUTO':
+                # 离开 AUTO 就丢掉「保持」那条令：重进 AUTO 的第一拍重新算一次，
+                # 不许拿退出前的旧速度接着发。
+                auto_held = None
             if sm.state == 'TELEOP':          # 字面量，与本文件其余判据同一写法；单测把 StateMachine 换成工厂函数，引类属性会撞
                 # 手操档：两侧速度就是「按住哪个键 + 按住多久」，视觉那条链整个不参与。
                 # 钳位（0.2 上限、第一阶段负值钳 0）在 wire.frames_for_state 里再做一遍——
@@ -419,18 +478,27 @@ def main():
                 vl, vr = wire.teleop_speeds(tele_key, time.time() - tele_key_t)
                 pid.reset()          # 这一拍不驱动工具轴，积分不许跨过手操段
             elif sm.state == 'AUTO' and usable:
-                tool_px = res.get('tool_offset_px')
-                if tool_px is None:      # far field ok, near field lost (P1-3)
-                    tool_px = 0.0
-                e_dot = rate.update(lat_m, dt)   # filtered lateral rate (ė)
-                lat_c = comp.compensate(lat_m, e_dot)
-                # I-6：L1（仅单侧墙有效）降速。用的是 wheel_speeds 已有的 speed_mps
-                # 形参（pc/control.py:100-102），语义不变——它就是"这一拍的名义前进
-                # 速度"；不这么接就得改 control.py 的语义，那是本任务明令不许做的。
-                v_target = drive.v_nominal * (L1_SPEED_SCALE if l1_now else 1.0)
-                vl, vr = drive.wheel_speeds(lat_c, err_rate=e_dot,
-                                            speed_mps=v_target)   # PD(e,ė), H4.6-A
-                tool_mm = pid.update(tool_px * px_to_meters(1.0) * 1000.0, dt)
+                if not new_result and auto_held is not None:
+                    # 命令保持：这一拍没有**新**结果，就把上一拍那条令原样再发一遍。
+                    # 不这么做的后果不是不便而是自动失效：感知约 3 fps 而主拍现在 20 Hz，
+                    # 同一个 lat_m 连着喂 rate.update / pid.update 会把 e_dot 压成 0
+                    # （时延超前补偿自己归零），并把 PID 积分按 20 倍速累加。
+                    # 口径：**更新率 = 感知率，发帧率 = 主拍率**（台账 Pc-17）。
+                    vl, vr, tool_mm = auto_held
+                else:
+                    tool_px = res.get('tool_offset_px')
+                    if tool_px is None:      # far field ok, near field lost (P1-3)
+                        tool_px = 0.0
+                    e_dot = rate.update(lat_m, dt)   # filtered lateral rate (ė)
+                    lat_c = comp.compensate(lat_m, e_dot)
+                    # I-6：L1（仅单侧墙有效）降速。用的是 wheel_speeds 已有的 speed_mps
+                    # 形参（pc/control.py:100-102），语义不变——它就是"这一拍的名义前进
+                    # 速度"；不这么接就得改 control.py 的语义，那是本任务明令不许做的。
+                    v_target = drive.v_nominal * (L1_SPEED_SCALE if l1_now else 1.0)
+                    vl, vr = drive.wheel_speeds(lat_c, err_rate=e_dot,
+                                                speed_mps=v_target)   # PD(e,ė), H4.6-A
+                    tool_mm = pid.update(tool_px * px_to_meters(1.0) * 1000.0, dt)
+                    auto_held = (vl, vr, tool_mm)
             else:
                 # 这一拍不驱动工具轴，清积分。两半边都要：
                 #   LIFT / "AUTO 但这一拍瞎了"——仍持权，帧仍由 wire 给（速度锁零 + 提刀）；
@@ -680,12 +748,18 @@ def main():
                 tx_frames=wire.tx_frames_text(tx_this_beat),   # T2：这一拍线上真有什么
                 nav_flags=(str(tele_gear) if sm.state == 'TELEOP' else ''),
                 beat_gap_s='%.3f' % beat_gap,
-                vehicle_tag=vehicle_tag))
+                vehicle_tag=vehicle_tag,
+                infer_ms=infer_ms, pipe_delay_ms=pipe_delay_ms))
             n += 1
             if n % 20 == 0:
                 print('[%d] %s lat=%.3fm vL=%.2f vR=%.2f tool=%.1fmm %.0fms%s' % (
                     fid, sm.state, lat_m, vl, vr, tool_mm, latency,
                     '' if frame is not None else '  NO-FRAME(stream silent)'))
+    if worker is not None:
+        # 收尾把后台线程收掉，并把它的计数打出来：processed/dropped 是"感知实际跑了多少次、
+        # 有多少张画被顶掉"的唯一凭据，跑完没地方查就等于没测（daemon 线程随进程死，
+        # 但 join 一次能确认它没卡在 process() 里）。
+        print('perception worker: %s' % (worker.stop(),))
     print('done: %d frames -> %s' % (n, csv_path))
 
 
