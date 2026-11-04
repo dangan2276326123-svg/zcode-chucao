@@ -21,3 +21,7 @@ cad_work/
 # 论文最新一版的便捷副本（tools/make_thesis_docx.py 每次生成都覆盖它；权威产物与版本清单
 # 在 thesis_cau/10_output/，这里只放"最新"，不进版本库，免得每次重建都往仓里塞 2.4 MB 二进制）
 thesis_latest.docx
+
+# 秋采执行表的 Word 打印件（tools/md_to_docx_sheet.py 一条命令可再生，11-03 定）。
+# 权威只有 md 那一份；二进制进仓的话每次重生成都往仓里塞一个新副本（同 thesis_latest.docx）。
+docs/秋采一天执行表_*.docx
