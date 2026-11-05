@@ -78,3 +78,40 @@ def test_fill_in_cells_stay_empty(tmp_path):
     doc = _render(tmp_path, u'| 项 | 数 |\n|---|---|\n| M3 |  |\n| M14 |  |\n')
     table = doc.tables[0]
     assert [c.text for c in (table.rows[1].cells[1], table.rows[2].cells[1])] == ['', '']
+def test_fenced_commands_keep_indent_and_are_not_parsed(tmp_path):
+
+    """田里要照抄的那几行是命令：缩进、`~`、`--width` 一个都不许被"聪明地"处理掉。
+
+
+
+    这里全用 chr(10)/chr(96) 拼，不写反斜杠转义——本仓已经被 shell 吃掉转义咬过两次。
+
+    """
+
+    NL = chr(10)
+
+    FENCE = chr(96) * 3
+
+    cmd = u'    python3 ~/qoder/vehicle/stream_pi.py --width 1920 --height 1080'
+
+    md = (u'## 命令' + NL + NL + FENCE + NL
+
+          + u'【X5】ssh sunrise@192.168.127.10' + NL + cmd + NL + FENCE + NL)
+
+    doc = _render(tmp_path, md)
+
+    joined = NL.join(p.text for p in doc.paragraphs)
+
+    assert FENCE not in joined, repr(joined)
+
+    assert cmd in joined, repr(joined)      # 四个空格的缩进原样留着
+
+    assert u'--width' in joined and u'~' in joined
+
+
+def test_third_level_heading_does_not_print_hash_marks(tmp_path):
+    """`### ` 早先不认，会掉到兜底分支，纸上真印出三个井号。"""
+    doc = _render(tmp_path, u'### 命令一览\n\n正文\n')
+    joined = chr(10).join(p.text for p in doc.paragraphs)
+    assert u'###' not in joined, repr(joined)
+    assert u'命令一览' in joined

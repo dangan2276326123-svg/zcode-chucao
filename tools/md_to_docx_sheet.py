@@ -166,6 +166,15 @@ def render(md_text, out_path, title_size=15.0):
             first_heading_done = True
             i += 1
             continue
+        if s.startswith('### '):
+            # 三级标题单独认一次：早先只认 `# ` 与 `## `，`### ` 会掉到最后那条兜底分支，
+            # 结果纸上真印出 "### 命令一览" 三个井号（11-03 渲染第一版就是这么露出来的）。
+            par = doc.add_paragraph()
+            par.paragraph_format.space_before = Pt(6)
+            par.paragraph_format.space_after = Pt(2)
+            add_inline(par, scrub(s[4:]), 10.5, bold_all=True)
+            i += 1
+            continue
         if s.startswith('> '):
             body = scrub(s[2:])
             par = doc.add_paragraph()
@@ -173,6 +182,19 @@ def render(md_text, out_path, title_size=15.0):
             par.paragraph_format.space_after = Pt(3)
             add_inline(par, body, 9.0)
             i += 1
+            continue
+        if s.startswith('```'):
+            # 围栏代码块：田里要照抄的就是这几行，**缩进与反斜杠必须原样留着**，
+            # 所以这里不走 add_inline（它会吃掉反引号与空格）。
+            i += 1
+            while i < len(lines) and not lines[i].strip().startswith('```'):
+                par = doc.add_paragraph()
+                par.paragraph_format.left_indent = Mm(5)
+                par.paragraph_format.space_after = Pt(0)
+                run = par.add_run(lines[i].rstrip())
+                set_fonts(run, cjk=CJK_FONT, latin=MONO_FONT, size=9.0)
+                i += 1
+            i += 1                      # 跳过收尾的 ```
             continue
         if s.startswith('|'):
             rows = []
