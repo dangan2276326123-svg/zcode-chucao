@@ -39,10 +39,10 @@
 // 组别问题（左右一组，前后一组，必须按照顺序来，不再改变）
 
 //车辆参数  轮轴 和轮距离
-double B=1648.0; //车宽 mm
-double L=3010.0;  //车长 mm
-double B_Horizontal=3250.0; //车宽 mm
-double L_Horizontal=1620.0;  //车长 mm
+double B=1638.0; //车宽 mm
+double L=2145.0;  //车长 mm
+double B_Horizontal=2173.0; //车宽 mm
+double L_Horizontal=1610.0;  //车长 mm
 
 
 double veloc_limit_low =1.24;  //对应的满p波 尽量与实际相符  满p波与最高速的比例关系    这个是默认中速 还有高低速
@@ -577,12 +577,15 @@ while(1)
 	      }
 	  }
   /* 新实车工程（样机，2026-11-05）——单独复制的一份工程，上代车那份一字不动。
-     作者原话："4 号轮转向初始是反的，往下拨遥控，它的差速器朝外"。
-     -> 这一路舵机与另三只镜像安装；作者编号 4 = 底盘左前 = angle[0] = 伺服地址 4，
-     所以这里改用与地址 1 相同的符号形式，不再取外层负号。
-     架空轮验收：直行零位四轮都直 -> LEFT/RIGHT -> 横向 90° 四轮同向不打顶；
-     若只有这一只仍反，说明问题在零位而不是符号，停手回报。 */
-	  send_angle(4,(angle[0]+wheel_Angle_correct[0]-Last_wheel_Angle_correct_run[1]+((retrofit_mode()==MODE_AUTO||retrofit_mode()==MODE_TELEOP)?retrofit_auto_offset():Switch_direction)));   //角度控制  adress, angle    四个轮子 但是一个伺服电机控制两个  所以只控制两个就可以
+     轮 4（作者编号 4 = 底盘左前 = angle[0] = 伺服地址 4）的两次实车读数把这条
+     命令拆成三项，各自的符号分开写，别再整条翻：
+       A  = angle[0]        给角方向：与另三只一致（第一次整条取反后"遥控转向反了"）
+       C/L = 零位/运行补偿   取 C-L 这一组：上电静止四轮都直（第一次改完这一项是对的）
+       B  = 90° 横向基准     与另三只同号（这一项没有单独的实车读数）
+     架空轮验收：直行零位 → LEFT/RIGHT → 横向 90°（四轮同向不打顶）。 */
+#define W4_A_SIGN  (-1.0)
+#define W4_B_SIGN  (+1.0)
+	  send_angle(4,(W4_A_SIGN*angle[0]+wheel_Angle_correct[0]-Last_wheel_Angle_correct_run[1]+W4_B_SIGN*((retrofit_mode()==MODE_AUTO||retrofit_mode()==MODE_TELEOP)?retrofit_auto_offset():Switch_direction)));
 	  delay_ms(12);
  
 	  send_angle(1,(angle[1]+wheel_Angle_correct[1]-Last_wheel_Angle_correct_run[1]+((retrofit_mode()==MODE_AUTO||retrofit_mode()==MODE_TELEOP)?retrofit_auto_offset():Switch_direction)));   //角度控制  adress, angle    四个轮子 但是一个伺服电机控制两个  所以只控制两个就可以

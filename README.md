@@ -138,7 +138,7 @@
 | `集成说明.md` | 固件集成与烧录说明 |
 | ~~`retrofit.c/.h`、`protocol.c/.h`（本目录根下）~~ | **已于 2026-10-10 删除（A13，台账 Fw-20）**：那是四份不参与编译的影子副本，改了构建产物与台架表现都不变，只会让人以为改了。删除前它们的内容与 `f0ecf73` 时工程内那版一致（仅行尾 CRLF 差异），git 历史可取回：`git show f0ecf73:firmware/大车proj/大车/HARDWARE/retrofit/retrofit.c` |
 | `大车proj/大车/` | **上代车（3.25 m）的完整 Keil 工程**：`USER/main.c` 主程序与中断；`HARDWARE/` 各外设驱动（PWM、电机 `bujin_motor`、`car_control`、`path_plan`、`sensor`、多路 `uart*`、`iic`、`CAN`、`ADC`、`LCD` 等）；`FWLIB/` STM32 标准外设库（官方库文件，不改动）；`OBJ/` 编译产物（.hex/.axf/.o，含可烧录的 `PWM.hex`）；`SYSTEM/` 延时/串口基础库；`keilkilll.bat` 清理编译产物脚本。**11-05 起保持逐字节不动**（作者裁定：上代车那份不碰） |
-| `样机proj/样机/` | **新实车（样机 2.15 m）的完整 Keil 工程（11-05，台账 Hw-34）**：从 `大车proj/大车/` 整份复制，去掉 OBJ/uvguix/build_log。与老工程**只允许两处不同**：① `USER/main.c` 里轮 4（作者编号 4 = 底盘左前 = `angle[0]` = 伺服地址 4）的转向符号改成与地址 1 相同的正号形式（作者原话"4号轮转向初始是反的，往下拨遥控，它的差速器朝外" ⇒ 镜像安装）；② `HARDWARE/retrofit/retrofit.h` 的 `PROFILE_ID` 指到 `PROFILE_REAL`。PC 侧配合 `config/vehicle_profile.yaml` 的 `profile_id: 2` / `log_tag: real`。构建产物与 `USER/build_log.txt` 均 gitignore；`OBJ/PWM.hex` 就是这辆车的可烧录件。**四态：已编码 + 已编译，未烧录、未台架**——架空轮验收顺序见台账 Hw-34 |
+| `样机proj/样机/` | **新实车（样机 2.15 m）的完整 Keil 工程（11-05，台账 Hw-34）**：从 `大车proj/大车/` 整份复制，去掉 OBJ/uvguix/build_log。与老工程**只允许两处不同**：① `USER/main.c` 里轮 4（作者编号 4 = 底盘左前 = `angle[0]` = 伺服地址 4）的转向命令按**两项分开的符号**写：给角 `W4_A_SIGN (-1.0)`、90° 基准 `W4_B_SIGN (+1.0)`，零位/运行补偿保持 `C−L` 那一组（依据 = 实车两次读数：第一次整条取反后"初始转向对了、遥控转向反了"⇒ A 回旧号、C-L 与 B 不动；作者原话"4号轮转向初始是反的，往下拨遥控，它的差速器朝外"与"4号轮初始转向没问题了，但是遥控转向反了"，台账 Hw-34）；② `HARDWARE/retrofit/retrofit.h` 的 `PROFILE_ID` 指到 `PROFILE_REAL`。PC 侧配合 `config/vehicle_profile.yaml` 的 `profile_id: 2` / `log_tag: real`。构建产物与 `USER/build_log.txt` 均 gitignore；`OBJ/PWM.hex` 就是这辆车的可烧录件。**四态：已编码 + 已编译，未烧录、未台架**——架空轮验收顺序见台账 Hw-34 |
 
 **固件源的位置与编码（2026-10-10，A13 + A14，台账 Fw-20）**
 

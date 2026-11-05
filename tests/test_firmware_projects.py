@@ -81,10 +81,15 @@ def test_only_allowlisted_files_differ():
 def test_new_project_flips_wheel4_steering():
     """轮 4 = 作者编号 4 = 底盘左前 = angle[0] = 伺服地址 4（Hw-34）。
 
-    新工程用与地址 1 相同的符号形式；若有人把它改回 `-(...)`，这里红。
+    实车两次读数把这条命令拆成三项（A 给角 / C-L 零位补偿 / B 90° 基准）：
+    第一次整条取反后"遥控转向反了"，所以 A 必须回旧号（−1），B 保持同号（+1）；
+    C-L 这一组不能动，它正是"上电静止四轮都直"的来源。谁把它们并回"整条翻"，
+    这里就红——那是已经被实车否掉的形状。
     """
     body = _read(NEW, 'USER/main.c').decode('gbk', 'replace')
-    assert 'send_angle(4,(angle[0]+wheel_Angle_correct[0]' in body
+    assert 'send_angle(4,(W4_A_SIGN*angle[0]' in body
+    assert '#define W4_A_SIGN  (-1.0)' in body
+    assert '#define W4_B_SIGN  (+1.0)' in body
     assert 'send_angle(4,-(angle[0]-wheel_Angle_correct[0]' not in body
 
 
