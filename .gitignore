@@ -9,6 +9,9 @@ hardware_ref/大板/*.PcbDoc
 data/videos/
 calib_imgs/
 firmware/大车proj/大车/OBJ/
+# 新实车工程（11-05，Hw-34）：构建产物与逐次编译日志都不进仓（读数写台账 §4 那一行）
+firmware/样机proj/样机/OBJ/
+firmware/样机proj/样机/USER/build_log.txt
 .idea/
 *.uvoptx
 *.uvguix.*

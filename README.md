@@ -134,14 +134,15 @@
 
 | 文件/目录 | 说明 |
 |---|---|
-| `大车proj/大车/HARDWARE/retrofit/` | **retrofit 模块与串口协议的唯一正身**：`retrofit.c/.h`（改造车控制逻辑，接收上位机指令驱动执行机构）、`protocol.c/.h`（帧解析 + CRC16，与 `common/protocol.py` 一一对应）。Keil 工程 `USER/PWM.uvprojx` 的 `<FilePath>` 只列这里的 `retrofit.c` 与 `protocol.c`，`<IncludePath>` 只到 `..\HARDWARE\retrofit` |
+| `大车proj/大车/HARDWARE/retrofit/` | **上代车工程里的 retrofit 模块与串口协议**：`retrofit.c/.h`（改造车控制逻辑，接收上位机指令驱动执行机构）、`protocol.c/.h`（帧解析 + CRC16，与 `common/protocol.py` 一一对应）。Keil 工程 `USER/PWM.uvprojx` 的 `<FilePath>` 只列这里的 `retrofit.c` 与 `protocol.c`，`<IncludePath>` 只到 `..\HARDWARE\retrofit`。⚠️ **11-05 起不是"唯一正身"**：新实车工程是整份副本（见下表），两份除白名单外必须逐字节相同，由 `tests/test_firmware_projects.py` 当场执行——改 retrofit/协议**必须同一次提交里改两份**，否则两辆车跑两套逻辑而编译照样 0 Error |
 | `集成说明.md` | 固件集成与烧录说明 |
 | ~~`retrofit.c/.h`、`protocol.c/.h`（本目录根下）~~ | **已于 2026-10-10 删除（A13，台账 Fw-20）**：那是四份不参与编译的影子副本，改了构建产物与台架表现都不变，只会让人以为改了。删除前它们的内容与 `f0ecf73` 时工程内那版一致（仅行尾 CRLF 差异），git 历史可取回：`git show f0ecf73:firmware/大车proj/大车/HARDWARE/retrofit/retrofit.c` |
-| `大车proj/大车/` | 完整 Keil uVision 工程：`USER/main.c` 主程序与中断；`HARDWARE/` 各外设驱动（PWM、电机 `bujin_motor`、`car_control`、`path_plan`、`sensor`、多路 `uart*`、`iic`、`CAN`、`ADC`、`LCD` 等）；`FWLIB/` STM32 标准外设库（官方库文件，不改动）；`OBJ/` 编译产物（.hex/.axf/.o，含可烧录的 `PWM.hex`）；`SYSTEM/` 延时/串口基础库；`keilkilll.bat` 清理编译产物脚本 |
+| `大车proj/大车/` | **上代车（3.25 m）的完整 Keil 工程**：`USER/main.c` 主程序与中断；`HARDWARE/` 各外设驱动（PWM、电机 `bujin_motor`、`car_control`、`path_plan`、`sensor`、多路 `uart*`、`iic`、`CAN`、`ADC`、`LCD` 等）；`FWLIB/` STM32 标准外设库（官方库文件，不改动）；`OBJ/` 编译产物（.hex/.axf/.o，含可烧录的 `PWM.hex`）；`SYSTEM/` 延时/串口基础库；`keilkilll.bat` 清理编译产物脚本。**11-05 起保持逐字节不动**（作者裁定：上代车那份不碰） |
+| `样机proj/样机/` | **新实车（样机 2.15 m）的完整 Keil 工程（11-05，台账 Hw-34）**：从 `大车proj/大车/` 整份复制，去掉 OBJ/uvguix/build_log。与老工程**只允许两处不同**：① `USER/main.c` 里轮 4（作者编号 4 = 底盘左前 = `angle[0]` = 伺服地址 4）的转向符号改成与地址 1 相同的正号形式（作者原话"4号轮转向初始是反的，往下拨遥控，它的差速器朝外" ⇒ 镜像安装）；② `HARDWARE/retrofit/retrofit.h` 的 `PROFILE_ID` 指到 `PROFILE_REAL`。PC 侧配合 `config/vehicle_profile.yaml` 的 `profile_id: 2` / `log_tag: real`。构建产物与 `USER/build_log.txt` 均 gitignore；`OBJ/PWM.hex` 就是这辆车的可烧录件。**四态：已编码 + 已编译，未烧录、未台架**——架空轮验收顺序见台账 Hw-34 |
 
 **固件源的位置与编码（2026-10-10，A13 + A14，台账 Fw-20）**
 
-- 固件源**只在** `firmware/大车proj/大车/` 内（`HARDWARE/retrofit/` 与 `USER/`）。`firmware/` 根下曾放过四份同名副本，已删除——它们不在构建清单里，改了对车零影响，只会造成"两份真相"。
+- 固件源**只在** `firmware/大车proj/大车/` 与 `firmware/样机proj/样机/` 两棵工程树内（`HARDWARE/retrofit/` 与 `USER/`）。`firmware/` 根下曾放过四份同名副本，已删除——它们不在构建清单里，改了对车零影响，只会造成"两份真相"。**11-05 起的两棵是"作者裁定的分工程"**：差异只允许 `USER/main.c` 与 `HARDWARE/retrofit/retrofit.h`（外加 Keil 的 uvprojx/uvoptx），其余源文件逐字节相同，由 `tests/test_firmware_projects.py` 钉住；改共用模块（retrofit、protocol、path_plan…）**同一次提交改两份**。
 - 编码：`HARDWARE/retrofit/retrofit.c`、`retrofit.h`、`protocol.h` 与厂商 `USER/main.c` 现在**统一为 GBK**（A14，作者要中文注释自己能读，Keil 编辑器按本地码页打开）；`protocol.c` 是纯 ASCII（非 ASCII 字节数 = 0，两种编码都能写）。
 - 改之前**逐文件试解码**（UTF-8 严格 → GBK 严格 → 都失败就报"混合编码"并停手），别假定全树一种编码；编辑后用同一编码读回并统计"非 ASCII 的变更行"，必须为 0。
 - A14 的硬判据：转码**前后各编译一次，`Code`/`RO-data`/`RW-data`/`ZI-data` 逐项一字不差**（注释字节变化不该产生代码）；两次都必须是当场同一条 `UV4 -r` 的读数，不沿用文档里的旧数字。
