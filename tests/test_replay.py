@@ -45,13 +45,29 @@ def test_no_frame_result_with_live_frame_does_not_crash():
     assert np.array_equal(out, frame)
 
 
-def test_stale_result_also_shows_the_live_frame():
-    """stale 与 no_frame 一样是状态不是画面；HUD 会写 stale，画面显示原帧。"""
+def test_stale_before_any_result_shows_the_live_frame():
+    """还没有任何结果时，stale 只可能出现在别的拍上；这一拍给原帧，开机别黑屏。"""
     frame = _frame()
     stale = {'status': 'stale', 'lateral_px': None, 'confidence': 0.0,
              'tool_offset_px': None, 'nav_far': {}, 'nav_near': {}}
     out = replay.update_display(frame, stale, None)
     assert np.array_equal(out, frame)
+
+
+def test_stale_after_a_result_freezes_the_last_overlay():
+    """作者 11-05 报的"图片在闪"：异步丢帧时 overlay 与原帧交替上屏。
+
+    出过结果之后，占位/断流那几拍必须**冻结上一张叠加图**，不能退回原帧——
+    否则每几拍闪一次，且"没叠加的画面"会被误读成感知正常。
+    """
+    frame = _frame()
+    frame[:, :, 2] = 200                      # 原帧与上一张明显不同
+    last = _frame()
+    stale = {'status': 'stale', 'lateral_px': None, 'confidence': 0.0,
+             'tool_offset_px': None, 'nav_far': {}, 'nav_near': {}}
+    out = replay.update_display(frame, stale, last)
+    assert out is last
+    assert not np.array_equal(out, frame)
 
 
 def test_real_result_draws_the_overlay():

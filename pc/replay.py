@@ -66,17 +66,22 @@ def update_display(frame, result, last_vis):
     结果，`result` 仍是 `NO_FRAME_RESULT` ⇒ 旧代码 `if frame is not None:
     draw_overlay(res)` 直接 `KeyError: 'undistorted'`，主控一开机就退。
 
-    规则三条，按优先级：
+    规则三条，按优先级（11-05 同日第二次读数订正：第一版"占位就显示原帧"会让
+    画面在 overlay 与原帧之间来回切，作者看到的是"图片在闪"——异步丢帧时这种
+    交替每几拍就发生一次）：
     1. 有真结果 ⇒ 画 overlay（mask/导航线叠上去）；
-    2. 只有画面、没有结果 ⇒ 显示**原帧**（HUD 仍会写 `no_frame`/`stale`，不许
-       让一张没有叠加的画面看起来像"感知正常"）；
-    3. 画面和结果都没有 ⇒ 保留上一张（操作员仍要能在无视觉的拍上按 [M]/[E]）。
+    2. 还没有真结果、但**出过**结果 ⇒ 冻结上一张（HUD 仍写 `no_frame`/`stale`；
+       冻结的是上一次叠加图，不许让没有叠加的画面看起来像"感知正常"）；
+    3. 从来没有出过结果 ⇒ 显示**原帧**（开机头几拍，总比黑屏强）；
+    4. 连画面都没有 ⇒ 保持 `None`，由调用方兜底成黑画布。
     """
     if has_overlay(result):
         return draw_overlay(result)
+    if last_vis is not None:
+        return last_vis
     if frame is not None:
         return frame.copy()
-    return last_vis
+    return None
 
 
 def draw_overlay(result):
