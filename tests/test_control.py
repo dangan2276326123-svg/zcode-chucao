@@ -754,7 +754,10 @@ def _drive_main(tmp_path, monkeypatch, results, states=None, keys=(), n_status=N
     monkeypatch.setattr(M, 'AsyncPerception',
                         worker_factory or _SyncWorker)   # 11-03 Pc-17：主拍不再自己跑推理
     monkeypatch.setattr(M, 'socket', _SocketModule())
-    monkeypatch.setattr(M, 'draw_overlay', lambda res: np.zeros((8, 8, 3), 'uint8'))
+    # Pc-21 起 main 不再直接调 draw_overlay：绘制判据挪进 replay.update_display
+    #（有帧≠有结果，占位 dict 画不了 overlay）。这里替掉整个显示函数即可。
+    monkeypatch.setattr(M, 'update_display',
+                        lambda frame, res, last: np.zeros((8, 8, 3), 'uint8'))
     if status_factory is not None:      # I-5：模拟"检测到 MCU 重启"的接收器
         monkeypatch.setattr(M, 'StatusReceiver', status_factory)
     if gui:

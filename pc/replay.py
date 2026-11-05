@@ -50,6 +50,35 @@ def frames_from_dir(path, step):
             yield i, img
 
 
+def has_overlay(result):
+    """这份结果能不能拿来画 overlay：只有真跑过感知的结果才带 `undistorted`。
+
+    占位结果（`main.NO_FRAME_RESULT` / `STALE_RESULT`）只带 status/lateral 那几格，
+    它们是**状态**不是画面；拿它们去 `draw_overlay` 会 `KeyError: 'undistorted'`。
+    """
+    return isinstance(result, dict) and result.get('undistorted') is not None
+
+
+def update_display(frame, result, last_vis):
+    """这一拍该画什么（E2-4 的"无帧保画面"与 Pc-17 异步感知之间的接缝）。
+
+    症状（11-05 实车首跑，台账 Pc-21）：`frame` 已经到了，但后台线程还没出第一份
+    结果，`result` 仍是 `NO_FRAME_RESULT` ⇒ 旧代码 `if frame is not None:
+    draw_overlay(res)` 直接 `KeyError: 'undistorted'`，主控一开机就退。
+
+    规则三条，按优先级：
+    1. 有真结果 ⇒ 画 overlay（mask/导航线叠上去）；
+    2. 只有画面、没有结果 ⇒ 显示**原帧**（HUD 仍会写 `no_frame`/`stale`，不许
+       让一张没有叠加的画面看起来像"感知正常"）；
+    3. 画面和结果都没有 ⇒ 保留上一张（操作员仍要能在无视觉的拍上按 [M]/[E]）。
+    """
+    if has_overlay(result):
+        return draw_overlay(result)
+    if frame is not None:
+        return frame.copy()
+    return last_vis
+
+
 def draw_overlay(result):
     vis = result['undistorted'].copy()
     vis[result['mask'] == 1] = (vis[result['mask'] == 1] * 0.6 +

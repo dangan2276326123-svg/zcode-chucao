@@ -24,7 +24,7 @@ from pc.control import (MiddleToolPID, LatencyCompensator, DifferentialDrive,
                         LatErrorRate)
 from pc.state_machine import StateMachine, AutoGuard
 from pc.perception import px_to_meters
-from pc.replay import draw_overlay
+from pc.replay import update_display
 from pc.status_rx import StatusReceiver, STATUS_UDP_PORT
 # E3 批 1b：线上发什么帧由 wire 决定，执行许可位与档案号由 vehicle_profile 决定。
 # 这两件事在 pc/wire.py 与 pc/vehicle_profile.py 里各自只有一份事实，这里只引用。
@@ -539,8 +539,10 @@ def main():
             t_rel = t0 - t0_first
             if not args.no_gui:
                 import cv2
-                if frame is not None:
-                    last_vis = draw_overlay(res)
+                # Pc-21：**有帧不等于有结果**——异步感知的第一份结果还没出来时
+                # res 是占位 dict（没有 'undistorted'），旧代码在这里直接崩。
+                # 交给 update_display 判：有真结果才画 overlay，只有画面就显示原帧。
+                last_vis = update_display(frame, res, last_vis)
                 # E2-4: while the stream is silent we keep repainting the LAST
                 # overlay with a NO-FRAME banner rather than freezing the UI --
                 # the operator must still be able to press [M]/[E] on a beat
