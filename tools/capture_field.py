@@ -36,6 +36,11 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from common import mjpeg  # StreamFeed：有界读，不会把这里挂死
+# 录像命名契约 11-05 搬到 common/capture_naming.py：X5 侧本地录像（vehicle/record_local.py，台账 Pc-20）
+# 要用同一套段号规则，而板子上只有 vehicle/ 与 common/ 两个目录。这里照旧 re-export，
+# 老调用点与测试（cf.video_path / cf.VIDEO_PATH / cf.BATCH_RE）一字未改。
+from common.capture_naming import (BATCH_RE, VIDEO_PATH,  # noqa: F401
+                                   video_next_index, video_path)
 
 # 类别词表：与 docs/秋季图像采集清单.md 第 1-2 节的矩阵一一对应。
 # 顺序就是 1/2/3、4/5/6、7/8/9 的键序，别重排——重排了现场按错。
@@ -43,7 +48,6 @@ LIGHT = ['sun_front', 'sun_back', 'overcast']
 VIEW = ['front', 'offsetL', 'offsetR']
 DENSITY = ['clean', 'mid', 'dense']
 
-BATCH_RE = re.compile(r'^t\d{2}$')
 JPG_QUALITY = 95
 
 
@@ -86,30 +90,10 @@ def shot_path(folder, batch, day, index):
     return os.path.join(folder, '%s_%s_%04d.jpg' % (batch, day, index))
 
 
-VIDEO_PATH = os.path.join('data', 'autumn_data', 'video')
-
-
-def video_next_index(folder, batch, day):
-    """同一批次、同一天里已有的 `_vNN.avi` 最大号 + 1。
-
-    存在理由是清单第 4 节要**三段**视频（逆光 / 阴天 / 任意）：原来 `video_path()` 不带序号，
-    同一天同一批次按第二次 `v` 就把第一段**直接冲掉**——`cv2.VideoWriter` 开同名文件是写语义，
-    不报错也不留备份，而田里只走这一趟。照片那侧一直有自增序号，视频这侧漏了
-    （11-03 读码发现，登记为台账 Pc-16）。
-    """
-    pat = re.compile(r'^%s_%s_v(\d{2})\.avi$' % (re.escape(batch), re.escape(day)))
-    top = 0
-    if os.path.isdir(folder):
-        for name in os.listdir(folder):
-            m = pat.match(name)
-            if m:
-                top = max(top, int(m.group(1)))
-    return top + 1
-
-
-def video_path(batch, day, index, folder=VIDEO_PATH):
-    """`<视频目录>/<批次>_<MMDD>_v<NN>.avi`——序号是必给参数，不许回到无名那一份。"""
-    return os.path.join(folder, '%s_%s_v%02d.avi' % (batch, day, index))
+# video_next_index() / video_path() / VIDEO_PATH / BATCH_RE 已搬到
+# common/capture_naming.py（台账 Pc-20：X5 侧本地录像要共用同一条段号契约，
+# 而板子上只 scp vehicle/ 与 common/）。本文件顶部 import 回来，调用点与测试
+# 都不用改——本仓这一段契约的权威定义只在 common/capture_naming.py 一处。
 
 
 def main():

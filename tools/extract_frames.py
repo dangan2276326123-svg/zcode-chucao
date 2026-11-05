@@ -19,8 +19,9 @@
 
 还有一条是读码读出来的坑：`capture_field.record_video()` 遇到 `f is None` 就 `continue`，
 所以**流断续会让视频的时间轴不连续**——按帧号推位移会偏。工具因此把"帧号 / 视频内时刻 /
-估计位移"三样一起写进 `extract_log_*.csv`，事后可查；同时如果 avi 自报的帧率不是录制时
-写死的 25，会打一条警告（那说明这个文件不是本工具链录的，位移换算得重算）。
+估计位移"三样一起写进 `extract_log_*.csv`，事后可查；同时如果 avi 自报的帧率既不是笔记本
+那一路写死的 25、也不是 X5 本地录像（`vehicle/record_local.py`，台账 Pc-20）的 30，
+会打一条警告——那说明这个文件不是本链路录的，位移换算得重算。
 
 ⚠️ 路径别带中文：这台机器上 `cv2.VideoCapture` 打不开含 CJK 的路径（本仓记过），
 工具开头就检查并给人话提示，不要等到抽出一半才发现。
@@ -43,6 +44,8 @@ from tools.capture_field import (BATCH_RE, DENSITY, JPG_QUALITY, LIGHT,  # noqa:
 VIDEO_NAME_RE = re.compile(r'^(t\d{2})_(\d{4})_v(\d{2})\.avi$', re.IGNORECASE)
 LEGACY_NAME_RE = re.compile(r'^(t\d{2})_(\d{4})\.avi$', re.IGNORECASE)
 RECORD_FPS = 25.0          # capture_field.record_video 里写死的那个 25
+X5_RECORD_FPS = 30.0       # vehicle/record_local.py（Pc-20）按相机原生 MJPG 1080p30 录
+CHAIN_FPS = (RECORD_FPS, X5_RECORD_FPS)   # 本工具链的两种来源，别的都算"来路不明"
 VALID_CATEGORIES = set('%s_%s_%s' % (l, v, d)
                        for l in LIGHT for v in VIEW for d in DENSITY)
 
@@ -119,9 +122,10 @@ def extract(video, out_root, cat, stride_m=1.0, speed_mps=1.0, step=None,
         raise IOError(u'打不开视频：%s（编解码器缺？路径中文？）' % video)
     fps = cap.get(cv2.CAP_PROP_FPS) or RECORD_FPS
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-    if abs(fps - RECORD_FPS) > 0.5 and verbose:
-        print(u'[!] 这个视频自报 %.2f fps，不是本工具链录制时写死的 %.0f ⇒ 位移换算按自报值算，'
-              u'但请确认它是哪来的' % (fps, RECORD_FPS))
+    if min(abs(fps - c) for c in CHAIN_FPS) > 0.5 and verbose:
+        print(u'[!] 这个视频自报 %.2f fps，不是本工具链的两种录制帧率（capture_field 那条 '
+              u'%.0f、X5 本地录像那条 %.0f）⇒ 位移换算按自报值算，但请确认它是哪来的'
+              % (fps, RECORD_FPS, X5_RECORD_FPS))
     step = int(step) if step else stride_to_step(stride_m, speed_mps, fps)
     skip = max(0, int(round(skip_s * fps)))
     folder = os.path.join(out_root, cat)
