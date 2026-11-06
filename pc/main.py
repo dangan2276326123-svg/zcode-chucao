@@ -46,6 +46,13 @@ VISION_LOSS_S = 2.0         # s of unusable frames -> vision_loss event
 # (this stream carries no capture timestamps), so it is a LOWER BOUND on
 # glass-to-PC latency -- keep it separate from the four B8 delay columns.
 FRAME_MAX_AGE_S = 0.5       # s: older than this, do not steer by the frame
+# Pc-22（11-06 台架，crab_35）：**结果是另一道门槛**，别和上面那道"源画面"混用。
+# 感知搬后台以后（Pc-17）一条结果还要背一个推理周期：本机 CUDA 实测 process() 206 ms、
+# 台架那一跑中位 344 ms ⇒ 拿 0.5 s 卡结果等于把六成的拍锁零（vL>0 只 35.6%，
+# 20 s 只走约 1 m，车一抖一停）。这里放到 1.0 s ≈ 两个感知周期：拍内没有**新**结果时
+# 走命令保持（Pc-17 那条不变），过 1.0 s 才按"瞎了"锁零。显示侧"冻结上一张"不变，
+# 过期程度仍如实写进 pipe_delay_ms。改这个数只影响控制判据，不动发帧形状。
+RESULT_MAX_AGE_S = 1.0      # s: older than this, a perception result is stale
 STREAM_POLL_S = 0.02        # s: how often the loop asks the feed for a beat
 
 # ---- E3 批 1b Task 6 fix round 1（审查 I-2 / I-6 / I-4）----
@@ -224,9 +231,13 @@ def main():
                     help='seconds to hold wheel speed at 0 after entering AUTO (steering settle)')
     ap.add_argument('--auto-limit-s', type=float, default=20.0,
                     help='max seconds per AUTO run; 0 or less disables the limit (printed)')
+    ap.add_argument('--result-max-age-s', type=float, default=RESULT_MAX_AGE_S,
+                    help='a perception result older than this is treated as blind (Pc-22); '
+                         'default 1.0 = about two inference periods')
     ap.add_argument('--overwrite', action='store_true',
                     help='明知故犯地复用 --out 目录（默认拒绝：CSV 是覆盖写的）')
     args = ap.parse_args()
+    result_max_age_s = max(0.0, float(args.result_max_age_s))
 
     csv_path = fresh_out_dir(args.out, args.overwrite)
 
@@ -324,6 +335,8 @@ def main():
           % (guard.settle_s,
              '%.0fs' % guard.limit_s if guard.limit_enabled else
              'OFF (--auto-limit-s <= 0: nothing stops AUTO but ESTOP / vision loss)'))
+    print('result max age: %.2fs (older results are treated as blind; Pc-22)'
+          % result_max_age_s)
     # Pc-13：上一拍的不一致短码，只用来把 stdout 打印压成"边沿一次"。
     mism_prev = None
 
@@ -396,7 +409,7 @@ def main():
                 else:
                     age = rd.delay_s(now_mono)
                     infer_ms = rd.infer_ms
-                    if age > FRAME_MAX_AGE_S:
+                    if age > result_max_age_s:
                         res = STALE_RESULT       # 出过，但已经不是那张画了
                     else:
                         res = rd.res

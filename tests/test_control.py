@@ -1474,3 +1474,67 @@ def test_a_stale_result_holds_the_command_instead_of_refeeding_the_pid(tmp_path,
     for beat in sorted(kinds):
         if beat >= 1:                                        # 第 0 拍在握手/进档前
             assert P.TYPE_NAV in kinds[beat], (beat, kinds[beat])
+
+
+# ---- 台账 Pc-22（11-06 台架，crab_35）：结果的新鲜度是另一道门 ----------------
+# `FRAME_MAX_AGE_S = 0.5` 守的是"源画面"；**结果**还要多背一个推理周期，所以它有
+# 自己的门槛（默认 1.0 s，`--result-max-age-s`）。下面两条钉的是"两道门确实分开了"：
+# 0.8 s 的结果照常给速度（旧写法会锁零），1.2 s 的结果判瞎并锁零。
+
+class _AgedResultWorker(object):
+    """每拍都发布同一条结果，但把它的出片时刻设成 `age_s` 秒之前。"""
+
+    def __init__(self, process, age_s):
+        self._process = process
+        self._age = age_s
+        self._n = 0
+
+    def submit(self, frame, picked_at=None, frame_age_s=0.0):
+        if frame is None:
+            return False
+        self._n += 1
+        res = self._process(frame)
+        self._latest = Reading(res, self._n,
+                               time.monotonic() - self._age, 0.0, 200.0)
+        return False
+
+    def latest(self):
+        return self._latest
+
+    def stop(self):
+        return {'processed': self._n}
+
+
+def _aged_worker(age_s):
+    return lambda process: _AgedResultWorker(process, age_s)
+
+
+def _speeds(r):
+    iL, iR = r['header'].index('vL'), r['header'].index('vR')
+    out = []
+    for row in r['rows']:
+        try:
+            out.append((float(row[iL]), float(row[iR])))
+        except ValueError:
+            out.append(None)
+    return out
+
+
+def test_a_result_older_than_the_frame_gate_is_still_usable_for_control(
+        tmp_path, monkeypatch):
+    """0.8 s 的结果：旧写法（结果门 = FRAME_MAX_AGE_S = 0.5）会判 stale 并锁零；
+    Pc-22 之后它落在 1.0 s 之内 ⇒ 照常给速度。这一条就是 crab_35"一抖一停"的回归钉。"""
+    r = _drive_main(tmp_path / 'pc22_old', monkeypatch, results=[_USABLE] * 5,
+                    states=['AUTO'] * 5, worker_factory=_aged_worker(0.8))
+    speeds = _speeds(r)
+    assert any(s and max(s) > 0.0 for s in speeds), speeds
+    assert {row[r['header'].index('status')] for row in r['rows']} == {'dual'}
+
+
+def test_a_result_past_the_result_gate_is_blind(tmp_path, monkeypatch):
+    """1.2 s 的结果 ⇒ 判 stale、锁零，CSV 的 `status` 写 stale（不许当好结果用）。"""
+    r = _drive_main(tmp_path / 'pc22_blind', monkeypatch, results=[_USABLE] * 5,
+                    states=['AUTO'] * 5, worker_factory=_aged_worker(1.2))
+    speeds = _speeds(r)
+    assert all(s == (0.0, 0.0) for s in speeds if s is not None), speeds
+    assert {row[r['header'].index('status')] for row in r['rows']} == {'stale'}
