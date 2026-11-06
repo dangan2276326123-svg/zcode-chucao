@@ -662,9 +662,9 @@ def test_normalize_reference_fixes_the_known_shapes():
 
 
 def test_reference_list_prints_clean():
-    """90 条落纸前的硬形状：不许有截断、叠句点、粘连、裸序号、开题模板文字。"""
+    """93 条落纸前的硬形状：不许有截断、叠句点、粘连、裸序号、开题模板文字。"""
     refs = M.build_references()
-    assert len(refs) == len(M.FINAL_REFERENCES) == 90
+    assert len(refs) == len(M.FINAL_REFERENCES) == 93
     problems = []
     for i, s in enumerate(refs, 1):
         if not re.match(u'^\\[%d\\] ' % i, s):
@@ -742,7 +742,7 @@ def test_built_reference_entries_are_hanging(tmp_path, monkeypatch):
     d = Document(str(tmp_path / 'built.docx'))
     refs = [p for p in d.paragraphs
             if re.match(u'^\\[[0-9]+\\] ', p.text.strip())]
-    assert len(refs) == 90, '产物里的参考文献条数：%d' % len(refs)
+    assert len(refs) == 93, '产物里的参考文献条数：%d' % len(refs)
     bad = [p.text[:24] for p in refs
            if (p._p.pPr is None or p._p.pPr.find(qn('w:ind')) is None
                or p._p.pPr.find(qn('w:ind')).get(qn('w:hangingChars')) != '200')]
