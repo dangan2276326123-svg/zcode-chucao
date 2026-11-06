@@ -28,6 +28,8 @@
 # 固件为此单独分出一份工程 `firmware/样机proj/样机/`（PROFILE_ID=PROFILE_REAL），
 # 老工程 `firmware/大车proj/大车/` 保持原样。**回上代车台架时把下面两行改回 1/prev**，
 # 烧的固件与这里的 log_tag 必须是同一辆车——这一列是 Pc-10 唯一的数据归属凭据。
-profile_id: 2
+# 🔁 11-06：工厂那台车（板子自报 `profile`=1 = 大车proj 那份、`build_id`=85）上台架，两行改回 1/prev。
+#    同一天发现"取消档案握手"只落在 PC 侧记录上：固件 `retrofit.c:268` 的档案比对照旧在拦，配置与板子不同号 ⇒ 每条 MODE 都被 REJ_PROFILE 拒（台账 Pc-18 第二种成因）。
+profile_id: 1
 permit: gate_n
-log_tag: real
+log_tag: prev
