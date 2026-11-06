@@ -330,6 +330,12 @@ def build(kind, args, seq, profile=P.PROFILE_NONE):
     """
     if kind == 'nav':
         return P.pack_frame(P.TYPE_NAV, P.pack_nav(float(args[0]), float(args[1])), seq)
+    if kind == 'badcrc':
+        # B5#2（11-06）：一条**CRC 故意错**的 NAV 帧。解析器应在 CRC 那一步丢掉它，
+        # 固件连 mode 都碰不到（不会写 reject、也不会动轮子）——所以它验的是
+        # "坏帧无动作"，判据在**车上**（轮子不动），不在 STATUS 上。
+        good = P.pack_frame(P.TYPE_NAV, P.pack_nav(float(args[0]), float(args[1])), seq)
+        return good[:-1] + bytes([good[-1] ^ 0xFF])
     if kind == 'tool':
         return P.pack_frame(P.TYPE_TOOL, P.pack_tool(float(args[0]), int(args[1])), seq)
     if kind in ('beat', 'estop'):
@@ -547,10 +553,10 @@ def check_mode_args(kind, args):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
-    ap.add_argument('kind', choices=['nav', 'tool', 'beat', 'estop']
+    ap.add_argument('kind', choices=['nav', 'tool', 'beat', 'estop', 'badcrc']
                     + list(MODE_REQUEST_KINDS))
     ap.add_argument('args', nargs='*',
-                    help='nav: vL vR (m/s)   tool: mm lift位   '
+                    help='nav: vL vR (m/s)   tool: mm lift位   badcrc: vL vR（同 nav，但 CRC 故意错）   '
                          'the five MODE kinds: no arguments (profile comes from '
                          'config/vehicle_profile.yaml)')
     ap.add_argument('--host', default='192.168.127.10', help='X5 地址（网桥阶段改这里）')
@@ -567,10 +573,12 @@ def main():
 
     if a.kind == 'nav' and len(a.args) != 2:
         sys.exit('nav 需要两个速度参数，例如：nav 0.05 0.05')
+    if a.kind == 'badcrc' and len(a.args) != 2:
+        sys.exit('badcrc 需要两个速度参数，例如：badcrc 0.2 0.2')
     if a.kind == 'tool' and len(a.args) != 2:
         sys.exit('tool 需要 <横移mm> <lift位>，例如：tool 0 7')
     # 两道闸都在**建 socket 之前**（与 bench_status 的 --to 同一条纪律：先拒、后碰资源）。
-    if a.kind == 'nav':
+    if a.kind in ('nav', 'badcrc'):
         if nav_exceeds_bench_limit(*_nav_speeds_or_exit(a.args)):
             # 到这里的都是有限数了，所以这一句只对"真的超限"说真话。
             sys.exit('探针限速 %.2f m/s，别拿它当行车工具——要跑闭环请用 pc/main.py'

@@ -664,3 +664,15 @@ def test_judge_mode_teleop_reads_reject_0x02_as_the_split_defect():
     assert '排在它前面' not in text        # 不许再用通用那句错文案
     # 同一条 0x02 在握手那一格仍是"不是握手产生的、不给结论"（别把两条判据并成一条）
     assert lp.judge('mode_profile', 0, [0], [P.REJECT_RCS_STALE])[0] == 'INCONCLUSIVE'
+
+
+# ---- B5#2（11-06）：坏帧注入要用的那条帧，必须是"同一个 nav 帧、只坏 CRC" ----
+
+def test_badcrc_kind_is_a_nav_frame_with_only_the_crc_broken():
+    good = lp.build('nav', ['0.2', '0.1'], 7)
+    bad = lp.build('badcrc', ['0.2', '0.1'], 7)
+    assert len(bad) == len(good)
+    assert bad[:-1] == good[:-1]          # 只动最后一个字节，不是另一种畸形
+    assert P.unpack_frame(good)[0] == P.TYPE_NAV
+    with pytest.raises(ValueError, match='crc mismatch'):
+        P.unpack_frame(bad)
