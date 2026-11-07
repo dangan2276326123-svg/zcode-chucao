@@ -22,15 +22,18 @@ def test_three_band_envelope_needs_95cm_not_60cm():
 
 
 def test_three_band_envelope_at_the_2026_11_07_design_input():
-    """Hw-37：行距 80、刃宽 70 ⇒ 三刀外缘跨度 230 cm，比底盘 215 cm 宽 15 cm。
+    """Hw-38（同日第二次改判，取代 Hw-37 的 80/70）：行距 60、刃宽 50 ⇒
+    三刀外缘跨度 170 cm，收进底盘 215 cm 之内（每侧余 22.5 cm）。
 
-    只报包络事实：刀具外伸于轮迹之外是悬挂农具的常见布置，不等于"通过性不合格"，
-    也不等于"轮子压在作物行上"——后两者要 M14/M15 实测，本函数不替它们下结论。
+    只报包络事实：收进底盘不等于"轮不压苗"——刀外缘 ±85 cm 与轮心 ±95.5 cm 之间
+    只剩 10.5 cm，胎面接地条带是否侵入作业带要 M14/M15 实测，本函数不替它们下结论。
     """
+    assert required_outer_span(60.0, 50.0, bands=3) == pytest.approx(170.0)
+    assert required_outer_span(60.0, 50.0, bands=3) < 215.0
+    assert band_capacity(215.0, 60.0, 50.0) == 3
+    # 被取代的 Hw-37 组合留作反例：80/70 时包络 230 > 215，刀具每侧外伸 7.5 cm
     assert required_outer_span(80.0, 70.0, bands=3) == pytest.approx(230.0)
-    assert required_outer_span(80.0, 70.0, bands=3) > 215.0
-    assert band_capacity(215.0, 80.0, 70.0) == 2     # 底盘宽度内只放得下 2 把
-    assert band_capacity(230.0, 80.0, 70.0) == 3     # 算上外伸才够 3 把
+    assert band_capacity(215.0, 80.0, 70.0) == 2
 
 
 def test_band_capacity_on_the_real_machine():
@@ -50,15 +53,15 @@ def test_track_span_reports_facts_and_never_concludes_crushing():
     assert set(t.keys()) == {'pitches', 'furrow_aligned_possible', 'residual_off_cm'}
 
 
-def test_track_span_at_80cm_pitch_loses_the_integer_alignment():
-    """Hw-37 之后行距 80：191/80 = 2.39，整数对齐的几何巧合失效。
+def test_track_span_at_60cm_pitch_loses_the_integer_alignment():
+    """Hw-38 之后行距 60：191/60 = 3.18，整数对齐的几何巧合仍然失效。
 
     这正是 ch02:21 那句"轮心落在行间不再有任何几何保证"的来源；函数只把它报成
     furrow_aligned_possible=False，不替作者决定轮迹该怎么摆（那要 M15 实测）。
     """
-    t = track_span(191.0, 80.0)
-    assert t['pitches'] == pytest.approx(2.39, abs=0.01)
-    assert t['residual_off_cm'] == pytest.approx(31.0, abs=0.1)
+    t = track_span(191.0, 60.0)
+    assert t['pitches'] == pytest.approx(3.18, abs=0.01)
+    assert t['residual_off_cm'] == pytest.approx(11.0, abs=0.1)
     assert t['furrow_aligned_possible'] is False
 
 
