@@ -10,10 +10,11 @@ type PLANE and a point (x,0,0) that lies on that plane and on no other. Fall bac
 by the returned feature's name. Also use NewDocument (not OpenDoc6 on the template) so the
 sketches can never land in whatever document happens to be active in the author's session.
 
-Layout: X across the row, Y forward, Z up. Beam 500x40x12 on Front; flange 140x60x8 on Top;
-11 tines at 48 pitch on offset Right planes, the side outline turned by rot() so the shank
-runs rearward and the leg hangs down: shank 160, C-bend R70x90 (radii 67/73), leg 126,
-point 26, section 6 thick x 8 wide.
+Layout: X across the row, Y forward, Z up.  One body carries everything: the 夹排 L section
+(立板 12 thick x 50 tall + 顶板 40 deep x 12 thick, from 弹齿齿夹排设计 §二) drawn on the offset
+Right plane at x=-250 and extruded 500 across the working width, then 11 tines at 48 pitch on
+offset Right planes.  Each tine is a vertical mounting shank 160, a quarter C-bend R70x90
+(radii 67/73), a horizontal working leg 126 and a 26 chisel point, section 6 x 8.
 Sockets NOT cut (reference). All dims design choices; 幅宽 500 对等 is the confirmed one (Hw-38).
 
 Usage: python -B tools/sw_build_tine_bar.py
@@ -44,13 +45,6 @@ def sel_plane(doc, names):
     return False
 
 
-def rect(sm, x1, y1, x2, y2):
-    p = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
-    for i in range(4):
-        a, b = p[i], p[(i + 1) % 4]
-        sm.CreateLine(a[0] * M, a[1] * M, 0.0, b[0] * M, b[1] * M, 0.0)
-
-
 def line(sm, a, b):
     sm.CreateLine(a[0] * M, a[1] * M, 0.0, b[0] * M, b[1] * M, 0.0)
 
@@ -68,39 +62,54 @@ def arc(sm, c, p, q, direction):
                  direction)
 
 
-def rot(p):
-    """Profile coords (u = the outline's own x, v = its y) -> Right-plane sketch coords.
-
-    Measured from the exported STEP, not assumed: on the Right plane of this build,
-    sketch x -> model -Z and sketch y -> model +Y (the untransformed v2/v3 outline came out
-    with the tine point aimed HORIZONTALLY along +Y, which tills nothing).  (u, v) -> (v, -u)
-    is a proper rotation (det +1), so the arc direction flags below keep their meaning and the
-    shank ends up running rearward along -Y while the leg hangs down along -Z.
-    """
-    return (p[1], -p[0])
-
-
 def draw_profile(sm):
-    """Closed side outline with TWO TRUE ARCS for the C-bend.
+    """Closed side outline with TWO TRUE ARCS for the C-bend, in Right-plane sketch coords.
 
-    v2 used a 14-segment polyline for the bend (visible facets) AND repeated each arc's end
-    point as the next line's start, creating zero-length segments; SolidWorks' sketch solver
-    resolves those degenerate segments differently per sketch, which is why every tine's bend
-    showed a different kink. True arcs remove both problems: smooth bend, no duplicate points.
-    Profile coords before rot(): shank 0..160 along u, bend centre (160,70) with inner r67 and
-    outer r73, leg u 70..196 at v 227..233, point tip at (230,196). Direction +1 goes
-    counter-clockwise from start to end, so inner (-90 deg -> 0 deg) is +1 and outer
-    (0 deg -> -90 deg) is -1; each arc is exactly a quarter circle.
+    Mapping measured from the exported STEP: on this build's Right plane a sketch point
+    (sx, sy) lands at model Z = -sx and model Y = +sy.  So sx reads as DEPTH below the clamp
+    face and sy as FORWARD reach - which is the whole point of this outline:
+
+      sx 0..160, sy ~0     the mounting shank, VERTICAL, goes up into the 立板's socket
+      quarter C-bend       centre (160,70), inner r67 / outer r73
+      sy 70..196, sx ~230  the working leg, HORIZONTAL, sweeping forward under the surface
+      (230,196)            the chisel point
+
+    That is the shape `docs/弹齿齿夹排设计_20261016.md` §二 requires (铅垂盲孔 holds the shank,
+    so the shank must be vertical) and the one tools/sw_build_tine.py documents ("straight
+    mounting shank + 90 deg C-bend + working leg + chisel point").
+
+    RETRACTED, kept because I shipped it once: v3 put a rot() in front of this and turned the
+    tine 90 deg so the leg hung vertically and the point aimed straight down, on the argument
+    "a tine that sweeps horizontally tills nothing".  That argument was mine - not the author's,
+    not the design doc's - and it is wrong for this tool: the horizontal sweep IS the weeding
+    action, the same duty the 鸭掌铲 it is compared against performs.  v3 is void.
+
+    v2's other defect is real and stays fixed: its bend was a 14-segment polyline (visible
+    facets) whose end point was also repeated as the next line's start, creating zero-length
+    segments; the sketch solver resolves those differently per sketch, which is why all 11
+    bends kinked differently.  True arcs remove both.  Direction +1 goes counter-clockwise from
+    start to end, so the inner arc (-90 deg -> 0 deg) is +1 and the outer (0 deg -> -90 deg) is
+    -1; each is exactly a quarter circle.
     """
-    P = lambda u, v: rot((u, v))
-    line(sm, P(0, 3), P(160, 3))
-    arc(sm, P(160, 70), P(160, 3), P(227, 70), 1)
+    line(sm, (0, 3), (160, 3))
+    arc(sm, (160, 70), (160, 3), (227, 70), 1)
     for a, b in zip([(227, 70), (227, 170), (230, 196), (233, 170)],
                     [(227, 170), (230, 196), (233, 170), (233, 70)]):
-        line(sm, P(*a), P(*b))
-    arc(sm, P(160, 70), P(233, 70), P(160, -3), -1)
-    line(sm, P(160, -3), P(0, -3))
-    line(sm, P(0, -3), P(0, 3))
+        line(sm, a, b)
+    arc(sm, (160, 70), (233, 70), (160, -3), -1)
+    line(sm, (160, -3), (0, -3))
+    line(sm, (0, -3), (0, 3))
+
+
+def clamp_profile():
+    """The L from 夹排设计 §二, in the same (sx = -Z, sy = Y) sketch coords, one closed outline.
+
+    立板 12 thick (Y -6..6) x 50 tall (Z 0..50) - the tine sockets are cut UP into it from its
+    bottom face, 38 deep, which is why the tall member is the one holding the tines.
+    顶板 40 deep (Y -6..34) x 12 thick (Z 50..62) - the face that meets the 刀梁 quick-change
+    seat; the 4xM8 腰孔 + 2xφ8 销 go there (still not cut, 孔距待与刀梁面板对).
+    """
+    return [(0, -6), (0, 6), (-50, 6), (-50, 34), (-62, 34), (-62, -6)]
 
 
 def extrude(doc, depth):
@@ -108,6 +117,22 @@ def extrude(doc, depth):
                                                 False, False, False, False, 0.0, 0.0,
                                                 False, False, False, False, True, True, True,
                                                 0, 0, False)
+
+
+def offset_right(doc, x):
+    """Create the Right-plane offset at model x and leave IT selected; returns how it was
+    selected, or None.  Two bugs live here and were both measured: CreatePlaneAtOffset3 does
+    not leave the new plane selected, and a NEGATIVE offset returns None - hence abs() plus
+    FlipDir=(x < 0)."""
+    sel_plane(doc, ("Right Plane", "右视基准面"))
+    rp = doc.CreatePlaneAtOffset3(abs(x) * M, x < 0, True)
+    doc.ClearSelection2(True)
+    if doc.Extension.SelectByID2("", "PLANE", x * M, 0, 0, False, 0, None, 0):
+        return "point"
+    if rp is not None and doc.Extension.SelectByID2(str(rp.Name), "PLANE", 0, 0, 0,
+                                                    False, 0, None, 0):
+        return "name"
+    return None
 
 
 def main():
@@ -126,30 +151,19 @@ def main():
     sm = doc.SketchManager
     steps = []
 
-    sel_plane(doc, ("Front Plane", "前视基准面"))
+    # clamp body: the L section once, extruded across the whole 500 working width
+    how = offset_right(doc, -250.0)
     sm.InsertSketch(True)
-    rect(sm, -250, -20, 250, 20)
+    cp = clamp_profile()
+    for a, b in zip(cp, cp[1:] + cp[:1]):
+        line(sm, a, b)
     sm.InsertSketch(True)
-    steps.append(("beam", bool(extrude(doc, 12))))
-
-    sel_plane(doc, ("Top Plane", "上视基准面"))
-    sm.InsertSketch(True)
-    rect(sm, -70, 12, 70, 72)
-    sm.InsertSketch(True)
-    steps.append(("flange", bool(extrude(doc, 8))))
+    steps.append(("clamp", "%s:%s" % (how, bool(extrude(doc, 500)))))
 
     for i in range(11):
         x = -240.0 + i * 48.0
-        sel_plane(doc, ("Right Plane", "右视基准面"))
-        rp = doc.CreatePlaneAtOffset3(abs(x) * M, x < 0, True)  # negative offset needs FlipDir
-        # select the NEW plane by a point that lies on it and on no other plane
-        doc.ClearSelection2(True)
-        ok = doc.Extension.SelectByID2("", "PLANE", x * M, 0, 0, False, 0, None, 0)
-        how = "point"
-        if not ok and rp is not None:
-            ok = doc.Extension.SelectByID2(str(rp.Name), "PLANE", 0, 0, 0, False, 0, None, 0)
-            how = "name"
-        if not ok:
+        how = offset_right(doc, x)
+        if how is None:
             steps.append(("tine%d" % i, "plane select failed"))
             continue
         sm.InsertSketch(True)
@@ -158,12 +172,12 @@ def main():
         steps.append(("tine%d" % i, "%s:%s" % (how, bool(extrude(doc, 8)))))
 
     doc.ForceRebuild3(False)
-    name = "弹齿除草刀_整组v3"
+    name = "弹齿除草刀_整组v4"
     p = os.path.join(OUT, name + ".SLDPRT")
     doc.Extension.SaveAs(p, 0, 1, None, 0, 0)
     doc.Extension.SaveAs(os.path.join(OUT, name + ".step"), 0, 1, None, 0, 0)
     log = {"part": name, "steps": steps, "saved": os.path.exists(p)}
-    io.open(os.path.join(OUT, "tine_bar_v3_log.json"), "w", encoding="utf-8").write(
+    io.open(os.path.join(OUT, "tine_bar_v4_log.json"), "w", encoding="utf-8").write(
         json.dumps(log, ensure_ascii=False, indent=1))
     try:
         sw.CloseDoc(str(doc.GetTitle()))

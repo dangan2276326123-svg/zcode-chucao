@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.join("D:", os.sep + "ai work", "qoder", "tools"))
 import step_circles as sc  # noqa: E402
 
 DEF = os.path.join("D:", os.sep + "ai work", "qoder", "cad_work", "cad_out", "缺件",
-                   "弹齿除草刀_整组v3.step")
+                   "弹齿除草刀_整组v4.step")
 
 
 def main():
