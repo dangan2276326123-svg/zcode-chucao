@@ -28,6 +28,7 @@ def main():
     pythoncom.CoInitialize()
     mod = EnsureModule(SW_CLSID, 0, 32, 0)
     sw = mod.SldWorks(win32com.client.Dispatch("SldWorks.Application")._oleobj_)
+    was_visible = bool(sw.Visible)  # this attaches to the author's running session
     sw.Visible = False
     doc_type = 2 if src.upper().endswith(".SLDASM") else 1  # assembly vs part
     res = sw.OpenDoc6(src, doc_type, 1 | 2, "", 0, 0)
@@ -48,25 +49,36 @@ def main():
                          "bytes": os.path.getsize(target) if os.path.exists(target) else 0}
         except Exception as exc:
             made[key] = {"error": repr(exc)[:120]}
-    try:
-        step = os.path.join(outdir, os.path.splitext(os.path.basename(src))[0] + ".step")
-        r = doc.Extension.SaveAs(step, 0, 1, None, 0, 0)
-        made["step"] = os.path.getsize(step) if os.path.exists(step) else 0
-    except Exception as exc:
-        made["step"] = {"error": repr(exc)[:120]}
-    try:
-        doc.ViewZoomtofit2()
-        pdf = os.path.join(outdir, os.path.splitext(os.path.basename(src))[0] + ".pdf")
-        r = doc.Extension.SaveAs(pdf, 0, 1, None, 0, 0)
-        made["pdf"] = {"ok": bool(r[0]) if isinstance(r, tuple) else bool(r),
-                       "bytes": os.path.getsize(pdf) if os.path.exists(pdf) else 0}
-    except Exception as exc:
-        made["pdf"] = {"error": repr(exc)[:120]}
+    # STEP/PDF are side products of a render run; a verification render must not drop a second
+    # copy of the model next to the PNG (that is how the "which .step is authoritative" mess
+    # starts). Opt in with SW_RENDER_EXTRA=1.
+    if os.environ.get("SW_RENDER_EXTRA"):
+        try:
+            step = os.path.join(outdir, os.path.splitext(os.path.basename(src))[0] + ".step")
+            r = doc.Extension.SaveAs(step, 0, 1, None, 0, 0)
+            made["step"] = os.path.getsize(step) if os.path.exists(step) else 0
+        except Exception as exc:
+            made["step"] = {"error": repr(exc)[:120]}
+        try:
+            doc.ViewZoomtofit2()
+            pdf = os.path.join(outdir, os.path.splitext(os.path.basename(src))[0] + ".pdf")
+            r = doc.Extension.SaveAs(pdf, 0, 1, None, 0, 0)
+            made["pdf"] = {"ok": bool(r[0]) if isinstance(r, tuple) else bool(r),
+                           "bytes": os.path.getsize(pdf) if os.path.exists(pdf) else 0}
+        except Exception as exc:
+            made["pdf"] = {"error": repr(exc)[:120]}
     try:
         sw.CloseDoc(title)
-        sw.ExitApp()
     except Exception:
         pass
+    # ExitApp would close whatever ELSE the author still has open in that session, unsaved.
+    if os.environ.get("SW_EXIT_AFTER"):
+        try:
+            sw.ExitApp()
+        except Exception:
+            pass
+    else:
+        sw.Visible = was_visible
     print(json.dumps({"src": os.path.basename(src), "outputs": made}, ensure_ascii=True))
     return 0
 
