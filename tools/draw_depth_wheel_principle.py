@@ -16,6 +16,13 @@ therefore rests on a premise that is NOT confirmed. Keep the script and the PNG 
 earlier design reading), but do NOT use this figure as thesis/report evidence until the author
 confirms on the machine whether the wheel actually rides the ground and constrains depth.
 
+UPDATE (2026-11-12 later, same ledger row, Hw-39 closed): the author has now ruled "仿形轮我觉得
+很难起作用，因为电推杆断电即停，可以控制深度，靠电推杆行程控制吧" -- depth is set by the electric
+pusher stroke and the profiling wheel is treated as NOT participating in depth limiting. This is
+a design ruling (based on his verified power-off-stops fact, Hw-36), not a measurement that the
+wheel never touches the ground. The right-hand panel's premise is therefore rejected by ruling;
+the script and PNG stay as a historical record only, never as thesis/report evidence.
+
 Usage: python -B tools/draw_depth_wheel_principle.py
 """
 import math
