@@ -41,6 +41,39 @@ def test_band_capacity_on_the_real_machine():
     assert band_capacity(60.0, 35.0, 25.0) == 2
 
 
+# ---- Hw-40（2026-11-12）：论文统一用 3.2 m 那台，行距点到点 80 / 净空 60 ----
+def test_hw40_three_blades_fit_the_320cm_machine():
+    """三刀外缘跨度 2×80+50 = 210 cm < 整机宽 320 cm（每侧余 55 cm）。
+    包络上限是 4 把（(320−50)//80+1 = 4，跨度 290 也装得下）——这是包络事实，
+    设计取 3 把是作者方案，不是几何上限；两者分开钉，不许混。"""
+    assert required_outer_span(80.0, 50.0, bands=3) == pytest.approx(210.0)
+    assert required_outer_span(80.0, 50.0, bands=3) < 320.0
+    assert band_capacity(320.0, 80.0, 50.0) == 4
+    assert required_outer_span(80.0, 50.0, bands=4) == pytest.approx(290.0)
+
+
+def test_hw40_why_the_215cm_machine_is_not_the_thesis_one():
+    """作者裁定"2.15 m 的除不了 3 行 80 cm 的草"——注意这**不是包络事实**：
+    210 < 215，包络装得下；真正的原因是轮心 ±95.5 cm 落在刀外缘 ±105 cm 之内，
+    外侧两把刀伸出轮迹之外、车轮要落进外侧草带。3.2 m 那台轮心 ±148 cm，
+    刀外缘 ±105 cm 收在轮迹之内（差 43 cm，胎面侵入仍待 M14/M15 实测）。
+    本测试钉的是这个轮支撑几何，不是 band_capacity(215,80,50)==2（那个等于 3）。
+    """
+    blade_outer = required_outer_span(80.0, 50.0, bands=3) / 2.0   # 105
+    assert blade_outer == pytest.approx(105.0)
+    assert blade_outer > 191.0 / 2.0        # 2.15 m 车：刀外缘超出轮心
+    assert blade_outer < 296.0 / 2.0        # 3.2 m 车：刀外缘收在轮心之内
+    assert required_outer_span(80.0, 50.0, bands=3) < 215.0   # 包络本身装得下
+    assert band_capacity(215.0, 80.0, 50.0) == 3               # 不许写成 2
+
+
+def test_hw40_track_span_296_over_80():
+    """296/80 = 3.7，不成整数倍：轮迹对行仍无几何保证，须实测（M15）。"""
+    t = track_span(296.0, 80.0)
+    assert t['pitches'] == pytest.approx(3.7, abs=0.01)
+    assert t['furrow_aligned_possible'] is False
+
+
 # ---- 撤回的推论：跨行距数不等于压苗数 -----------------------------------
 def test_track_span_reports_facts_and_never_concludes_crushing():
     """复审反例（**旧行距口径 38.2**，Hw-37 之前的算例）：轮距 191 = 5×38.2 →

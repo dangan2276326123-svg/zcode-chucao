@@ -13,8 +13,8 @@
 
 用法：
     python tools/geometry_check.py                       # 用"文档口径"跑一遍
-    python tools/geometry_check.py --row-pitch 38.2 --body-width 215 --track 191 \
-           --knife-width 25 --slide-travel 30 --residual 8 --envelope 12 \
+    python tools/geometry_check.py --row-pitch 80 --body-width 320 --track 296 \
+           --knife-width 50 --slide-travel 30 --residual 8 --envelope 12 \
            --actuator-travel 20 --knife-lift 20 --clearance 10
 
 只做几何与时间换算。没给的量一律报"未测→不下结论"，不补默认值。
@@ -32,10 +32,13 @@ if hasattr(sys.stdout, 'reconfigure'):
     sys.stderr.reconfigure(errors='replace')
 
 # 文档口径（不是实测）：仅用于"跑一遍看矛盾在哪"，不作为结论
-DOC_ROW_PITCH = 35.0         # Hw-19 现场确认 30~40 cm，取中值
-DOC_BODY_WIDTH = 215.0       # 台账 Hw-20：样机（真实车）外廓宽
-DOC_TRACK = 191.0            # 车宽 − 24（汇报人给的换算）
-DOC_KNIFE_WIDTH = 25.0       # 弹齿 250 mm 五齿；鸭掌铲 25 cm（09-21 确认，幅宽对等）
+# Hw-40（2026-11-12 作者裁定）：论文与报告统一用 3.2 m 那台；行距点到点 80 cm、
+# 行间净空 60 cm；轮心跨距矩形 2.96 m（沿行距方向）× 1.37 m（沿行走方向），
+# 轴距/轮距两名随行走朝向（朝 1 / 朝 2）互换，此处取沿行距方向的 2.96 m 作"轮距"。
+DOC_ROW_PITCH = 80.0         # Hw-40：点到点 80 cm（株幅≈20 cm，净空 60 cm）
+DOC_BODY_WIDTH = 320.0       # Hw-40：论文样机整机宽（Hw-20 的 2.15 m 是新样机读数，保留在台账）
+DOC_TRACK = 296.0            # Hw-40：轮心跨距沿行距方向那条边
+DOC_KNIFE_WIDTH = 50.0       # Hw-38/Hw-40：刃宽 500 mm
 ACTUATOR_SPEED_CM_S = 1.0    # 台账 Hw-9：电推杆 10 mm/s
 
 
