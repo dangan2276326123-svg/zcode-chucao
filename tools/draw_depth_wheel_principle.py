@@ -9,6 +9,13 @@ Right = with wheel: wheel and blade are one rigid body (刀柄1/刀柄2), the wh
 Numbers are illustrative (30 mm set depth, +35/-25 mm ground), not measurements. The mechanism
 is the one written in docs/执行机构装配拓扑_20261016.md §3 and ch02 §被动限深仿形机构设计.
 
+CAUTION (2026-11-12, 台账 Hw-39): the author now says the passive depth-limit profiling may not
+exist on this machine ("被动限深仿形可能也不存在，应该要靠电推杆调节入土深度"), and the thesis
+wording has been changed to "depth set by the electric pusher stroke". The right-hand panel below
+therefore rests on a premise that is NOT confirmed. Keep the script and the PNG (they record the
+earlier design reading), but do NOT use this figure as thesis/report evidence until the author
+confirms on the machine whether the wheel actually rides the ground and constrains depth.
+
 Usage: python -B tools/draw_depth_wheel_principle.py
 """
 import math
