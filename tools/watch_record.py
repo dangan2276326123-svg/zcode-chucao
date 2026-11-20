@@ -152,6 +152,7 @@ class Recorder(object):
         self._last_frame_t = None
         self._last_stats = {}
         self._stop = {'flag': False}
+        self._tick = 0
         self.rows = 0
 
     # ---- 段 -------------------------------------------------------------
@@ -207,7 +208,10 @@ class Recorder(object):
     # ---- 显示 -----------------------------------------------------------
     def _draw(self, frame, age, seg_elapsed, left_s, stats):
         import cv2
-        vis = frame.copy()
+        # 窗口只上传一半尺寸：写盘用的是原帧，缩小只影响预览。
+        # 11-20 首跑实录：全尺寸 imshow 把消费节拍拖慢约 10%（written < stream_frames），
+        # 视频时间轴因此比实际短；预览缩一半 + 隔帧显示，把这 10% 让回给写盘。
+        vis = cv2.resize(frame, (960, 540), interpolation=cv2.INTER_AREA)
         rec = self._writer is not None
         tag = (os.path.basename(self._seg['path']) if rec
                else '%s_%s' % (self.batch, self.day))
@@ -304,9 +308,14 @@ class Recorder(object):
                     self._close_segment('segment')
 
                 if self.display:
-                    key = self._draw(self._frame, age,
-                                     (self.clock() - self._seg['t0'])
-                                     if self._seg else 0.0, left, stats)
+                    self._tick += 1
+                    if self._tick % 2 == 1:
+                        key = self._draw(self._frame, age,
+                                         (self.clock() - self._seg['t0'])
+                                         if self._seg else 0.0, left, stats)
+                    else:
+                        import cv2
+                        key = cv2.waitKey(1) & 0xFF
                     if key == ord('q'):
                         note = 'quit'
                         break
