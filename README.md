@@ -154,7 +154,8 @@ python -B tools/check_citations.py        # 坐标式引用审计（报告不是
 | `start_bench.sh` | 一条命令起台架（桥+推流）：`sh ~/qoder/vehicle/start_bench.sh [1080p|stop]`。判据是进程在/TCP 连得上，链路通不通另看 `tools/bench_status.py` |
 | `bridge.py` | PC ↔ STM32 桥接：控制量经串口转发，状态回传 |
 | `stream_pi.py` | 相机抓取并回传上位机（`--width/--height` 可切 1080p） |
-| `record_local.py` | X5 本地录像：行进段画面唯一留得住的路（相机直录板子自己的盘，回来 scp 再抽帧）。`--check`/`--probe` 先验相机/avimux/盘。⚠️ 四态只到"已编码+已本机单测"，板上三处未验——到田里第一件事就是验它，不通退回"停车+网线+逐张拍"。停录用 Ctrl-C，不许 kill -9 |
+| `record_local.py` | X5 本地录像：行进段画面唯一留得住的路（相机直录板子自己的盘，回来 scp 再抽帧）。`--check`/`--probe` 先验相机/avimux/盘。`--session-min` 按总时长到点自停（人在遥控上够不着键盘），日志每段落一行、`started` 是该段开始时刻。⚠️ 四态只到"已编码+已本机单测"，板上三处未验——到田里第一件事就是验它，不通退回"停车+网线+逐张拍"。停录用 Ctrl-C 或 `kill -INT`，不许 kill -9 |
+| `collect_demo.sh` | **画线漏沙采集一键入口（2026-11-20）**：`sh vehicle/collect_demo.sh [批次] [分钟] [每段秒] [MMDD]`。先跑 `--check --probe`（有 🔴 就停手），再 `nohup` 后台开录到点自停——车开走、SSH 断开也不影响；提前停用 `kill -INT <PID>`。落 `data/paint_data/video/t{NN}_{MMDD}_v{NN}.avi`，现场步骤见 `docs/画线漏沙采集_20261120.md`。⚠️ 只在本机单测过，X5 上首次跑仍按"到田里第一件事"验 |
 | `config.yaml` | 车端配置（serial_dev/baud/udp_port/pc_ip/pc_port/stream/watchdog_ms）。没有 `PI_IP` 字段，旧说法作废 |
 
 ### `tools/` — 工具脚本

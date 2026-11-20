@@ -21,6 +21,11 @@ CPE 无线桥在田间距离上**没测过**（执行清单 §6 的 B8 拉距那
     python3 vehicle/record_local.py --batch t01 --segments 3 --segment-s 150
     python3 vehicle/record_local.py --batch t01 --dry-run   # 只看将落哪几段与命令
 
+    # 画线漏沙采集（2026-11-20）：人在遥控上、够不着键盘，给总时长让它到点自停
+    python3 vehicle/record_local.py --batch t20 --segment-s 120 --session-min 20 \
+            --out data/paint_data/video
+    sh vehicle/collect_demo.sh t20 20                       # 一键：检查 + 后台开录（断 SSH 也不停）
+
 落盘名 = `data/autumn_data/video/t{NN}_{MMDD}_v{NN}.avi`，段号规则与笔记本那一路**同源**
 （`common/capture_naming.py`，11-05 从 `tools/capture_field.py` 搬过来；板子上只 scp
 `vehicle/` 与 `common/`，契约留在 tools 里就等于要抄一份）。所以 `tools/extract_frames.py`
@@ -38,6 +43,9 @@ CPE 无线桥在田间距离上**没测过**（执行清单 §6 的 B8 拉距那
    一天的量（8 段 ×150 s ≈ 14 GB 按估值）要用实测值重核一遍才敢带。
 4. **段号只增不减**：同一批次同一天已有 `_v03` 就从 `_v04` 接着排（Pc-16 那条：同名开文件
    是写语义，不报错也不留备份，而田里只走这一趟）。
+5. **车一动 SSH 就断**：前台跑的录像会跟着 SIGHUP 死在第 N 段。要么用 `--session-min`
+   让会话到点自停（人在遥控上够不着键盘），要么用 `vehicle/collect_demo.sh`——它先检查、
+   再 `nohup` 后台起录，断线不影响；提前停只能 `kill -INT`（不是 -9）。
 
 ⚠️ 四态（AGENTS 审查清单第 5 条）：本文件 = **已编码 + 已本机单测**，
 **没有在 X5 上跑过一秒**（11-05 登记时板子不通电，192.168.127.10 都 ping 不通）。
@@ -64,6 +72,7 @@ from common.capture_naming import (BATCH_RE, VIDEO_PATH,  # noqa: E402
 DEVICE = '/dev/video0'
 WIDTH, HEIGHT, FPS = 1920, 1080, 30   # 相机原生 MJPG 1080p30（清单第 1 节要求 >=1080p）
 SEGMENT_S = 150.0                     # 一段 = 一个条件；0.8 m/s 走速下 ≈120 m
+MIN_LAST_S = 10.0                     # 会话最后一段短于这个就并进上一段（免得收尾一个碎段）
 MIN_FREE_FACTOR = 1.5                 # 剩余空间要 >= 计划量 ×1.5 才开录
 MB_PER_S_AT_1080P30 = 12.0            # 🔴 估的，不是实测：见文件头第 3 条
 X5 = 'sunrise@192.168.127.10'
@@ -166,6 +175,36 @@ def plan(out_folder, batch, day, count):
     return [video_path(batch, day, idx + i, folder=out_folder) for i in range(count)]
 
 
+def segment_durations(segment_s, session_s=0.0, count=None, min_last_s=MIN_LAST_S):
+    """本次要录的各段秒数（与 `plan()` 的段一一对应）。
+
+    - `session_s <= 0`：按段数切，`count` 段 × `segment_s`（原行为）。
+    - `session_s > 0`：按**总时长**切、最后一段是余数；余数短于 `min_last_s` 就并进
+      上一段（免得落一个几秒钟的碎段）。`count` 若给，只当上限——**总时长仍是硬上限**。
+
+    为什么要按总时长：车一动，网线就拔，人在遥控上够不着键盘；到点自停是唯一
+    不需要现场操作的收尾方式（`vehicle/collect_demo.sh` 用的就是这条）。
+    """
+    if segment_s <= 0:
+        raise ValueError(u'每段秒数要正数')
+    if session_s > 0:
+        durs = []
+        left = float(session_s)
+        while left > 1e-6:
+            d = min(float(segment_s), left)
+            durs.append(d)
+            left -= d
+        if len(durs) > 1 and durs[-1] < min_last_s:
+            durs[-2] += durs[-1]
+            durs.pop()
+        if count is not None:
+            durs = durs[:int(count)]
+        return durs
+    if count is None or int(count) < 1:
+        raise ValueError(u'段数要 >=1')
+    return [float(segment_s)] * int(count)
+
+
 def log_row(started, batch, day, path, planned_s, actual_s, rc, size, mb_per_s,
             frames, device, size_fps, backend):
     """`record_log_<MMDD>.csv` 的一行。
@@ -178,6 +217,20 @@ def log_row(started, batch, day, path, planned_s, actual_s, rc, size, mb_per_s,
     return [started, batch, day, path.replace('\\', '/'), '%.1f' % planned_s,
             '%.1f' % actual_s, str(rc), str(size), '%.2f' % mb_per_s,
             ('' if frames is None else str(frames)), device, size_fps, backend]
+
+
+def append_log_row(lp, row):
+    """日志**每段落一行**，不是收工才写：中途断电/崩了，前面几段的账还在。
+
+    表头只在文件头一次；同一批次同一天的第二次会话往后追加（`started` 列是
+    **该段**开始时刻，不是整场开始——事后拿它把段号对到现场的条件上）。
+    """
+    new = not os.path.exists(lp)
+    with open(lp, 'a', encoding='utf-8', newline='') as f:
+        wcsv = csv.writer(f)
+        if new:
+            wcsv.writerow(LOG_HEADER)
+        wcsv.writerow(row)
 
 
 def verify_file(path, verbose=True):
@@ -327,11 +380,18 @@ def check(out_folder, device, w, h, fps, backend, probe_s=None):
     return 0
 
 
-def record(out_folder, paths, batch, day, device, w, h, fps, backend, segment_s):
-    """按段顺序录；Ctrl-C 收尾当前段就停。返回写完的日志路径。"""
-    started = datetime.datetime.now().strftime('%H:%M:%S')
+def record(out_folder, paths, batch, day, device, w, h, fps, backend, durations):
+    """按段顺序录；Ctrl-C 收尾当前段就停。返回日志路径（一段都没落返回 None）。
+
+    `durations` 与 `paths` 一一对应（`segment_durations()` 给出的每段秒数）：
+    会话总时长到点就停，人在遥控上够不着键盘时也能自己收尾。
+    日志**每段落一行**（不是收工才写）：中途断电/崩了，前面几段的账还在。
+    """
+    if len(paths) != len(durations):
+        raise ValueError(u'段数与时长对不上：%d vs %d' % (len(paths), len(durations)))
     os.makedirs(out_folder, exist_ok=True)
-    rows = []
+    lp = os.path.join(out_folder, 'record_log_%s.csv' % day)
+    done = 0
     stop = {'flag': False}
 
     def _on_sigint(signum, frame):
@@ -340,16 +400,24 @@ def record(out_folder, paths, batch, day, device, w, h, fps, backend, segment_s)
 
     old = signal.signal(signal.SIGINT, _on_sigint)
     try:
-        for i, path in enumerate(paths):
+        for i, (path, seg_s) in enumerate(zip(paths, durations)):
             if stop['flag']:
                 break
-            print(u'[%d/%d] %s 计划 %.0f s ｜ %s'
-                  % (i + 1, len(paths), os.path.basename(path), segment_s,
+            free = free_mb(out_folder)
+            need = estimate_mb(w, h, fps, seg_s) * MIN_FREE_FACTOR
+            if free < need:
+                print(u'🔴 盘只剩 %.1f MB，本段按估的码率要 %.1f MB（已留 %.0f%% 余量）'
+                      u' ⇒ 停在这里；已录的段都带索引，日志里有账'
+                      % (free, need, (MIN_FREE_FACTOR - 1.0) * 100.0))
+                break
+            seg_start = datetime.datetime.now().strftime('%H:%M:%S')
+            print(u'[%d/%d] %s 开始 %s，计划 %.0f s ｜ %s'
+                  % (i + 1, len(paths), os.path.basename(path), seg_start, seg_s,
                      build_pipeline(path, device, w, h, fps)))
             if backend == 'gst':
-                rc, actual, tail = _run_gst(path, device, w, h, fps, segment_s)
+                rc, actual, tail = _run_gst(path, device, w, h, fps, seg_s)
             else:
-                rc, actual, tail = _run_cv2(path, device, w, h, fps, segment_s)
+                rc, actual, tail = _run_cv2(path, device, w, h, fps, seg_s)
             size = os.path.getsize(path) if os.path.exists(path) else 0
             mbps = size / 1048576.0 / max(actual, 0.001)
             got = verify_file(path, verbose=(i == 0))
@@ -360,9 +428,10 @@ def record(out_folder, paths, batch, day, device, w, h, fps, backend, segment_s)
             print(u'    -> %.1f s、%.1f MB、实测 %.2f MB/s、盘上还剩 %.1f GB%s'
                   u'｜ %s' % (actual, size / 1048576.0, mbps,
                               free_mb(out_folder) / 1024.0, note, tail.strip()))
-            rows.append(log_row(started, batch, day, path, segment_s, actual, rc,
-                                size, mbps, frames, device,
-                                '%dx%d@%d' % (w, h, fps), backend))
+            append_log_row(lp, log_row(seg_start, batch, day, path, seg_s, actual,
+                                       rc, size, mbps, frames, device,
+                                       '%dx%d@%d' % (w, h, fps), backend))
+            done += 1
             if rc != 0:
                 print(u'🔴 这一段的 gst/cv2 没干净退出（exit=%s）⇒ 停手：'
                       u'第一段就这样，后面几段只会是同一份失败。'
@@ -370,24 +439,24 @@ def record(out_folder, paths, batch, day, device, w, h, fps, backend, segment_s)
                 break
     finally:
         signal.signal(signal.SIGINT, old)
-    lp = os.path.join(out_folder, 'record_log_%s.csv' % day)
-    new = not os.path.exists(lp)
-    with open(lp, 'a', encoding='utf-8', newline='') as f:
-        wcsv = csv.writer(f)
-        if new:
-            wcsv.writerow(LOG_HEADER)
-        wcsv.writerows(rows)
-    print(u'日志：%s（%d 段）' % (lp.replace('\\', '/'), len(rows)))
-    print(u'回来拷：scp -r %s:~/qoder/%s ./data/autumn_data/'
-          % (X5, out_folder.replace('\\', '/')))
-    return lp
+    if done:
+        print(u'日志：%s（%d 段）' % (lp.replace('\\', '/'), done))
+        print(u'回来拷：scp -r %s:~/qoder/%s ./%s'
+              % (X5, out_folder.replace('\\', '/'), os.path.basename(out_folder)))
+        return lp
+    print(u'日志：一段都没落，没写文件')
+    return None
 
 
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(
         description=u'X5 本地录像（秋采行进段，台账 Pc-20）')
     ap.add_argument('--batch', default='t01', help='批次 t{NN}：一段视频=一个条件=一个批次')
-    ap.add_argument('--segments', type=int, default=1, help='本次录几段（默认 1）')
+    ap.add_argument('--segments', type=int, default=None,
+                    help='本次录几段（不给时：有 --session-min 就按总时长自动切，否则 1）')
+    ap.add_argument('--session-min', dest='session_min', type=float, default=0.0,
+                    help='会话总时长上限（分钟），到点自动收尾；0=不限（默认）。'
+                         '人在遥控上够不着键盘时用这个，别用段数硬数')
     ap.add_argument('--segment-s', dest='segment_s', type=float, default=SEGMENT_S,
                     help='每段秒数（默认 %.0f s）' % SEGMENT_S)
     ap.add_argument('--day', default=None, help='文件名里的日期段，默认今天 MMDD')
@@ -410,8 +479,10 @@ def parse_args(argv=None):
     a = ap.parse_args(argv)
     if not BATCH_RE.match(a.batch):
         ap.error(u'批次名要 t{NN}（t01…t99），现在是 %r' % a.batch)
-    if a.segments < 1:
-        ap.error(u'--segments 至少 1')
+    if a.segments is not None and a.segments < 1:
+        ap.error(u'--segments 至少 1（不给就按 --session-min 自动切）')
+    if a.session_min < 0:
+        ap.error(u'--session-min 不能为负；0 表示不限')
     if a.segment_s <= 0:
         ap.error(u'--segment-s 要正数（想停就 Ctrl-C，别设 0 绕过收尾）')
     if a.probe is not None and a.probe <= 0:
@@ -422,14 +493,22 @@ def parse_args(argv=None):
 def main(argv=None):
     a = parse_args(argv)
     day = a.day or now_day()
-    paths = plan(a.out, a.batch, day, a.segments)
+    if a.session_min > 0:
+        durations = segment_durations(a.segment_s, a.session_min * 60.0, a.segments)
+    else:
+        durations = segment_durations(a.segment_s, 0.0,
+                                      a.segments if a.segments is not None else 1)
+    paths = plan(a.out, a.batch, day, len(durations))
+    total_s = sum(durations)
 
     if a.dry_run:
         for p in paths:
             print(build_pipeline(p, a.device, a.width, a.height, a.fps))
-        print(u'共 %d 段，估占 %.0f MB（码率是估的——用 --check --probe 量实测）'
-              % (len(paths), estimate_mb(a.width, a.height, a.fps,
-                                         a.segment_s * len(paths))))
+        print(u'共 %d 段、合计 %.0f s，估占 %.0f MB（码率是估的——用 --check --probe 量实测）'
+              % (len(paths), total_s, estimate_mb(a.width, a.height, a.fps, total_s)))
+        if a.session_min > 0:
+            print(u'[i] 会话上限 %.1f 分钟（%.0f s），到点自动收尾'
+                  % (a.session_min, a.session_min * 60.0))
         return 0
 
     if a.check or a.probe is not None:
@@ -444,7 +523,7 @@ def main(argv=None):
               % (sys.platform, X5, X5))
         return 2
 
-    need = estimate_mb(a.width, a.height, a.fps, a.segment_s * a.segments)
+    need = estimate_mb(a.width, a.height, a.fps, total_s)
     ok, msg = space_verdict(free_mb(a.out), need)
     print(u'[i] %s' % msg)
     if not ok and not a.force:
@@ -456,7 +535,7 @@ def main(argv=None):
         return 2
 
     record(a.out, paths, a.batch, day, a.device, a.width, a.height, a.fps,
-           a.backend, a.segment_s)
+           a.backend, durations)
     return 0
 
 

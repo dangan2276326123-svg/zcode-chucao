@@ -280,3 +280,87 @@ def test_platform_check_goes_through_is_posix():
     assert src.count("os.name == 'posix'") == 1, src.count("os.name == 'posix'")
     assert src.count('if os.name') == 0, '平台判据只许在 is_posix() 里读 os.name'
 
+
+# ---------- 9) 会话总时长：人在遥控上，到点自停（2026-11-20 画线漏沙） ----------
+
+def test_session_durations_split_evenly():
+    assert rl.segment_durations(120, 1200) == [120.0] * 10
+
+
+def test_session_durations_truncate_last_segment():
+    d = rl.segment_durations(120, 1250)
+    assert d[:10] == [120.0] * 10 and abs(d[10] - 50.0) < 1e-6, d
+
+
+def test_session_tail_shorter_than_min_is_merged_into_previous():
+    """余数只有几秒就并进上一段——别在田里落一个几秒钟的碎段。"""
+    d = rl.segment_durations(120, 1205, min_last_s=10)
+    assert len(d) == 10 and abs(d[-1] - 125.0) < 1e-6, d
+
+
+def test_session_count_is_only_a_cap():
+    """段数给了也只是上限；总时长仍是硬上限（反了的话 20 分钟会录成两小时）。"""
+    assert len(rl.segment_durations(120, 1200, count=3)) == 3
+    assert len(rl.segment_durations(120, 1200, count=99)) == 10
+
+
+def test_without_session_limit_count_still_works():
+    assert rl.segment_durations(150, 0, count=3) == [150.0, 150.0, 150.0]
+
+
+def test_session_min_alone_is_enough_to_parse():
+    a = rl.parse_args(['--batch', 't20', '--session-min', '20'])
+    assert a.segments is None and a.session_min == 20.0
+
+
+def test_negative_session_min_is_rejected():
+    with pytest.raises(SystemExit):
+        rl.parse_args(['--session-min', '-1'])
+
+
+def test_dry_run_with_session_min_auto_splits(tmp_path, capsys):
+    rc = rl.main(['--batch', 't20', '--segment-s', '60', '--session-min', '2',
+                  '--out', str(tmp_path), '--day', '1120', '--dry-run'])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert out.count('t20_1120_v') == 2, out
+    assert u'2.0 分钟' in out, out
+    assert os.listdir(str(tmp_path)) == [], '--dry-run 不许在盘上留东西'
+
+
+def test_append_log_row_writes_header_once_and_keeps_each_segment(tmp_path):
+    """日志每段落一行：中途崩了，前面几段的时间/字节还在。"""
+    lp = str(tmp_path / 'record_log_1120.csv')
+    rl.append_log_row(lp, ['a'] * len(rl.LOG_HEADER))
+    rl.append_log_row(lp, ['b'] * len(rl.LOG_HEADER))
+    lines = open(lp, encoding='utf-8').read().splitlines()
+    assert lines[0].startswith('started'), lines
+    assert len(lines) == 3, lines      # 表头 + 两段
+
+
+def test_record_stops_before_a_segment_when_disk_is_short(tmp_path, monkeypatch):
+    """中段盘不够就停在本段之前——已录的段带索引，日志里也有账。"""
+    paths = [str(tmp_path / ('t01_1120_v%02d.avi' % i)) for i in (1, 2, 3)]
+    # 第一段前够、录完够；第二段前不够（record 里每次是"段前闸 + 段后打印"各取一次）
+    frees = iter([10_000.0, 10_000.0, 1.0, 1.0])
+    monkeypatch.setattr(rl, 'free_mb', lambda folder: next(frees))
+    monkeypatch.setattr(rl, '_run_gst', lambda *a, **k: (0, 1.0, u''))
+    monkeypatch.setattr(rl, 'verify_file', lambda *a, **k: (30, 30.0))
+    lp = rl.record(str(tmp_path), paths, 't01', '1120', '/dev/video0', 1920, 1080,
+                   30, 'gst', [120.0, 120.0, 120.0])
+    lines = open(lp, encoding='utf-8').read().splitlines()
+    assert len(lines) == 2, lines      # 表头 + 只录成的那一段
+    assert 'v02' not in ''.join(lines), '第二段之前就该停'
+
+
+def test_collect_demo_script_is_lf_and_detaches_from_ssh():
+    """X5 上的 shell 脚本：只能 LF（.gitattributes 也钉了），且必须后台 + 到点自停。"""
+    p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                     'vehicle', 'collect_demo.sh')
+    data = open(p, 'rb').read()
+    assert b'\r' not in data, 'CRLF 到 X5 上是 bad interpreter: /bin/sh^M'
+    text = data.decode('utf-8')
+    assert 'nohup' in text, '前台进程会跟着断开的 SSH 死在第 N 段'
+    assert 'kill -INT' in text, '提前停只能 INT（EOS 写索引），不许 -9'
+    assert '--session-min' in text and '--out' in text, text
+
