@@ -155,7 +155,7 @@ python -B tools/check_citations.py        # 坐标式引用审计（报告不是
 | `bridge.py` | PC ↔ STM32 桥接：控制量经串口转发，状态回传 |
 | `stream_pi.py` | 相机抓取并回传上位机（`--width/--height` 可切 1080p） |
 | `record_local.py` | X5 本地录像：行进段画面唯一留得住的路（相机直录板子自己的盘，回来 scp 再抽帧）。`--check`/`--probe` 先验相机/avimux/盘。`--session-min` 按总时长到点自停（人在遥控上够不着键盘），日志每段落一行、`started` 是该段开始时刻。⚠️ 四态只到"已编码+已本机单测"，板上三处未验——到田里第一件事就是验它，不通退回"停车+网线+逐张拍"。停录用 Ctrl-C 或 `kill -INT`，不许 kill -9 |
-| `collect_demo.sh` | **画线漏沙采集一键入口（2026-11-20）**：`sh vehicle/collect_demo.sh [批次] [分钟] [每段秒] [MMDD]`。先跑 `--check --probe`（有 🔴 就停手），再 `nohup` 后台开录到点自停——车开走、SSH 断开也不影响；提前停用 `kill -INT <PID>`。落 `data/paint_data/video/t{NN}_{MMDD}_v{NN}.avi`，现场步骤见 `docs/画线漏沙采集_20261120.md`。⚠️ 只在本机单测过，X5 上首次跑仍按"到田里第一件事"验 |
+| `collect_demo.sh` | **画线漏沙采集的车上兜底（2026-11-20）**：`sh vehicle/collect_demo.sh [批次] [分钟] [每段秒] [MMDD]`。无网桥/链路不稳时用：先 `--check --probe`（有 🔴 就停手），再 `nohup` 后台本地录、到点自停；**没有画面**。提前停用 `kill -INT <PID>`。落 `data/paint_data/video/t{NN}_{MMDD}_v{NN}.avi`。⚠️ 只在本机单测过，X5 上首次跑仍按"到田里第一件事"验 |
 | `config.yaml` | 车端配置（serial_dev/baud/udp_port/pc_ip/pc_port/stream/watchdog_ms）。没有 `PI_IP` 字段，旧说法作废 |
 
 ### `tools/` — 工具脚本
@@ -174,6 +174,7 @@ python -B tools/check_citations.py        # 坐标式引用审计（报告不是
 | `check_citations.py` | 坐标式引用审计（路径:行号／§节号），分 HARD/CHECK/SOFT 三档报告；退出码恒 0，是报告不是闸 |
 | `geometry_check.py` | 整车空间口径判据，只报事实不报结论（压苗与否必须实测横断面）；现行设计输入行距 60 cm／刃宽 50 cm（台账 Hw-38） |
 | `capture_field.py` | 停车特写 + IPM 素材逐张拍（连 X5 的 TCP MJPEG）；行进段录像已改走 `record_local.py` |
+| `watch_record.py` | **画线漏沙采集主路：边看边录（2026-11-20）**。笔记本连 X5 的 MJPEG 流，窗口里看画面、同时分段录到 `data/paint_data/video/t{NN}_{MMDD}_v{NN}.avi`（命名同源，`extract_frames` 直接抽）。`--session-min` 到点自停；超过 `--gap-s` 没新帧就切段（日志记 `link-gap`，缺口不埋进段中间）；按流序号去重，文件里是干净帧（HUD 只画窗口）。前提是网桥通；相机同一时刻只给一路，别同时跑 `record_local`。现场步骤见 `docs/画线漏沙采集_20261120.md` |
 | `extract_frames.py` | 采集视频抽帧：间隔按位移算（≥0.5 m），同视频默认拒绝重抽；工具不做任何筛选（筛验证/测试集等于让判卷老师进考场） |
 | `fake_cam.py` | 合成相机推流：没相机没下田时把整条链跑完。⚠️ 只能证明通路——跟踪精度、伤苗率、时延一个都不许从这条路取 |
 | `bench_run.py` | 台架一键（起桥+合成流+主控三窗）；只替"怎么开"，不替任何判据与安全前置；`--out` 目录已有 run_log 就停手 |
