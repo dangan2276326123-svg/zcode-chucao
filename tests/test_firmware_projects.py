@@ -33,10 +33,10 @@ ALLOW_DIFF = {
 # 构建产物 / 机器相关文件：不参与比对，也不要求两边都有
 SKIP_DIRS = {'OBJ', 'DebugConfig'}
 SKIP_SUFFIX = ('.uvguix.',)
-# [zcode 审查修正 09-21] 合并后首跑在 zcode 机器上假红 2 例，根因即此（见台账 Pc-23 复核）。
+# [zcode 审查修正 11-21] 合并后首跑在 zcode 机器上假红 2 例，根因即此。
 # PWM.uvoptx 与 .uvguix 同类（Keil 调试选项，每次开工程都变）。它在老工程被
 # git 历史跟踪、在新工程被 .gitignore 排除 ⇒ 跨机器的磁盘文件集必然不一致
-# （09-21 在 zcode 机器上复现：老有新无）。按机器本地状态跳过，不进文件集比较。
+# （11-21 在 zcode 机器上复现：老有新无）。按机器本地状态跳过，不进文件集比较。
 SKIP_NAMES = {'build_log.txt', 'desktop.ini', 'PWM.uvoptx'}
 
 
@@ -56,7 +56,7 @@ def _read(root, rel):
     """读盘并归一化 CRLF。
 
     磁盘字节对换行归一化敏感：同一 blob 在两棵树可能因检出时机不同而
-    一边 CRLF 一边 LF（09-21 实测：protocol.c/ringbuffer.h/usart.c 三对
+    一边 CRLF 一边 LF（11-21 实测：protocol.c/ringbuffer.h/usart.c 三对
     blob 在 git 层 md5 全等、磁盘不等）。先归一化再比较，真内容漂移照样红，
     检出伪差不误报。
     """
