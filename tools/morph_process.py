@@ -235,34 +235,38 @@ def peony_postprocess(raw_mask, lookahead_y=LOOKAHEAD_Y):
     return nav, left_wall, right_wall
 
 
-def _fit_trimmed(y, x, iters=3, tol_px=12.0):
-    """Row-wise robust line fit x = a*y + b, occlusion-resistant.
+def _fit_inner_edge(wall_mask, side, lookahead_y, tol_px=12.0):
+    """按墙“靠草带那一侧的边”拟合直线 x = a*y + b（11-21，台账 Pc-24）。
 
-    Each row votes once (median x of its pixels; rows with pixel spread
-    > 2*tol_px are multi-structure and dropped).  Trimmed LSQ then rejects
-    outlier rows.  Pixel-count bias (dense blobs dominating sparse walls)
-    is thereby removed by construction.
+    为什么不再用“逐行取中位 + 行内跨度>24 px 就丢行”：真实 IPM 墙有
+    ~190 像素宽（25 张测试图中位），逐行跨度必然远超 24 px ⇒ 每一行都被判
+    “多结构”丢掉 ⇒ 旧实现恒退化。墙的内侧边缘才是车要走的走廊边界，
+    而且它不随墙“胖瘦”移动：一侧墙被杂草撑宽时，普通中点会被重心拉走，
+    内边缘不会。
+
+    side='L' 取每行最大 x（左墙靠草带的一侧）；side='R' 取每行最小 x。
+    每行只有一票，再做剔野值的直线拟合（孤立杂草凸起是少数行，会被剔掉）。
+    行数不足 30 返回 None——调用方据此原样退回普通中点。
     """
-    y = np.asarray(y)
-    x = np.asarray(x)
+    yx = np.argwhere(wall_mask > 0)
+    if len(yx) == 0:
+        return None
     rows = {}
-    for yi, xi in zip(y, x):
-        rows.setdefault(yi, []).append(xi)
-    ry, rx, keep = [], [], []
-    for yi, xs in rows.items():
-        xs = np.asarray(xs)
-        if xs.max() - xs.min() > 2 * tol_px:   # multi-structure row
-            continue
-        ry.append(yi)
-        rx.append(np.median(xs))
-    ry = np.asarray(ry, dtype=np.float64)
-    rx = np.asarray(rx, dtype=np.float64)
-    if len(ry) < 30:
-        return 0.0, float(np.median(rx)) if len(rx) else 0.0, 0.0, 99.0
+    for y, x in yx:
+        rows.setdefault(int(y), []).append(int(x))
+    if len(rows) < 30:
+        return None
+    ry = np.array(list(rows.keys()), dtype=np.float64)
+    if side == 'L':
+        rx = np.array([max(v) for v in rows.values()], dtype=np.float64)
+    elif side == 'R':
+        rx = np.array([min(v) for v in rows.values()], dtype=np.float64)
+    else:
+        raise ValueError("side must be 'L' or 'R'")
     A = np.vstack([ry, np.ones_like(ry)]).T
     a, b = np.linalg.lstsq(A, rx, rcond=None)[0]
     inlier = np.ones(len(ry), dtype=bool)
-    for _ in range(iters):
+    for _ in range(3):
         resid = rx - (a * ry + b)
         inlier = np.abs(resid) < tol_px
         if inlier.sum() < 30:
@@ -270,38 +274,44 @@ def _fit_trimmed(y, x, iters=3, tol_px=12.0):
         a, b = np.linalg.lstsq(A[inlier], rx[inlier], rcond=None)[0]
     resid = rx - (a * ry + b)
     inlier = np.abs(resid) < tol_px
-    rmse = float(np.sqrt(np.mean(resid[inlier] ** 2))) if inlier.sum() else 99.0
+    if inlier.sum() == 0:
+        return None
+    rmse = float(np.sqrt(np.mean(resid[inlier] ** 2)))
     return a, b, float(inlier.mean()), rmse
 
 
 def fit_centerline_lsq_weighted(left_wall, right_wall, lookahead_y=LOOKAHEAD_Y,
                                 tol_px=12.0):
-    """Adaptive dual-wall centerline with occlusion-robust fitting.
+    """自适应双墙中心线：两墙各拟合**内侧边缘**，按贴合质量加权混合。
 
-    Each wall is fitted with trimmed LSQ (inliers only), then the centerline
-    is the inlier-ratio-weighted blend of the two wall predictions.
-    Falls back to midpoint behaviour when both walls fit equally well.
+    11-21 之前用的是“逐行中位”，在真实厚墙上恒退化（台账 Pc-24：
+    25 张测试图里 18 张左右墙位置被写成 0）；现在改成内侧边缘，
+    权重逻辑不变：两边内点率都 >= 0.5 时取严格中点（不引入噪声），
+    一边明显变差时按 内点率/(1+误差) 加权，且权重限制在 ±0.25 以内。
+
+    **退化时原样退回普通中点**：普通拟合的 `center_x`/`left_x`/`right_x`
+    一个都不改（旧实现先把左右位置覆盖成 0.0 再提前返回——那是 Pc-24 里
+    顺带修掉的副作用）。
+
     Returns the fit_centerline_lsq dict plus "w_left"/"w_right"/"inlier_l"/"inlier_r".
     """
     result = fit_centerline_lsq(left_wall, right_wall, lookahead_y)
     if result["status"] != "dual":
         return result
 
-    def fitw(wall_mask):
-        yx = np.argwhere(wall_mask > 0)
-        a, b, inlier_ratio, rmse = _fit_trimmed(
-            yx[:, 0].astype(np.float64), yx[:, 1].astype(np.float64),
-            tol_px=tol_px)
-        return a, b, inlier_ratio, rmse
+    fl = _fit_inner_edge(left_wall, 'L', lookahead_y, tol_px)
+    fr = _fit_inner_edge(right_wall, 'R', lookahead_y, tol_px)
+    if fl is None or fr is None:
+        return result                     # 保持普通中点，绝不改写左右位置
 
-    a_l, b_l, i_l, rmse_l = fitw(left_wall)
-    a_r, b_r, i_r, rmse_r = fitw(right_wall)
+    a_l, b_l, i_l, rmse_l = fl
+    a_r, b_r, i_r, rmse_r = fr
     result["left_x"] = float(a_l * lookahead_y + b_l)
     result["right_x"] = float(a_r * lookahead_y + b_r)
     result["left_slope"], result["right_slope"] = a_l, a_r
 
     # Weighting activates ONLY when one wall is critically degraded
-    # (inlier ratio < 0.5).  Otherwise the trimmed fits are both accurate
+    # (inlier ratio < 0.5).  Otherwise the trimmed edges are both accurate
     # and the exact midpoint is optimal — zero added noise.
     LOW = 0.5
     if i_l >= LOW and i_r >= LOW:
@@ -310,9 +320,6 @@ def fit_centerline_lsq_weighted(left_wall, right_wall, lookahead_y=LOOKAHEAD_Y,
         q_l = i_l / (1.0 + rmse_l)
         q_r = i_r / (1.0 + rmse_r)
         if q_l + q_r <= 0.0:
-            # both walls unfit (e.g. empty/near-empty masks under correct
-            # normalization): fall back to the plain trimmed midpoint
-            # instead of dividing by zero (regression found via P0-3 fix)
             return result
         w_raw = q_l / (q_l + q_r)
         w_l = 0.5 + 0.25 * (2.0 * w_raw - 1.0)   # bounded ±0.25

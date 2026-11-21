@@ -133,3 +133,66 @@ def test_deterministic_hard_case():
     ew = abs(rw['center_x'] - true_c)
     print('deterministic hard case: midpoint %.1f px, weighted %.1f px' % (em, ew))
     assert ew < em
+
+
+# ---------------------------------------------------------------------------
+# 11-21 Pc-24：上面三条用的是"1 像素细墙"，而真实 IPM 墙有 ~190 像素宽，
+# 所以旧实现（逐行取中位 + 行内跨度 >24 px 就整行丢弃）在真实图上恒退化——
+# 测试全绿而功能从未生效。改成"取每行靠草带那一侧的边"后，补上这四条。
+# ---------------------------------------------------------------------------
+
+def _thick_wall(y0, y1, x_left, width):
+    """竖直厚墙：行 y0..y1，左边缘 x_left，宽 width 像素。"""
+    m = np.zeros((720, 960), np.uint8)
+    for y in range(y0, y1):
+        m[y, max(0, x_left):min(960, x_left + width)] = 1
+    return m
+
+
+def test_thick_symmetric_walls_center_unchanged():
+    """两边等宽的厚墙：内边缘的中心 == 普通中点（回归基线）。"""
+    left = _thick_wall(200, 700, 260, 60)
+    right = _thick_wall(200, 700, 640, 60)
+    plain = fit_centerline_lsq(left, right, 620)
+    w = fit_centerline_lsq_weighted(left, right, 620)
+    assert plain['status'] == 'dual'
+    assert abs(w['center_x'] - plain['center_x']) < 1.5
+
+
+def test_inner_edge_not_dragged_by_outer_bulk():
+    """右墙只在外侧长胖 60 px：普通中点会被重心拉走，内边缘不动。"""
+    left = _thick_wall(200, 700, 260, 60)
+    thin = _thick_wall(200, 700, 640, 60)
+    fat = _thick_wall(200, 700, 640, 120)   # 向远离草带的一侧变宽
+    plain = fit_centerline_lsq(left, thin, 620)
+    dragged = fit_centerline_lsq(left, fat, 620)
+    w = fit_centerline_lsq_weighted(left, fat, 620)
+    assert dragged['center_x'] > plain['center_x'] + 10, '本用例前提：普通中点确实被拉走'
+    assert abs(w['center_x'] - plain['center_x']) < 1.5
+
+
+def test_inner_edge_ignores_weed_spikes():
+    """150 行杂草凸起伸进草带 80 px：剔除后回到无刺时的中心。"""
+    left = _thick_wall(200, 700, 260, 60)
+    clean_right = _thick_wall(200, 700, 640, 60)
+    spikey = clean_right.copy()
+    for y in range(480, 630):
+        spikey[y, 560:640] = 1
+    clean = fit_centerline_lsq(left, clean_right, 620)
+    plain_spikey = fit_centerline_lsq(left, spikey, 620)
+    w = fit_centerline_lsq_weighted(left, spikey, 620)
+    assert abs(plain_spikey['center_x'] - clean['center_x']) > 6, '本用例前提：普通中点确实被凸起拉走'
+    assert abs(w['center_x'] - clean['center_x']) < 6
+
+
+def test_degenerate_fit_keeps_plain_wall_positions():
+    """墙只有 20 行（逐行拟合不够 30 行）而普通拟合可用：
+    加权路径必须原样退回普通结果——旧缺陷是先把 left_x/right_x 写成 0 再返回。"""
+    left = _thick_wall(600, 620, 260, 60)
+    right = _thick_wall(600, 620, 640, 60)
+    plain = fit_centerline_lsq(left, right, 610)
+    assert plain['status'] == 'dual'
+    w = fit_centerline_lsq_weighted(left, right, 610)
+    assert w['center_x'] == pytest.approx(plain['center_x'])
+    assert w['left_x'] == pytest.approx(plain['left_x'])
+    assert w['right_x'] == pytest.approx(plain['right_x'])
