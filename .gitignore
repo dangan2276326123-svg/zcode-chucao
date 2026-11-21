@@ -28,3 +28,4 @@ thesis_latest.docx
 # 秋采执行表的 Word 打印件（tools/md_to_docx_sheet.py 一条命令可再生，11-03 定）。
 # 权威只有 md 那一份；二进制进仓的话每次重生成都往仓里塞一个新副本（同 thesis_latest.docx）。
 docs/秋采一天执行表_*.docx
+data/paint_data/
